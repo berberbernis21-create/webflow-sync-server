@@ -9,6 +9,10 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+app.get("/test", (req, res) => {
+  res.json({ status: "ok", message: "Test endpoint works" });
+});
+
 app.get("/", (req, res) => {
   res.send("L&F Webflow Sync Active");
 });
@@ -75,4 +79,5 @@ const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`Webflow Sync Server live on port ${PORT}`);
 });
+
 
