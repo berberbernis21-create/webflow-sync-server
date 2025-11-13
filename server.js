@@ -2,7 +2,6 @@ import express from "express";
 import axios from "axios";
 import cors from "cors";
 import dotenv from "dotenv";
-import FormData from "form-data";
 import https from "https";
 
 dotenv.config();
@@ -11,17 +10,19 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// -------------------------------
+// ======================================================
 // HELPERS
-// -------------------------------
+// ======================================================
 
-// Download Shopify image into a Buffer (using built-in fetch)
+// Download ANY image URL → into a Buffer
 async function downloadImage(url) {
-  const res = await fetch(url);
-  return Buffer.from(await res.arrayBuffer());
+  const response = await axios.get(url, {
+    responseType: "arraybuffer"
+  });
+  return Buffer.from(response.data);
 }
 
-// Upload image buffer to Webflow (S3)
+// Upload Buffer → Webflow S3
 async function uploadToWebflow(imageBuffer, filename) {
   const target = await axios.post(
     "https://api.webflow.com/v2/assets/upload",
@@ -51,13 +52,13 @@ async function uploadToWebflow(imageBuffer, filename) {
   return assetUrl;
 }
 
-// Patch item with all multi-images
+// Patch MULTI-IMAGE field after item is created
 async function patchWebflowImages(itemId, urls) {
   return axios.patch(
     `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items/${itemId}`,
     {
       fieldData: {
-        "image-s": urls.map(url => ({ url }))
+        "image-s": urls.map((u) => ({ url: u }))
       }
     },
     {
@@ -69,41 +70,55 @@ async function patchWebflowImages(itemId, urls) {
   );
 }
 
-// -------------------------------
-// ROUTES
-// -------------------------------
+// Fetch Shopify Product
+async function fetchShopifyProduct(id) {
+  const url = `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products/${id}.json`;
 
-app.get("/test", (req, res) => {
-  res.json({ status: "ok", message: "Test endpoint works" });
-});
+  const response = await axios.get(url, {
+    headers: {
+      "X-Shopify-Access-Token": process.env.SHOPIFY_API_KEY
+    }
+  });
+
+  return response.data.product;
+}
+
+// ======================================================
+// ROUTES
+// ======================================================
 
 app.get("/", (req, res) => {
-  res.send("L&F Webflow Sync Active");
+  res.send("L&F Webflow Sync Server Running");
 });
 
+// MAIN ENDPOINT
 app.post("/webflow-sync", async (req, res) => {
   try {
-    const {
-      name,
-      price,
-      brand,
-      description,
-      shopifyProductId,
-      shopifyUrl,
-      featuredImage,
-      images
-    } = req.body;
+    const { shopifyProductId } = req.body;
 
-    console.log("📦 Incoming:", name);
-
-    if (!name || !shopifyProductId) {
-      return res.status(400).json({
-        status: "error",
-        message: "Missing required fields (name or shopifyProductId)"
-      });
+    if (!shopifyProductId) {
+      return res.status(400).json({ error: "Missing shopifyProductId" });
     }
 
-    // 1️⃣ CREATE WEBFLOW ITEM (featured only)
+    console.log("📦 Syncing Shopify Product:", shopifyProductId);
+
+    // 1️⃣ Fetch from Shopify
+    const product = await fetchShopifyProduct(shopifyProductId);
+
+    const name = product.title;
+    const brand = product.vendor;
+    const description = product.body_html;
+    const price = product.variants[0]?.price || null;
+    const handle = product.handle;
+    const shopifyUrl = `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${handle}`;
+
+    // Featured image
+    const featuredImage = product.image?.src || null;
+
+    // All images (including featured)
+    const allImages = product.images.map((img) => img.src);
+
+    // 2️⃣ Create Webflow Item — only the featured image gets sent here first
     const payload = {
       fieldData: {
         name,
@@ -128,55 +143,51 @@ app.post("/webflow-sync", async (req, res) => {
       }
     );
 
-    const newItemId = created.data.id;
-    console.log("✅ Created Webflow item:", newItemId);
+    const itemId = created.data.id;
+    console.log("✅ Webflow item created:", itemId);
 
-    // 2️⃣ PROCESS AND UPLOAD OTHER IMAGES
-    const otherImages = images?.filter(url => url !== featuredImage) || [];
+    // 3️⃣ Upload ALL non-featured images to Webflow S3
+    const galleryImages = allImages.filter((img) => img !== featuredImage);
+    const webflowUrls = [];
 
-    let webflowUrls = [];
-    for (let url of otherImages) {
+    for (const imageUrl of galleryImages) {
       try {
-        console.log("⬇️ Download:", url);
-        const buffer = await downloadImage(url);
+        console.log("⬇️ Downloading:", imageUrl);
+        const buffer = await downloadImage(imageUrl);
 
-        const filename = url.split("/").pop() || "image.jpg";
+        const filename = imageUrl.split("/").pop() || "image.jpg";
 
-        console.log("⬆️ Uploading to Webflow…", filename);
-        const uploaded = await uploadToWebflow(buffer, filename);
+        console.log("⬆️ Uploading to Webflow:", filename);
+        const webflowUrl = await uploadToWebflow(buffer, filename);
 
-        console.log("🌐 Webflow URL:", uploaded);
-        webflowUrls.push(uploaded);
+        webflowUrls.push(webflowUrl);
       } catch (err) {
         console.error("❌ Image upload failed:", err.message);
       }
     }
 
-    // 3️⃣ PATCH MULTI–IMAGE FIELD
+    // 4️⃣ Patch Webflow multi-image field
     if (webflowUrls.length > 0) {
-      await patchWebflowImages(newItemId, webflowUrls);
-      console.log("🖼️ Multi-image updated:", webflowUrls.length, "images");
+      await patchWebflowImages(itemId, webflowUrls);
+      console.log("🖼️ Multi-image field updated:", webflowUrls.length);
     }
 
-    return res.json({
+    res.json({
       status: "ok",
-      itemId: newItemId,
-      addedImages: webflowUrls.length
+      itemId,
+      totalImagesUploaded: webflowUrls.length
     });
-
   } catch (err) {
     console.error("🔥 SERVER ERROR:", err.response?.data || err.message);
-
-    return res.status(500).json({
-      status: "error",
-      message: err.response?.data || err.message
+    res.status(500).json({
+      error: err.response?.data || err.message
     });
   }
 });
 
-// -------------------------------
+// ======================================================
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
-  console.log(`Webflow Sync Server live on port ${PORT}`);
+  console.log(`🔥 Webflow Sync Server running on port ${PORT}`);
 });
