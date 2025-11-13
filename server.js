@@ -2,7 +2,6 @@ import express from "express";
 import axios from "axios";
 import cors from "cors";
 import dotenv from "dotenv";
-import fetch from "node-fetch";
 import FormData from "form-data";
 import https from "https";
 
@@ -16,7 +15,7 @@ app.use(express.json());
 // HELPERS
 // -------------------------------
 
-// Download Shopify image into a Buffer
+// Download Shopify image into a Buffer (using built-in fetch)
 async function downloadImage(url) {
   const res = await fetch(url);
   return Buffer.from(await res.arrayBuffer());
@@ -24,7 +23,6 @@ async function downloadImage(url) {
 
 // Upload image buffer to Webflow (S3)
 async function uploadToWebflow(imageBuffer, filename) {
-  // Step 1 — request upload target
   const target = await axios.post(
     "https://api.webflow.com/v2/assets/upload",
     {
@@ -41,7 +39,6 @@ async function uploadToWebflow(imageBuffer, filename) {
 
   const { uploadUrl, assetUrl } = target.data;
 
-  // Step 2 — PUT binary to S3
   await axios.put(uploadUrl, imageBuffer, {
     headers: {
       "Content-Type": "image/jpeg"
@@ -51,7 +48,7 @@ async function uploadToWebflow(imageBuffer, filename) {
     httpsAgent: new https.Agent({ rejectUnauthorized: false })
   });
 
-  return assetUrl; // final Webflow-hosted URL
+  return assetUrl;
 }
 
 // Patch item with all multi-images
@@ -94,7 +91,7 @@ app.post("/webflow-sync", async (req, res) => {
       shopifyProductId,
       shopifyUrl,
       featuredImage,
-      images // ← Shopify array, includes featured
+      images
     } = req.body;
 
     console.log("📦 Incoming:", name);
@@ -106,9 +103,7 @@ app.post("/webflow-sync", async (req, res) => {
       });
     }
 
-    // ------------------------------------
     // 1️⃣ CREATE WEBFLOW ITEM (featured only)
-    // ------------------------------------
     const payload = {
       fieldData: {
         name,
@@ -136,10 +131,7 @@ app.post("/webflow-sync", async (req, res) => {
     const newItemId = created.data.id;
     console.log("✅ Created Webflow item:", newItemId);
 
-    // ------------------------------------
     // 2️⃣ PROCESS AND UPLOAD OTHER IMAGES
-    // ------------------------------------
-
     const otherImages = images?.filter(url => url !== featuredImage) || [];
 
     let webflowUrls = [];
@@ -155,21 +147,17 @@ app.post("/webflow-sync", async (req, res) => {
 
         console.log("🌐 Webflow URL:", uploaded);
         webflowUrls.push(uploaded);
-
       } catch (err) {
         console.error("❌ Image upload failed:", err.message);
       }
     }
 
-    // ------------------------------------
-    // 3️⃣ PATCH MULTI-IMAGE FIELD
-    // ------------------------------------
+    // 3️⃣ PATCH MULTI–IMAGE FIELD
     if (webflowUrls.length > 0) {
       await patchWebflowImages(newItemId, webflowUrls);
       console.log("🖼️ Multi-image updated:", webflowUrls.length, "images");
     }
 
-    // Respond immediately
     return res.json({
       status: "ok",
       itemId: newItemId,
