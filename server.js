@@ -67,7 +67,12 @@ app.post("/webflow-sync", async (req, res) => {
       webflowItemId: response.data.id,
       webflowResponse: response.data
     });
+
   } catch (err) {
+
+    // 🔥🔥 ADD THIS LOGGING HERE 🔥🔥
+    console.error("🔥 SERVER ERROR:", err.response?.data || err.message || err);
+
     return res.status(500).json({
       status: "error",
       message: err.response?.data || err.message
@@ -79,5 +84,3 @@ const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`Webflow Sync Server live on port ${PORT}`);
 });
-
-
