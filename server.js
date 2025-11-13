@@ -46,7 +46,9 @@ app.post("/webflow-sync", async (req, res) => {
         "shopify-product-id": shopifyProductId,
         "shopify-url": shopifyUrl,
         "featured-image": featuredImage ? { url: featuredImage } : null,
-        images: images || []
+
+        // ✅ THIS IS THE FIX
+        "image-s": images || []
       }
     };
 
@@ -70,7 +72,6 @@ app.post("/webflow-sync", async (req, res) => {
 
   } catch (err) {
 
-    // 🔥🔥 ADD THIS LOGGING HERE 🔥🔥
     console.error("🔥 SERVER ERROR:", err.response?.data || err.message || err);
 
     return res.status(500).json({
