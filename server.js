@@ -11,32 +11,69 @@ app.use(cors());
 app.use(express.json());
 
 // ======================================================
-// HELPERS
+// SHOPIFY GRAPHQL QUERY
 // ======================================================
 
-// Extract file ID from Shopify /files/... filenames
-function extractFileIdFromCDN(url) {
-  try {
-    const filename = url.split("/").pop().split("?")[0];
-    const match = filename.match(/^(\d+)/);
-    return match ? match[1] : null;
-  } catch {
-    return null;
+const SHOPIFY_GRAPHQL_URL = `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/graphql.json`;
+
+async function fetchProductViaGraphQL(productId) {
+  const productGid = `gid://shopify/Product/${productId}`;
+
+  const query = `
+    query GetProduct($id: ID!) {
+      product(id: $id) {
+        id
+        title
+        vendor
+        handle
+        bodyHtml
+        variants(first: 1) {
+          edges {
+            node {
+              price
+            }
+          }
+        }
+        media(first: 30) {
+          edges {
+            node {
+              ... on MediaImage {
+                image {
+                  url
+                  originalSrc
+                  mimeType
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const response = await axios.post(
+    SHOPIFY_GRAPHQL_URL,
+    { query, variables: { id: productGid } },
+    {
+      headers: {
+        "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN,
+        "Content-Type": "application/json"
+      }
+    }
+  );
+
+  if (response.data.errors) {
+    console.error("GraphQL Errors:", response.data.errors);
+    throw new Error("Shopify GraphQL query failed");
   }
+
+  return response.data.data.product;
 }
 
-// Download via Shopify FILES API
-async function fetchFilePublicUrl(fileId) {
-  const url = `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/files/${fileId}.json`;
+// ======================================================
+// DOWNLOAD IMAGE BY URL
+// ======================================================
 
-  const response = await axios.get(url, {
-    headers: { "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN }
-  });
-
-  return response.data.file.public_url;
-}
-
-// Download an image from ANY URL
 async function downloadImage(url) {
   const response = await axios.get(url, {
     responseType: "arraybuffer",
@@ -48,7 +85,10 @@ async function downloadImage(url) {
   return Buffer.from(response.data);
 }
 
-// RAW upload for Webflow S3
+// ======================================================
+// WEBFLOW UPLOAD HELPERS
+// ======================================================
+
 function uploadRawToWebflow(uploadUrl, buffer, mimeType) {
   return new Promise((resolve, reject) => {
     const url = new URL(uploadUrl);
@@ -76,7 +116,6 @@ function uploadRawToWebflow(uploadUrl, buffer, mimeType) {
   });
 }
 
-// Upload raw bytes → Webflow
 async function uploadToWebflow(buffer) {
   const filename = `image-${Math.random().toString(36).substring(2, 12)}.jpg`;
 
@@ -98,7 +137,6 @@ async function uploadToWebflow(buffer) {
   return target.data.assetUrl;
 }
 
-// Patch multi-image gallery
 async function patchWebflowImages(itemId, urls) {
   return axios.patch(
     `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items/${itemId}`,
@@ -116,26 +154,14 @@ async function patchWebflowImages(itemId, urls) {
   );
 }
 
-// Fetch product
-async function fetchShopifyProduct(id) {
-  const url = `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products/${id}.json`;
-
-  const response = await axios.get(url, {
-    headers: { "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN }
-  });
-
-  return response.data.product;
-}
-
 // ======================================================
 // ROUTES
 // ======================================================
 
 app.get("/", (req, res) => {
-  res.send("L&F Webflow Sync Server Running");
+  res.send("L&F Webflow Sync Server (GraphQL Version) Running");
 });
 
-// MAIN SYNC ENDPOINT
 app.post("/webflow-sync", async (req, res) => {
   try {
     const { shopifyProductId } = req.body;
@@ -144,20 +170,24 @@ app.post("/webflow-sync", async (req, res) => {
 
     console.log("📦 Syncing Shopify Product:", shopifyProductId);
 
-    // 1️⃣ Fetch product
-    const product = await fetchShopifyProduct(shopifyProductId);
+    // 1️⃣ GET PRODUCT THROUGH GRAPHQL MEDIA API
+    const product = await fetchProductViaGraphQL(shopifyProductId);
 
     const name = product.title;
     const brand = product.vendor;
-    const description = product.body_html;
-    const price = product.variants?.[0]?.price || null;
-    const handle = product.handle;
-    const shopifyUrl = `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${handle}`;
+    const description = product.bodyHtml;
+    const price = product.variants.edges[0]?.node?.price || null;
+    const shopifyUrl = `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${product.handle}`;
 
-    const featuredImage = product.image?.src || null;
-    const allImages = product.images.map((img) => img.src);
+    // Extract images
+    const images = product.media.edges
+      .map((edge) => edge.node.image?.url)
+      .filter(Boolean);
 
-    // 2️⃣ Create Webflow item
+    const featuredImage = images[0] || null;
+    const galleryImages = images.slice(1);
+
+    // 2️⃣ CREATE WEBFLOW ITEM
     const created = await axios.post(
       `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items`,
       {
@@ -182,42 +212,24 @@ app.post("/webflow-sync", async (req, res) => {
     const itemId = created.data.id;
     console.log("✅ Webflow item created:", itemId);
 
-    // 3️⃣ Upload gallery images WITH FILE API FIX
-    const gallery = allImages.filter((src) => src !== featuredImage);
+    // 3️⃣ UPLOAD GALLERY IMAGES
     const uploadedUrls = [];
 
-    for (const imageUrl of gallery) {
+    for (const url of galleryImages) {
       try {
-        console.log("🔍 Checking if image is a Shopify File:", imageUrl);
-
-        let downloadUrl = imageUrl;
-
-        if (imageUrl.includes("/files/")) {
-          const fileId = extractFileIdFromCDN(imageUrl);
-          console.log("📂 Extracted file ID:", fileId);
-
-          if (fileId) {
-            console.log("🔗 Fetching public_url from Files API...");
-            downloadUrl = await fetchFilePublicUrl(fileId);
-
-            console.log("📥 Using file public_url:", downloadUrl);
-          }
-        }
-
-        console.log("⬇️ Downloading:", downloadUrl);
-        const buffer = await downloadImage(downloadUrl);
+        console.log("⬇️ Downloading:", url);
+        const buffer = await downloadImage(url);
 
         console.log("⬆️ Uploading to Webflow…");
         const webflowUrl = await uploadToWebflow(buffer);
 
         uploadedUrls.push(webflowUrl);
-
       } catch (err) {
-        console.error("❌ Failed gallery image:", err.message || err);
+        console.error("❌ Failed image:", err.message);
       }
     }
 
-    // 4️⃣ Save gallery images to Webflow
+    // 4️⃣ PATCH GALLERY
     if (uploadedUrls.length > 0) {
       await patchWebflowImages(itemId, uploadedUrls);
       console.log("🖼️ Gallery patched:", uploadedUrls.length);
@@ -228,7 +240,6 @@ app.post("/webflow-sync", async (req, res) => {
       itemId,
       uploaded: uploadedUrls.length
     });
-
   } catch (err) {
     console.error("🔥 SERVER ERROR:", err);
     res.status(500).json({ error: err.toString() });
@@ -239,5 +250,5 @@ app.post("/webflow-sync", async (req, res) => {
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () =>
-  console.log(`🔥 Webflow Sync Server running on port ${PORT}`)
+  console.log(`🔥 GraphQL Webflow Sync Server running on port ${PORT}`)
 );
