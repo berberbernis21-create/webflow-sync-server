@@ -72,6 +72,9 @@ async function patchWebflowImages(itemId, urls) {
 
 // Fetch Shopify Product
 async function fetchShopifyProduct(id) {
+  console.log("🔥 LIVE TOKEN IN SERVER:", process.env.SHOPIFY_ACCESS_TOKEN);
+  console.log("🔥 USING STORE:", process.env.SHOPIFY_STORE);
+
   const url = `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products/${id}.json`;
 
   const response = await axios.get(url, {
@@ -112,10 +115,7 @@ app.post("/webflow-sync", async (req, res) => {
     const handle = product.handle;
     const shopifyUrl = `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${handle}`;
 
-    // Featured image
     const featuredImage = product.image?.src || null;
-
-    // All images (including featured)
     const allImages = product.images.map((img) => img.src);
 
     // 2️⃣ Create Webflow Item
@@ -177,7 +177,6 @@ app.post("/webflow-sync", async (req, res) => {
       itemId,
       totalImagesUploaded: webflowUrls.length
     });
-
   } catch (err) {
     console.error("🔥 SERVER ERROR:", err.response?.data || err.message);
     res.status(500).json({
