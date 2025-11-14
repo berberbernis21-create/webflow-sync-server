@@ -27,8 +27,8 @@ async function fetchShopifyProduct(productId) {
 }
 
 // ======================================================
-// 🔍 FIND EXISTING WEBFLOW ITEM (API v2 does NOT support filtering)
-// We paginate all items and match manually.
+// 🔍 FIND EXISTING WEBFLOW ITEM (API v2 cannot filter by field)
+// Manually paginate and match the shopify-product-id
 // ======================================================
 
 async function findExistingWebflowItem(shopifyProductId) {
@@ -61,13 +61,11 @@ async function findExistingWebflowItem(shopifyProductId) {
 }
 
 // ======================================================
-// ROUTE: CREATE OR UPDATE WEBFLOW ITEM
+// ROUTES
 // ======================================================
 
 app.get("/", (req, res) => {
-  res.send(
-    "L&F Webflow Sync Server (Individual Image Fields + No Duplicates) Running"
-  );
+  res.send("L&F Webflow Sync Server (6 Images + No Duplicates) Running");
 });
 
 app.post("/webflow-sync", async (req, res) => {
@@ -80,7 +78,7 @@ app.post("/webflow-sync", async (req, res) => {
 
     console.log("📦 Syncing Shopify Product:", shopifyProductId);
 
-    // 1️⃣ Fetch Shopify product
+    // 1️⃣ Fetch Shopify data
     const product = await fetchShopifyProduct(shopifyProductId);
 
     const name = product.title;
@@ -90,33 +88,42 @@ app.post("/webflow-sync", async (req, res) => {
     const slug = product.handle;
     const shopifyUrl = `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${slug}`;
 
+    // Images
     const allImages = (product.images || []).map((img) => img.src);
     const featuredImage = product.image?.src || allImages[0] || null;
     const gallery = allImages.filter((url) => url !== featuredImage);
 
-    console.log("🖼️ Images Found:", { featuredImage, gallery });
+    console.log("🖼️ Images Found:", {
+      featuredImage,
+      gallery,
+    });
 
-    // 2️⃣ Build Webflow payload (IMPORTANT FIX APPLIED HERE)
+    // 2️⃣ Build Webflow payload
     const fieldData = {
       name,
       slug,
       brand,
       price,
       description,
-      "shopify-product-id": String(shopifyProductId), // ← FIXED
+      "shopify-product-id": String(shopifyProductId),
       "shopify-url": shopifyUrl,
+
+      // Featured image
       "featured-image": featuredImage ? { url: featuredImage } : null,
 
-      // Individual image fields
+      // Up to 6 gallery images
       "image-1": gallery[0] ? { url: gallery[0] } : null,
       "image-2": gallery[1] ? { url: gallery[1] } : null,
       "image-3": gallery[2] ? { url: gallery[2] } : null,
+      "image-4": gallery[3] ? { url: gallery[3] } : null,
+      "image-5": gallery[4] ? { url: gallery[4] } : null,
+      "image-6": gallery[5] ? { url: gallery[5] } : null,
 
       "show-on-webflow": true,
       "featured-item-on-homepage": false,
     };
 
-    // 3️⃣ Look for existing item
+    // 3️⃣ Create or Update
     const existing = await findExistingWebflowItem(shopifyProductId);
 
     let itemId;
@@ -124,7 +131,7 @@ app.post("/webflow-sync", async (req, res) => {
 
     if (existing) {
       operation = "update";
-      console.log("✏️ Updating existing item:", existing.id);
+      console.log("✏️ Updating Webflow item:", existing.id);
 
       const updateResp = await axios.patch(
         `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items/${existing.id}`,
@@ -158,12 +165,13 @@ app.post("/webflow-sync", async (req, res) => {
 
     console.log(`✅ Webflow item ${operation}d:`, itemId);
 
+    // 4️⃣ Return response
     res.json({
       status: "ok",
       operation,
       itemId,
       featured: featuredImage,
-      galleryUsed: gallery.slice(0, 3),
+      galleryUsed: gallery.slice(0, 6),
     });
   } catch (err) {
     console.error("🔥 SERVER ERROR:", err);
@@ -172,6 +180,8 @@ app.post("/webflow-sync", async (req, res) => {
   }
 });
 
+// ======================================================
+// SERVER
 // ======================================================
 
 const PORT = process.env.PORT || 4000;
