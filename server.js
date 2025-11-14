@@ -14,20 +14,21 @@ app.use(express.json());
 // HELPERS
 // ======================================================
 
-// Download image BY ID using Shopify Admin API (never CDN)
-// This returns guaranteed bytes.
-async function downloadShopifyImage(productId, imageId) {
-  const url = `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products/${productId}/images/${imageId}.json`;
+// Download image directly from Shopify CDN
+async function downloadCDNImage(url) {
+  try {
+    const response = await axios.get(url, {
+      responseType: "arraybuffer",
+      headers: {
+        "User-Agent": "Mozilla/5.0",
+        Accept: "image/*"
+      }
+    });
 
-  const response = await axios.get(url, {
-    headers: { "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN }
-  });
-
-  // Shopify returns base64
-  const base64 = response.data.image.attachment;
-  if (!base64) throw new Error("Shopify returned no attachment data");
-
-  return Buffer.from(base64, "base64");
+    return Buffer.from(response.data);
+  } catch (err) {
+    throw new Error("CDN download failed: " + err.message);
+  }
 }
 
 // RAW S3 upload for Webflow
@@ -77,9 +78,7 @@ async function uploadToWebflow(imageBuffer) {
   );
 
   const { uploadUrl, assetUrl } = target.data;
-
   await uploadRawToWebflow(uploadUrl, imageBuffer, "image/jpeg");
-
   return assetUrl;
 }
 
@@ -140,8 +139,8 @@ app.post("/webflow-sync", async (req, res) => {
     const handle = product.handle;
     const shopifyUrl = `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${handle}`;
 
-    const featuredImageId = product.image?.id || null;
-    const allImageIds = product.images.map((img) => img.id);
+    const featuredImageSrc = product.image?.src || null;
+    const allImages = product.images.map((img) => img.src);
 
     // 2️⃣ Create Webflow item
     const created = await axios.post(
@@ -154,8 +153,8 @@ app.post("/webflow-sync", async (req, res) => {
           description,
           "shopify-product-id": shopifyProductId,
           "shopify-url": shopifyUrl,
-          "featured-image": featuredImageId
-            ? { url: product.image.src }
+          "featured-image": featuredImageSrc
+            ? { url: featuredImageSrc }
             : null
         }
       },
@@ -170,34 +169,34 @@ app.post("/webflow-sync", async (req, res) => {
     const itemId = created.data.id;
     console.log("✅ Webflow item created:", itemId);
 
-    // 3️⃣ Upload gallery images via ADMIN API
-    const galleryIds = allImageIds.filter((id) => id !== featuredImageId);
+    // 3️⃣ Upload gallery images (from CDN, not Admin API!)
+    const gallery = allImages.filter((src) => src !== featuredImageSrc);
+    const uploadedUrls = [];
 
-    const webflowUrls = [];
-
-    for (const imgId of galleryIds) {
+    for (const imageUrl of gallery) {
       try {
-        console.log("⬇️ Fetching raw image via Admin API:", imgId);
+        console.log("⬇️ Downloading from CDN:", imageUrl);
+        const buffer = await downloadCDNImage(imageUrl);
 
-        const buffer = await downloadShopifyImage(shopifyProductId, imgId);
+        console.log("⬆️ Uploading to Webflow…");
+        const webflowUrl = await uploadToWebflow(buffer);
 
-        console.log("⬆️ Uploading to Webflow...");
-        const url = await uploadToWebflow(buffer);
-
-        webflowUrls.push(url);
+        uploadedUrls.push(webflowUrl);
       } catch (err) {
-        console.error("❌ Failed gallery image:", err);
+        console.error("❌ Failed gallery image:", err.message);
       }
     }
 
     // 4️⃣ Save to Webflow
-    if (webflowUrls.length > 0)
-      await patchWebflowImages(itemId, webflowUrls);
+    if (uploadedUrls.length > 0) {
+      await patchWebflowImages(itemId, uploadedUrls);
+      console.log("🖼️ Gallery patched:", uploadedUrls.length);
+    }
 
     res.json({
       status: "ok",
       itemId,
-      uploaded: webflowUrls.length
+      uploaded: uploadedUrls.length
     });
 
   } catch (err) {
