@@ -27,11 +27,28 @@ async function fetchShopifyProduct(productId) {
 }
 
 // ======================================================
-// ROUTES
+// 🔍 LOOKUP EXISTING WEBFLOW ITEM BY SHOPIFY PRODUCT ID
+// ======================================================
+
+async function findExistingWebflowItem(shopifyProductId) {
+  const url = `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items?filter[shopify-product-id]=${shopifyProductId}`;
+
+  const response = await axios.get(url, {
+    headers: {
+      Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
+      "accept": "application/json"
+    }
+  });
+
+  return response.data.items?.[0] || null;
+}
+
+// ======================================================
+// ROUTE: CREATE OR UPDATE WEBFLOW ITEM
 // ======================================================
 
 app.get("/", (req, res) => {
-  res.send("L&F Webflow Sync Server (Individual Image Fields) Running");
+  res.send("L&F Webflow Sync Server (Individual Image Fields + No Duplicates) Running");
 });
 
 app.post("/webflow-sync", async (req, res) => {
@@ -44,7 +61,7 @@ app.post("/webflow-sync", async (req, res) => {
 
     console.log("📦 Syncing Shopify Product:", shopifyProductId);
 
-    // 1️⃣ Get product + all images
+    // 1️⃣ Fetch product + images from Shopify
     const product = await fetchShopifyProduct(shopifyProductId);
 
     const name = product.title;
@@ -54,9 +71,7 @@ app.post("/webflow-sync", async (req, res) => {
     const slug = product.handle;
     const shopifyUrl = `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${slug}`;
 
-    // All Shopify image URLs
     const allImages = (product.images || []).map((img) => img.src);
-
     const featuredImage = product.image?.src || allImages[0] || null;
     const gallery = allImages.filter((url) => url !== featuredImage);
 
@@ -65,7 +80,7 @@ app.post("/webflow-sync", async (req, res) => {
       gallery
     });
 
-    // 2️⃣ Prepare EXACT Webflow field slugs
+    // 2️⃣ Build Webflow fieldData payload
     const fieldData = {
       name,
       slug,
@@ -75,34 +90,62 @@ app.post("/webflow-sync", async (req, res) => {
       "shopify-product-id": shopifyProductId,
       "shopify-url": shopifyUrl,
       "featured-image": featuredImage ? { url: featuredImage } : null,
-
-      // Individual image fields (max 3)
       "image-1": gallery[0] ? { url: gallery[0] } : null,
       "image-2": gallery[1] ? { url: gallery[1] } : null,
       "image-3": gallery[2] ? { url: gallery[2] } : null,
-
-      // Optional defaults
       "show-on-webflow": true,
       "featured-item-on-homepage": false
     };
 
-    // 3️⃣ Create Webflow item
-    const created = await axios.post(
-      `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items`,
-      { fieldData },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
-          "Content-Type": "application/json"
-        }
-      }
-    );
+    // 3️⃣ Check if Webflow item already exists
+    const existing = await findExistingWebflowItem(shopifyProductId);
 
-    console.log("✅ Webflow Item Created:", created.data.id);
+    let itemId;
+    let operation;
+
+    if (existing) {
+      // 4️⃣ UPDATE (PATCH) existing item
+      operation = "update";
+      console.log("✏️ Updating existing item:", existing.id);
+
+      const updateResp = await axios.patch(
+        `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items/${existing.id}`,
+        { fieldData },
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
+            "Content-Type": "application/json"
+          }
+        }
+      );
+
+      itemId = updateResp.data.id;
+
+    } else {
+      // 5️⃣ CREATE new item
+      operation = "create";
+      console.log("🆕 Creating new Webflow item…");
+
+      const createResp = await axios.post(
+        `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items`,
+        { fieldData },
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
+            "Content-Type": "application/json"
+          }
+        }
+      );
+
+      itemId = createResp.data.id;
+    }
+
+    console.log(`✅ Webflow item ${operation}d:`, itemId);
 
     res.json({
       status: "ok",
-      itemId: created.data.id,
+      operation,
+      itemId,
       featured: featuredImage,
       galleryUsed: gallery.slice(0, 3)
     });
