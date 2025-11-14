@@ -11,10 +11,11 @@ app.use(cors());
 app.use(express.json());
 
 // ======================================================
-// SHOPIFY GRAPHQL QUERY
+// SHOPIFY GRAPHQL
 // ======================================================
 
-const SHOPIFY_GRAPHQL_URL = `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/graphql.json`;
+const SHOPIFY_GRAPHQL_URL =
+  `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/graphql.json`;
 
 async function fetchProductViaGraphQL(productId) {
   const productGid = `gid://shopify/Product/${productId}`;
@@ -29,21 +30,7 @@ async function fetchProductViaGraphQL(productId) {
         bodyHtml
         variants(first: 1) {
           edges {
-            node {
-              price
-            }
-          }
-        }
-        media(first: 30) {
-          edges {
-            node {
-              ... on MediaImage {
-                image {
-                  url
-                  originalSrc
-                }
-              }
-            }
+            node { price }
           }
         }
       }
@@ -70,7 +57,49 @@ async function fetchProductViaGraphQL(productId) {
 }
 
 // ======================================================
-// DOWNLOAD IMAGE BY URL
+// FETCH MATCHING FILES FROM SHOPIFY FILES (REAL SOURCE)
+// ======================================================
+
+async function fetchMatchingFiles(pattern) {
+  const query = `
+    query FilesQuery($search: String!) {
+      files(first: 50, query: $search) {
+        edges {
+          node {
+            ... on MediaImage {
+              id
+              image { url }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const response = await axios.post(
+    SHOPIFY_GRAPHQL_URL,
+    {
+      query,
+      variables: {
+        search: pattern   // example: "623572" matches Traxia filenames
+      }
+    },
+    {
+      headers: {
+        "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN,
+        "Content-Type": "application/json"
+      }
+    }
+  );
+
+  const edges = response.data?.data?.files?.edges || [];
+  return edges
+    .map(e => e.node?.image?.url)
+    .filter(Boolean);
+}
+
+// ======================================================
+// IMAGE DOWNLOAD
 // ======================================================
 
 async function downloadImage(url) {
@@ -85,7 +114,7 @@ async function downloadImage(url) {
 }
 
 // ======================================================
-// WEBFLOW UPLOAD HELPERS
+// WEBFLOW UPLOAD
 // ======================================================
 
 function uploadRawToWebflow(uploadUrl, buffer, mimeType) {
@@ -158,7 +187,7 @@ async function patchWebflowImages(itemId, urls) {
 // ======================================================
 
 app.get("/", (req, res) => {
-  res.send("L&F Webflow Sync Server (GraphQL Version) Running");
+  res.send("L&F Webflow Sync Server Running (Files API Version)");
 });
 
 app.post("/webflow-sync", async (req, res) => {
@@ -169,7 +198,7 @@ app.post("/webflow-sync", async (req, res) => {
 
     console.log("📦 Syncing Shopify Product:", shopifyProductId);
 
-    // 1️⃣ GET PRODUCT THROUGH GRAPHQL MEDIA API
+    // 1️⃣ GET PRODUCT BASICS
     const product = await fetchProductViaGraphQL(shopifyProductId);
 
     const name = product.title;
@@ -178,15 +207,21 @@ app.post("/webflow-sync", async (req, res) => {
     const price = product.variants.edges[0]?.node?.price || null;
     const shopifyUrl = `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${product.handle}`;
 
-    // Extract all images
-    const images = product.media.edges
-      .map((edge) => edge.node.image?.url)
-      .filter(Boolean);
+    // 2️⃣ EXTRACT SEARCH PATTERN (last 6 digits)
+    const pattern = shopifyProductId.slice(-6);
 
-    const featuredImage = images[0] || null;
-    const galleryImages = images.slice(1);
+    console.log("🔍 Searching Shopify Files for:", pattern);
 
-    // 2️⃣ CREATE WEBFLOW ITEM
+    const fileImages = await fetchMatchingFiles(pattern);
+
+    if (!fileImages.length) {
+      console.log("⚠️ No images found in Shopify Files.");
+    }
+
+    const featuredImage = fileImages[0] || null;
+    const galleryImages = fileImages.slice(1);
+
+    // 3️⃣ CREATE WEBFLOW ITEM
     const created = await axios.post(
       `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items`,
       {
@@ -211,7 +246,7 @@ app.post("/webflow-sync", async (req, res) => {
     const itemId = created.data.id;
     console.log("✅ Webflow item created:", itemId);
 
-    // 3️⃣ UPLOAD GALLERY IMAGES
+    // 4️⃣ UPLOAD GALLERY IMAGES
     const uploadedUrls = [];
 
     for (const url of galleryImages) {
@@ -219,7 +254,7 @@ app.post("/webflow-sync", async (req, res) => {
         console.log("⬇️ Downloading:", url);
         const buffer = await downloadImage(url);
 
-        console.log("⬆️ Uploading to Webflow…");
+        console.log("⬆️ Uploading to Webflow...");
         const webflowUrl = await uploadToWebflow(buffer);
 
         uploadedUrls.push(webflowUrl);
@@ -228,7 +263,7 @@ app.post("/webflow-sync", async (req, res) => {
       }
     }
 
-    // 4️⃣ PATCH GALLERY INTO WEBFLOW
+    // 5️⃣ PATCH GALLERY
     if (uploadedUrls.length > 0) {
       await patchWebflowImages(itemId, uploadedUrls);
       console.log("🖼️ Gallery patched:", uploadedUrls.length);
@@ -239,6 +274,7 @@ app.post("/webflow-sync", async (req, res) => {
       itemId,
       uploaded: uploadedUrls.length
     });
+
   } catch (err) {
     console.error("🔥 SERVER ERROR:", err);
     res.status(500).json({ error: err.toString() });
@@ -249,5 +285,5 @@ app.post("/webflow-sync", async (req, res) => {
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () =>
-  console.log(`🔥 GraphQL Webflow Sync Server running on port ${PORT}`)
+  console.log(`🔥 Webflow Sync Server running on port ${PORT}`)
 );
