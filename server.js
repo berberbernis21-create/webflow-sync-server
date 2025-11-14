@@ -14,12 +14,41 @@ app.use(express.json());
 // HELPERS
 // ======================================================
 
-// Download ANY image URL → into a Buffer
+// Download ANY image URL → Buffer
 async function downloadImage(url) {
   const response = await axios.get(url, {
     responseType: "arraybuffer"
   });
   return Buffer.from(response.data);
+}
+
+// TRUE S3 upload using native HTTPS (fixes 404 errors)
+function uploadRawToWebflow(uploadUrl, buffer, mimeType) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(uploadUrl);
+
+    const options = {
+      method: "PUT",
+      hostname: url.hostname,
+      path: url.pathname + url.search,
+      headers: {
+        "Content-Type": mimeType,
+        "Content-Length": buffer.length
+      }
+    };
+
+    const req = https.request(options, (res) => {
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        resolve(true);
+      } else {
+        reject(`Upload failed with code ${res.statusCode}`);
+      }
+    });
+
+    req.on("error", reject);
+    req.write(buffer);
+    req.end();
+  });
 }
 
 // Upload Buffer → Webflow S3
@@ -40,19 +69,12 @@ async function uploadToWebflow(imageBuffer, filename) {
 
   const { uploadUrl, assetUrl } = target.data;
 
-  await axios.put(uploadUrl, imageBuffer, {
-    headers: {
-      "Content-Type": "image/jpeg"
-    },
-    maxBodyLength: Infinity,
-    maxContentLength: Infinity,
-    httpsAgent: new https.Agent({ rejectUnauthorized: false })
-  });
+  await uploadRawToWebflow(uploadUrl, imageBuffer, "image/jpeg");
 
   return assetUrl;
 }
 
-// Patch MULTI-IMAGE field after item is created
+// Patch MULTI-IMAGE field
 async function patchWebflowImages(itemId, urls) {
   return axios.patch(
     `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items/${itemId}`,
@@ -72,9 +94,6 @@ async function patchWebflowImages(itemId, urls) {
 
 // Fetch Shopify Product
 async function fetchShopifyProduct(id) {
-  console.log("🔥 LIVE TOKEN IN SERVER:", process.env.SHOPIFY_ACCESS_TOKEN);
-  console.log("🔥 USING STORE:", process.env.SHOPIFY_STORE);
-
   const url = `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products/${id}.json`;
 
   const response = await axios.get(url, {
@@ -105,7 +124,7 @@ app.post("/webflow-sync", async (req, res) => {
 
     console.log("📦 Syncing Shopify Product:", shopifyProductId);
 
-    // 1️⃣ Fetch from Shopify
+    // 1️⃣ Fetch Shopify Product
     const product = await fetchShopifyProduct(shopifyProductId);
 
     const name = product.title;
@@ -118,7 +137,7 @@ app.post("/webflow-sync", async (req, res) => {
     const featuredImage = product.image?.src || null;
     const allImages = product.images.map((img) => img.src);
 
-    // 2️⃣ Create Webflow Item
+    // 2️⃣ Create Webflow item (one time)
     const payload = {
       fieldData: {
         name,
@@ -146,7 +165,7 @@ app.post("/webflow-sync", async (req, res) => {
     const itemId = created.data.id;
     console.log("✅ Webflow item created:", itemId);
 
-    // 3️⃣ Upload ALL non-featured images to Webflow S3
+    // 3️⃣ Upload only non-featured images
     const galleryImages = allImages.filter((img) => img !== featuredImage);
     const webflowUrls = [];
 
@@ -155,9 +174,9 @@ app.post("/webflow-sync", async (req, res) => {
         console.log("⬇️ Downloading:", imageUrl);
         const buffer = await downloadImage(imageUrl);
 
-        // FIX: remove Shopify ?v= query string from filename
+        // Clean Shopify filename → remove ?v=
         let filename = imageUrl.split("/").pop() || "image.jpg";
-        filename = filename.split("?")[0]; // <-- critical fix
+        filename = filename.split("?")[0];
 
         console.log("⬆️ Uploading to Webflow:", filename);
         const webflowUrl = await uploadToWebflow(buffer, filename);
@@ -168,7 +187,7 @@ app.post("/webflow-sync", async (req, res) => {
       }
     }
 
-    // 4️⃣ Patch multi-image field
+    // 4️⃣ Patch the Webflow multi-image field
     if (webflowUrls.length > 0) {
       await patchWebflowImages(itemId, webflowUrls);
       console.log("🖼️ Multi-image field updated:", webflowUrls.length);
