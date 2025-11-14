@@ -76,7 +76,7 @@ async function fetchShopifyProduct(id) {
 
   const response = await axios.get(url, {
     headers: {
-      "X-Shopify-Access-Token": process.env.SHOPIFY_API_KEY
+      "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN
     }
   });
 
@@ -118,7 +118,7 @@ app.post("/webflow-sync", async (req, res) => {
     // All images (including featured)
     const allImages = product.images.map((img) => img.src);
 
-    // 2️⃣ Create Webflow Item — only the featured image gets sent here first
+    // 2️⃣ Create Webflow Item
     const payload = {
       fieldData: {
         name,
@@ -166,7 +166,7 @@ app.post("/webflow-sync", async (req, res) => {
       }
     }
 
-    // 4️⃣ Patch Webflow multi-image field
+    // 4️⃣ Patch multi-image field
     if (webflowUrls.length > 0) {
       await patchWebflowImages(itemId, webflowUrls);
       console.log("🖼️ Multi-image field updated:", webflowUrls.length);
@@ -177,6 +177,7 @@ app.post("/webflow-sync", async (req, res) => {
       itemId,
       totalImagesUploaded: webflowUrls.length
     });
+
   } catch (err) {
     console.error("🔥 SERVER ERROR:", err.response?.data || err.message);
     res.status(500).json({
