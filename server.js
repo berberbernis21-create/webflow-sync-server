@@ -65,7 +65,7 @@ async function findExistingWebflowItem(shopifyProductId) {
 // ======================================================
 
 app.get("/", (req, res) => {
-  res.send("L&F Webflow Sync Server (6 Images + No Duplicates) Running");
+  res.send("L&F Webflow Sync Server (5 Images + No Duplicates) Running");
 });
 
 app.post("/webflow-sync", async (req, res) => {
@@ -98,7 +98,7 @@ app.post("/webflow-sync", async (req, res) => {
       gallery,
     });
 
-    // 2️⃣ Build Webflow payload
+    // 2️⃣ Build Webflow payload (ONLY 5 gallery fields)
     const fieldData = {
       name,
       slug,
@@ -111,13 +111,12 @@ app.post("/webflow-sync", async (req, res) => {
       // Featured image
       "featured-image": featuredImage ? { url: featuredImage } : null,
 
-      // Up to 6 gallery images
+      // Up to 5 gallery images
       "image-1": gallery[0] ? { url: gallery[0] } : null,
       "image-2": gallery[1] ? { url: gallery[1] } : null,
       "image-3": gallery[2] ? { url: gallery[2] } : null,
       "image-4": gallery[3] ? { url: gallery[3] } : null,
       "image-5": gallery[4] ? { url: gallery[4] } : null,
-      "image-6": gallery[5] ? { url: gallery[5] } : null,
 
       "show-on-webflow": true,
       "featured-item-on-homepage": false,
@@ -171,7 +170,7 @@ app.post("/webflow-sync", async (req, res) => {
       operation,
       itemId,
       featured: featuredImage,
-      galleryUsed: gallery.slice(0, 6),
+      galleryUsed: gallery.slice(0, 5),
     });
   } catch (err) {
     console.error("🔥 SERVER ERROR:", err);
