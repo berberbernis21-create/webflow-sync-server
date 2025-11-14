@@ -14,23 +14,26 @@ app.use(express.json());
 // HELPERS
 // ======================================================
 
-// Download ANY image URL → Buffer
-async function downloadImage(url) {
+// Download image BY ID using Shopify Admin API (never CDN)
+// This returns guaranteed bytes.
+async function downloadShopifyImage(productId, imageId) {
+  const url = `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products/${productId}/images/${imageId}.json`;
+
   const response = await axios.get(url, {
-    responseType: "arraybuffer",
-    headers: {
-      "Accept": "image/jpeg",
-      "User-Agent": "Mozilla/5.0"
-    }
+    headers: { "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN }
   });
-  return Buffer.from(response.data);
+
+  // Shopify returns base64
+  const base64 = response.data.image.attachment;
+  if (!base64) throw new Error("Shopify returned no attachment data");
+
+  return Buffer.from(base64, "base64");
 }
 
-// Upload direct to Webflow S3 (raw PUT)
+// RAW S3 upload for Webflow
 function uploadRawToWebflow(uploadUrl, buffer, mimeType) {
   return new Promise((resolve, reject) => {
     const url = new URL(uploadUrl);
-
     const options = {
       method: "PUT",
       hostname: url.hostname,
@@ -55,11 +58,10 @@ function uploadRawToWebflow(uploadUrl, buffer, mimeType) {
   });
 }
 
-// Create Webflow S3 upload URL + upload image immediately
-async function uploadSingleImage(imageBuffer) {
-  const filename = `image-${Math.random().toString(36).slice(2)}.jpg`;
+// Upload to Webflow S3
+async function uploadToWebflow(imageBuffer) {
+  const filename = `image-${Math.random().toString(36).substring(2, 12)}.jpg`;
 
-  // GET A FRESH UPLOAD URL FOR THIS IMAGE
   const target = await axios.post(
     "https://api.webflow.com/v2/assets/upload",
     {
@@ -76,13 +78,12 @@ async function uploadSingleImage(imageBuffer) {
 
   const { uploadUrl, assetUrl } = target.data;
 
-  // NOW upload the image immediately (fixes the expired URL bug)
   await uploadRawToWebflow(uploadUrl, imageBuffer, "image/jpeg");
 
   return assetUrl;
 }
 
-// Patch MULTI-IMAGE field
+// Patch multi-image gallery
 async function patchWebflowImages(itemId, urls) {
   return axios.patch(
     `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items/${itemId}`,
@@ -100,14 +101,12 @@ async function patchWebflowImages(itemId, urls) {
   );
 }
 
-// Fetch Shopify Product
+// Fetch product from Shopify
 async function fetchShopifyProduct(id) {
   const url = `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products/${id}.json`;
 
   const response = await axios.get(url, {
-    headers: {
-      "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN
-    }
+    headers: { "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN }
   });
 
   return response.data.product;
@@ -121,29 +120,28 @@ app.get("/", (req, res) => {
   res.send("L&F Webflow Sync Server Running");
 });
 
-// MAIN ENDPOINT
+// MAIN SYNC ENDPOINT
 app.post("/webflow-sync", async (req, res) => {
   try {
     const { shopifyProductId } = req.body;
 
-    if (!shopifyProductId) {
+    if (!shopifyProductId)
       return res.status(400).json({ error: "Missing shopifyProductId" });
-    }
 
     console.log("📦 Syncing Shopify Product:", shopifyProductId);
 
-    // 1️⃣ Get Shopify product
+    // 1️⃣ Fetch product
     const product = await fetchShopifyProduct(shopifyProductId);
 
     const name = product.title;
     const brand = product.vendor;
     const description = product.body_html;
-    const price = product.variants[0]?.price || null;
+    const price = product.variants?.[0]?.price || null;
     const handle = product.handle;
     const shopifyUrl = `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${handle}`;
 
-    const featuredImage = product.image?.src || null;
-    const allImages = product.images.map((img) => img.src);
+    const featuredImageId = product.image?.id || null;
+    const allImageIds = product.images.map((img) => img.id);
 
     // 2️⃣ Create Webflow item
     const created = await axios.post(
@@ -156,14 +154,15 @@ app.post("/webflow-sync", async (req, res) => {
           description,
           "shopify-product-id": shopifyProductId,
           "shopify-url": shopifyUrl,
-          "featured-image": featuredImage ? { url: featuredImage } : null
+          "featured-image": featuredImageId
+            ? { url: product.image.src }
+            : null
         }
       },
       {
         headers: {
           Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
-          "Content-Type": "application/json",
-          Accept: "application/json"
+          "Content-Type": "application/json"
         }
       }
     );
@@ -171,45 +170,45 @@ app.post("/webflow-sync", async (req, res) => {
     const itemId = created.data.id;
     console.log("✅ Webflow item created:", itemId);
 
-    // 3️⃣ Upload gallery images (NEW LOGIC)
-    const galleryImages = allImages.filter((img) => img !== featuredImage);
+    // 3️⃣ Upload gallery images via ADMIN API
+    const galleryIds = allImageIds.filter((id) => id !== featuredImageId);
+
     const webflowUrls = [];
 
-    for (const imageUrl of galleryImages) {
+    for (const imgId of galleryIds) {
       try {
-        console.log("⬇️ Downloading:", imageUrl);
-        const buffer = await downloadImage(imageUrl);
+        console.log("⬇️ Fetching raw image via Admin API:", imgId);
 
-        console.log("🟦 Requesting fresh upload URL + uploading now...");
-        const webflowUrl = await uploadSingleImage(buffer);
+        const buffer = await downloadShopifyImage(shopifyProductId, imgId);
 
-        webflowUrls.push(webflowUrl);
+        console.log("⬆️ Uploading to Webflow...");
+        const url = await uploadToWebflow(buffer);
+
+        webflowUrls.push(url);
       } catch (err) {
-        console.error("❌ Image upload failed:", err.message);
+        console.error("❌ Failed gallery image:", err);
       }
     }
 
-    // 4️⃣ Patch images
-    if (webflowUrls.length > 0) {
+    // 4️⃣ Save to Webflow
+    if (webflowUrls.length > 0)
       await patchWebflowImages(itemId, webflowUrls);
-      console.log("🖼️ Multi-image field updated:", webflowUrls.length);
-    }
 
     res.json({
       status: "ok",
       itemId,
-      totalImagesUploaded: webflowUrls.length
+      uploaded: webflowUrls.length
     });
 
   } catch (err) {
-    console.error("🔥 SERVER ERROR:", err.response?.data || err.message);
-    res.status(500).json({ error: err.response?.data || err.message });
+    console.error("🔥 SERVER ERROR:", err);
+    res.status(500).json({ error: err });
   }
 });
 
 // ======================================================
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
-  console.log(`🔥 Webflow Sync Server running on port ${PORT}`);
-});
+app.listen(PORT, () =>
+  console.log(`🔥 Webflow Sync Server running on port ${PORT}`)
+);
