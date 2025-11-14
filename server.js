@@ -14,13 +14,19 @@ app.use(express.json());
 // HELPERS
 // ======================================================
 
-// Download ANY image URL → Buffer
+// Download ANY image URL → Buffer (FIXED: force JPEG, avoid WEBP)
 async function downloadImage(url) {
-  const response = await axios.get(url, { responseType: "arraybuffer" });
+  const response = await axios.get(url, {
+    responseType: "arraybuffer",
+    headers: {
+      "Accept": "image/jpeg",
+      "User-Agent": "Mozilla/5.0"
+    }
+  });
   return Buffer.from(response.data);
 }
 
-// RAW S3 upload (Webflow requires this)
+// RAW S3 upload (required by Webflow)
 function uploadRawToWebflow(uploadUrl, buffer, mimeType) {
   return new Promise((resolve, reject) => {
     const url = new URL(uploadUrl);
@@ -49,9 +55,8 @@ function uploadRawToWebflow(uploadUrl, buffer, mimeType) {
   });
 }
 
-// Upload Buffer → Webflow S3
+// Upload Buffer → Webflow S3 (FIXED: random filenames)
 async function uploadToWebflow(imageBuffer) {
-  // SAFE RANDOM FILENAME — FIXES EVERYTHING
   const filename = `image-${Math.random().toString(36).substring(2, 12)}.jpg`;
 
   const target = await axios.post(
@@ -166,7 +171,7 @@ app.post("/webflow-sync", async (req, res) => {
     const itemId = created.data.id;
     console.log("✅ Webflow item created:", itemId);
 
-    // 3️⃣ Upload remaining gallery images
+    // 3️⃣ Upload gallery images
     const galleryImages = allImages.filter((img) => img !== featuredImage);
     const webflowUrls = [];
 
@@ -184,7 +189,7 @@ app.post("/webflow-sync", async (req, res) => {
       }
     }
 
-    // 4️⃣ Patch images into Webflow item
+    // 4️⃣ Patch multi-image field
     if (webflowUrls.length > 0) {
       await patchWebflowImages(itemId, webflowUrls);
       console.log("🖼️ Multi-image field updated:", webflowUrls.length);
