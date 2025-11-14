@@ -14,24 +14,41 @@ app.use(express.json());
 // HELPERS
 // ======================================================
 
-// Download image directly from Shopify CDN
-async function downloadCDNImage(url) {
+// Extract file ID from Shopify /files/... filenames
+function extractFileIdFromCDN(url) {
   try {
-    const response = await axios.get(url, {
-      responseType: "arraybuffer",
-      headers: {
-        "User-Agent": "Mozilla/5.0",
-        Accept: "image/*"
-      }
-    });
-
-    return Buffer.from(response.data);
-  } catch (err) {
-    throw new Error("CDN download failed: " + err.message);
+    const filename = url.split("/").pop().split("?")[0];
+    const match = filename.match(/^(\d+)/);
+    return match ? match[1] : null;
+  } catch {
+    return null;
   }
 }
 
-// RAW S3 upload for Webflow
+// Download via Shopify FILES API
+async function fetchFilePublicUrl(fileId) {
+  const url = `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/files/${fileId}.json`;
+
+  const response = await axios.get(url, {
+    headers: { "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN }
+  });
+
+  return response.data.file.public_url;
+}
+
+// Download an image from ANY URL
+async function downloadImage(url) {
+  const response = await axios.get(url, {
+    responseType: "arraybuffer",
+    headers: {
+      "User-Agent": "Mozilla/5.0",
+      Accept: "image/*"
+    }
+  });
+  return Buffer.from(response.data);
+}
+
+// RAW upload for Webflow S3
 function uploadRawToWebflow(uploadUrl, buffer, mimeType) {
   return new Promise((resolve, reject) => {
     const url = new URL(uploadUrl);
@@ -59,8 +76,8 @@ function uploadRawToWebflow(uploadUrl, buffer, mimeType) {
   });
 }
 
-// Upload to Webflow S3
-async function uploadToWebflow(imageBuffer) {
+// Upload raw bytes → Webflow
+async function uploadToWebflow(buffer) {
   const filename = `image-${Math.random().toString(36).substring(2, 12)}.jpg`;
 
   const target = await axios.post(
@@ -77,9 +94,8 @@ async function uploadToWebflow(imageBuffer) {
     }
   );
 
-  const { uploadUrl, assetUrl } = target.data;
-  await uploadRawToWebflow(uploadUrl, imageBuffer, "image/jpeg");
-  return assetUrl;
+  await uploadRawToWebflow(target.data.uploadUrl, buffer, "image/jpeg");
+  return target.data.assetUrl;
 }
 
 // Patch multi-image gallery
@@ -100,7 +116,7 @@ async function patchWebflowImages(itemId, urls) {
   );
 }
 
-// Fetch product from Shopify
+// Fetch product
 async function fetchShopifyProduct(id) {
   const url = `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products/${id}.json`;
 
@@ -123,7 +139,6 @@ app.get("/", (req, res) => {
 app.post("/webflow-sync", async (req, res) => {
   try {
     const { shopifyProductId } = req.body;
-
     if (!shopifyProductId)
       return res.status(400).json({ error: "Missing shopifyProductId" });
 
@@ -139,7 +154,7 @@ app.post("/webflow-sync", async (req, res) => {
     const handle = product.handle;
     const shopifyUrl = `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${handle}`;
 
-    const featuredImageSrc = product.image?.src || null;
+    const featuredImage = product.image?.src || null;
     const allImages = product.images.map((img) => img.src);
 
     // 2️⃣ Create Webflow item
@@ -153,9 +168,7 @@ app.post("/webflow-sync", async (req, res) => {
           description,
           "shopify-product-id": shopifyProductId,
           "shopify-url": shopifyUrl,
-          "featured-image": featuredImageSrc
-            ? { url: featuredImageSrc }
-            : null
+          "featured-image": featuredImage ? { url: featuredImage } : null
         }
       },
       {
@@ -169,25 +182,42 @@ app.post("/webflow-sync", async (req, res) => {
     const itemId = created.data.id;
     console.log("✅ Webflow item created:", itemId);
 
-    // 3️⃣ Upload gallery images (from CDN, not Admin API!)
-    const gallery = allImages.filter((src) => src !== featuredImageSrc);
+    // 3️⃣ Upload gallery images WITH FILE API FIX
+    const gallery = allImages.filter((src) => src !== featuredImage);
     const uploadedUrls = [];
 
     for (const imageUrl of gallery) {
       try {
-        console.log("⬇️ Downloading from CDN:", imageUrl);
-        const buffer = await downloadCDNImage(imageUrl);
+        console.log("🔍 Checking if image is a Shopify File:", imageUrl);
+
+        let downloadUrl = imageUrl;
+
+        if (imageUrl.includes("/files/")) {
+          const fileId = extractFileIdFromCDN(imageUrl);
+          console.log("📂 Extracted file ID:", fileId);
+
+          if (fileId) {
+            console.log("🔗 Fetching public_url from Files API...");
+            downloadUrl = await fetchFilePublicUrl(fileId);
+
+            console.log("📥 Using file public_url:", downloadUrl);
+          }
+        }
+
+        console.log("⬇️ Downloading:", downloadUrl);
+        const buffer = await downloadImage(downloadUrl);
 
         console.log("⬆️ Uploading to Webflow…");
         const webflowUrl = await uploadToWebflow(buffer);
 
         uploadedUrls.push(webflowUrl);
+
       } catch (err) {
-        console.error("❌ Failed gallery image:", err.message);
+        console.error("❌ Failed gallery image:", err.message || err);
       }
     }
 
-    // 4️⃣ Save to Webflow
+    // 4️⃣ Save gallery images to Webflow
     if (uploadedUrls.length > 0) {
       await patchWebflowImages(itemId, uploadedUrls);
       console.log("🖼️ Gallery patched:", uploadedUrls.length);
@@ -201,7 +231,7 @@ app.post("/webflow-sync", async (req, res) => {
 
   } catch (err) {
     console.error("🔥 SERVER ERROR:", err);
-    res.status(500).json({ error: err });
+    res.status(500).json({ error: err.toString() });
   }
 });
 
