@@ -14,7 +14,7 @@ app.use(express.json());
 // HELPERS
 // ======================================================
 
-// Download ANY image URL → Buffer (FIXED: force JPEG, avoid WEBP)
+// Download ANY image URL → Buffer
 async function downloadImage(url) {
   const response = await axios.get(url, {
     responseType: "arraybuffer",
@@ -26,7 +26,7 @@ async function downloadImage(url) {
   return Buffer.from(response.data);
 }
 
-// RAW S3 upload (required by Webflow)
+// Upload direct to Webflow S3 (raw PUT)
 function uploadRawToWebflow(uploadUrl, buffer, mimeType) {
   return new Promise((resolve, reject) => {
     const url = new URL(uploadUrl);
@@ -55,10 +55,11 @@ function uploadRawToWebflow(uploadUrl, buffer, mimeType) {
   });
 }
 
-// Upload Buffer → Webflow S3 (FIXED: random filenames)
-async function uploadToWebflow(imageBuffer) {
-  const filename = `image-${Math.random().toString(36).substring(2, 12)}.jpg`;
+// Create Webflow S3 upload URL + upload image immediately
+async function uploadSingleImage(imageBuffer) {
+  const filename = `image-${Math.random().toString(36).slice(2)}.jpg`;
 
+  // GET A FRESH UPLOAD URL FOR THIS IMAGE
   const target = await axios.post(
     "https://api.webflow.com/v2/assets/upload",
     {
@@ -75,6 +76,7 @@ async function uploadToWebflow(imageBuffer) {
 
   const { uploadUrl, assetUrl } = target.data;
 
+  // NOW upload the image immediately (fixes the expired URL bug)
   await uploadRawToWebflow(uploadUrl, imageBuffer, "image/jpeg");
 
   return assetUrl;
@@ -130,7 +132,7 @@ app.post("/webflow-sync", async (req, res) => {
 
     console.log("📦 Syncing Shopify Product:", shopifyProductId);
 
-    // 1️⃣ Fetch product from Shopify
+    // 1️⃣ Get Shopify product
     const product = await fetchShopifyProduct(shopifyProductId);
 
     const name = product.title;
@@ -143,22 +145,20 @@ app.post("/webflow-sync", async (req, res) => {
     const featuredImage = product.image?.src || null;
     const allImages = product.images.map((img) => img.src);
 
-    // 2️⃣ Create item in Webflow
-    const payload = {
-      fieldData: {
-        name,
-        price,
-        brand,
-        description,
-        "shopify-product-id": shopifyProductId,
-        "shopify-url": shopifyUrl,
-        "featured-image": featuredImage ? { url: featuredImage } : null
-      }
-    };
-
+    // 2️⃣ Create Webflow item
     const created = await axios.post(
       `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items`,
-      payload,
+      {
+        fieldData: {
+          name,
+          price,
+          brand,
+          description,
+          "shopify-product-id": shopifyProductId,
+          "shopify-url": shopifyUrl,
+          "featured-image": featuredImage ? { url: featuredImage } : null
+        }
+      },
       {
         headers: {
           Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
@@ -171,7 +171,7 @@ app.post("/webflow-sync", async (req, res) => {
     const itemId = created.data.id;
     console.log("✅ Webflow item created:", itemId);
 
-    // 3️⃣ Upload gallery images
+    // 3️⃣ Upload gallery images (NEW LOGIC)
     const galleryImages = allImages.filter((img) => img !== featuredImage);
     const webflowUrls = [];
 
@@ -180,8 +180,8 @@ app.post("/webflow-sync", async (req, res) => {
         console.log("⬇️ Downloading:", imageUrl);
         const buffer = await downloadImage(imageUrl);
 
-        console.log("⬆️ Uploading image to Webflow...");
-        const webflowUrl = await uploadToWebflow(buffer);
+        console.log("🟦 Requesting fresh upload URL + uploading now...");
+        const webflowUrl = await uploadSingleImage(buffer);
 
         webflowUrls.push(webflowUrl);
       } catch (err) {
@@ -189,7 +189,7 @@ app.post("/webflow-sync", async (req, res) => {
       }
     }
 
-    // 4️⃣ Patch multi-image field
+    // 4️⃣ Patch images
     if (webflowUrls.length > 0) {
       await patchWebflowImages(itemId, webflowUrls);
       console.log("🖼️ Multi-image field updated:", webflowUrls.length);
@@ -203,9 +203,7 @@ app.post("/webflow-sync", async (req, res) => {
 
   } catch (err) {
     console.error("🔥 SERVER ERROR:", err.response?.data || err.message);
-    res.status(500).json({
-      error: err.response?.data || err.message
-    });
+    res.status(500).json({ error: err.response?.data || err.message });
   }
 });
 
