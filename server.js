@@ -19,28 +19,50 @@ async function fetchShopifyProduct(productId) {
   const response = await axios.get(url, {
     headers: {
       "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN,
-      "Content-Type": "application/json"
-    }
+      "Content-Type": "application/json",
+    },
   });
 
   return response.data.product;
 }
 
 // ======================================================
-// 🔍 LOOKUP EXISTING WEBFLOW ITEM BY SHOPIFY PRODUCT ID
+// 🔍 CORRECT WAY TO FIND EXISTING WEBFLOW ITEM
+// ======================================================
+// Webflow DOES NOT support filtering by field in API v2
+// So we must paginate and search manually
 // ======================================================
 
 async function findExistingWebflowItem(shopifyProductId) {
-  const url = `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items?filter[shopify-product-id]=${shopifyProductId}`;
+  let page = 1;
 
-  const response = await axios.get(url, {
-    headers: {
-      Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
-      "accept": "application/json"
+  while (true) {
+    const url = `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items?page=${page}&limit=100`;
+
+    const response = await axios.get(url, {
+      headers: {
+        Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
+        accept: "application/json",
+      },
+    });
+
+    const items = response.data.items || [];
+
+    // Search this page
+    for (const item of items) {
+      if (item.fieldData?.["shopify-product-id"] === shopifyProductId) {
+        console.log("🔎 Found existing Webflow item:", item.id);
+        return item;
+      }
     }
-  });
 
-  return response.data.items?.[0] || null;
+    // Stop if no next page
+    if (!response.data.pagination?.nextPage) break;
+
+    page = response.data.pagination.nextPage;
+  }
+
+  return null;
 }
 
 // ======================================================
@@ -48,7 +70,9 @@ async function findExistingWebflowItem(shopifyProductId) {
 // ======================================================
 
 app.get("/", (req, res) => {
-  res.send("L&F Webflow Sync Server (Individual Image Fields + No Duplicates) Running");
+  res.send(
+    "L&F Webflow Sync Server (Individual Image Fields + No Duplicates) Running"
+  );
 });
 
 app.post("/webflow-sync", async (req, res) => {
@@ -77,7 +101,7 @@ app.post("/webflow-sync", async (req, res) => {
 
     console.log("🖼️ Images Found:", {
       featuredImage,
-      gallery
+      gallery,
     });
 
     // 2️⃣ Build Webflow fieldData payload
@@ -90,11 +114,14 @@ app.post("/webflow-sync", async (req, res) => {
       "shopify-product-id": shopifyProductId,
       "shopify-url": shopifyUrl,
       "featured-image": featuredImage ? { url: featuredImage } : null,
+
+      // Individual image fields
       "image-1": gallery[0] ? { url: gallery[0] } : null,
       "image-2": gallery[1] ? { url: gallery[1] } : null,
       "image-3": gallery[2] ? { url: gallery[2] } : null,
+
       "show-on-webflow": true,
-      "featured-item-on-homepage": false
+      "featured-item-on-homepage": false,
     };
 
     // 3️⃣ Check if Webflow item already exists
@@ -104,7 +131,7 @@ app.post("/webflow-sync", async (req, res) => {
     let operation;
 
     if (existing) {
-      // 4️⃣ UPDATE (PATCH) existing item
+      // 4️⃣ UPDATE existing item
       operation = "update";
       console.log("✏️ Updating existing item:", existing.id);
 
@@ -114,13 +141,12 @@ app.post("/webflow-sync", async (req, res) => {
         {
           headers: {
             Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
-            "Content-Type": "application/json"
-          }
+            "Content-Type": "application/json",
+          },
         }
       );
 
       itemId = updateResp.data.id;
-
     } else {
       // 5️⃣ CREATE new item
       operation = "create";
@@ -132,8 +158,8 @@ app.post("/webflow-sync", async (req, res) => {
         {
           headers: {
             Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
-            "Content-Type": "application/json"
-          }
+            "Content-Type": "application/json",
+          },
         }
       );
 
@@ -147,9 +173,8 @@ app.post("/webflow-sync", async (req, res) => {
       operation,
       itemId,
       featured: featuredImage,
-      galleryUsed: gallery.slice(0, 3)
+      galleryUsed: gallery.slice(0, 3),
     });
-
   } catch (err) {
     console.error("🔥 SERVER ERROR:", err);
     if (err.response) console.error("🔻 Response:", err.response.data);
