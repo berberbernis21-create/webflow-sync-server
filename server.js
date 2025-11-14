@@ -155,7 +155,9 @@ app.post("/webflow-sync", async (req, res) => {
         console.log("⬇️ Downloading:", imageUrl);
         const buffer = await downloadImage(imageUrl);
 
-        const filename = imageUrl.split("/").pop() || "image.jpg";
+        // FIX: remove Shopify ?v= query string from filename
+        let filename = imageUrl.split("/").pop() || "image.jpg";
+        filename = filename.split("?")[0]; // <-- critical fix
 
         console.log("⬆️ Uploading to Webflow:", filename);
         const webflowUrl = await uploadToWebflow(buffer, filename);
