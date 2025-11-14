@@ -41,7 +41,6 @@ async function fetchProductViaGraphQL(productId) {
                 image {
                   url
                   originalSrc
-                  mimeType
                 }
               }
             }
@@ -179,7 +178,7 @@ app.post("/webflow-sync", async (req, res) => {
     const price = product.variants.edges[0]?.node?.price || null;
     const shopifyUrl = `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${product.handle}`;
 
-    // Extract images
+    // Extract all images
     const images = product.media.edges
       .map((edge) => edge.node.image?.url)
       .filter(Boolean);
@@ -229,7 +228,7 @@ app.post("/webflow-sync", async (req, res) => {
       }
     }
 
-    // 4️⃣ PATCH GALLERY
+    // 4️⃣ PATCH GALLERY INTO WEBFLOW
     if (uploadedUrls.length > 0) {
       await patchWebflowImages(itemId, uploadedUrls);
       console.log("🖼️ Gallery patched:", uploadedUrls.length);
