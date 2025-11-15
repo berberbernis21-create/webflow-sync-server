@@ -2,7 +2,7 @@ import express from "express";
 import axios from "axios";
 import cors from "cors";
 import dotenv from "dotenv";
-import { CATEGORY_KEYWORDS } from "./categoryKeywords.js";  // <— NEW
+import { CATEGORY_KEYWORDS } from "./categoryKeywords.js";
 
 dotenv.config();
 
@@ -10,10 +10,9 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ======================================================
-// CATEGORY DETECTOR (simple + reliable)
-// ======================================================
-
+/* ======================================================
+   CATEGORY DETECTOR (Simple + Reliable)
+====================================================== */
 function detectCategory(title) {
   if (!title) return "Other";
 
@@ -26,14 +25,12 @@ function detectCategory(title) {
       }
     }
   }
-
   return "Other";
 }
 
-// ======================================================
-// SHOPIFY REST – PRODUCT + IMAGES
-// ======================================================
-
+/* ======================================================
+   SHOPIFY REST API — PRODUCT + IMAGES
+====================================================== */
 async function fetchShopifyProduct(productId) {
   const url = `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products/${productId}.json`;
 
@@ -47,11 +44,9 @@ async function fetchShopifyProduct(productId) {
   return response.data.product;
 }
 
-// ======================================================
-// FIND EXISTING WEBFLOW ITEM
-// (API v2 cannot filter by field, so we paginate manually)
-// ======================================================
-
+/* ======================================================
+   FIND EXISTING WEBFLOW ITEM (paginate manually)
+====================================================== */
 async function findExistingWebflowItem(shopifyProductId) {
   let page = 1;
 
@@ -81,9 +76,9 @@ async function findExistingWebflowItem(shopifyProductId) {
   return null;
 }
 
-// ======================================================
-// ROUTES
-// ======================================================
+/* ======================================================
+   ROUTES
+====================================================== */
 
 app.get("/", (req, res) => {
   res.send("L&F Webflow Sync Server Running (Images + Categories)");
@@ -99,7 +94,9 @@ app.post("/webflow-sync", async (req, res) => {
 
     console.log("📦 Syncing Shopify Product:", shopifyProductId);
 
-    // 1️⃣ Fetch Shopify data
+    /* -------------------------------
+       1️⃣ FETCH SHOPIFY PRODUCT
+    -------------------------------- */
     const product = await fetchShopifyProduct(shopifyProductId);
 
     const name = product.title;
@@ -109,24 +106,27 @@ app.post("/webflow-sync", async (req, res) => {
     const slug = product.handle;
     const shopifyUrl = `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${slug}`;
 
-    // Images
+    /* -------------------------------
+       IMAGES
+    -------------------------------- */
     const allImages = (product.images || []).map((img) => img.src);
     const featuredImage = product.image?.src || allImages[0] || null;
     const gallery = allImages.filter((url) => url !== featuredImage);
 
     console.log("🖼️ Images Found:", { featuredImage, gallery });
 
-    // 2️⃣ Build Webflow payload
-    const fieldData = {
+    /* -------------------------------
+       2️⃣ BASE WEBFLOW PAYLOAD
+       (safe for update or create)
+    -------------------------------- */
+    const fieldDataBase = {
       name,
-      slug,
       brand,
       price,
       description,
       "shopify-product-id": String(shopifyProductId),
       "shopify-url": shopifyUrl,
 
-      // CATEGORY (auto-detected)
       category: detectCategory(name),
 
       // Images
@@ -141,15 +141,26 @@ app.post("/webflow-sync", async (req, res) => {
       "featured-item-on-homepage": false,
     };
 
-    // 3️⃣ Create or Update
+    /* -------------------------------
+       3️⃣ CHECK IF WEBFLOW ITEM EXISTS
+    -------------------------------- */
     const existing = await findExistingWebflowItem(shopifyProductId);
 
     let itemId;
     let operation;
 
+    /* -------------------------------
+       UPDATE
+       (preserve slug, safe for repeated runs)
+    -------------------------------- */
     if (existing) {
       operation = "update";
       console.log("✏️ Updating Webflow item:", existing.id);
+
+      const fieldData = {
+        ...fieldDataBase,
+        slug: existing.fieldData.slug, // ⭐ KEEP EXISTING SLUG
+      };
 
       const updateResp = await axios.patch(
         `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items/${existing.id}`,
@@ -163,9 +174,20 @@ app.post("/webflow-sync", async (req, res) => {
       );
 
       itemId = updateResp.data.id;
-    } else {
+    }
+
+    /* -------------------------------
+       CREATE
+       (use Shopify slug)
+    -------------------------------- */
+    else {
       operation = "create";
       console.log("🆕 Creating new Webflow item…");
+
+      const fieldData = {
+        ...fieldDataBase,
+        slug, // ⭐ ONLY USE SHOPIFY SLUG ON CREATION
+      };
 
       const createResp = await axios.post(
         `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items`,
@@ -183,15 +205,18 @@ app.post("/webflow-sync", async (req, res) => {
 
     console.log(`✅ Webflow item ${operation}d:`, itemId);
 
-    // 4️⃣ Return response
+    /* -------------------------------
+       RESPONSE
+    -------------------------------- */
     res.json({
       status: "ok",
       operation,
       itemId,
-      category: fieldData.category,
+      category: fieldDataBase.category,
       featured: featuredImage,
       galleryUsed: gallery.slice(0, 5),
     });
+
   } catch (err) {
     console.error("🔥 SERVER ERROR:", err);
     if (err.response) console.error("🔻 Response:", err.response.data);
@@ -199,9 +224,9 @@ app.post("/webflow-sync", async (req, res) => {
   }
 });
 
-// ======================================================
-// SERVER
-// ======================================================
+/* ======================================================
+   SERVER
+====================================================== */
 
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
