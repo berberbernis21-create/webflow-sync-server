@@ -2,12 +2,33 @@ import express from "express";
 import axios from "axios";
 import cors from "cors";
 import dotenv from "dotenv";
+import { CATEGORY_KEYWORDS } from "./categoryKeywords.js";  // <— NEW
 
 dotenv.config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// ======================================================
+// CATEGORY DETECTOR (simple + reliable)
+// ======================================================
+
+function detectCategory(title) {
+  if (!title) return "Other";
+
+  const normalized = title.toLowerCase();
+
+  for (const [category, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
+    for (const keyword of keywords) {
+      if (normalized.includes(keyword.toLowerCase())) {
+        return category;
+      }
+    }
+  }
+
+  return "Other";
+}
 
 // ======================================================
 // SHOPIFY REST – PRODUCT + IMAGES
@@ -27,8 +48,8 @@ async function fetchShopifyProduct(productId) {
 }
 
 // ======================================================
-// 🔍 FIND EXISTING WEBFLOW ITEM (API v2 cannot filter by field)
-// Manually paginate and match the shopify-product-id
+// FIND EXISTING WEBFLOW ITEM
+// (API v2 cannot filter by field, so we paginate manually)
 // ======================================================
 
 async function findExistingWebflowItem(shopifyProductId) {
@@ -65,7 +86,7 @@ async function findExistingWebflowItem(shopifyProductId) {
 // ======================================================
 
 app.get("/", (req, res) => {
-  res.send("L&F Webflow Sync Server (5 Images + No Duplicates) Running");
+  res.send("L&F Webflow Sync Server Running (Images + Categories)");
 });
 
 app.post("/webflow-sync", async (req, res) => {
@@ -93,12 +114,9 @@ app.post("/webflow-sync", async (req, res) => {
     const featuredImage = product.image?.src || allImages[0] || null;
     const gallery = allImages.filter((url) => url !== featuredImage);
 
-    console.log("🖼️ Images Found:", {
-      featuredImage,
-      gallery,
-    });
+    console.log("🖼️ Images Found:", { featuredImage, gallery });
 
-    // 2️⃣ Build Webflow payload (ONLY 5 gallery fields)
+    // 2️⃣ Build Webflow payload
     const fieldData = {
       name,
       slug,
@@ -108,10 +126,11 @@ app.post("/webflow-sync", async (req, res) => {
       "shopify-product-id": String(shopifyProductId),
       "shopify-url": shopifyUrl,
 
-      // Featured image
-      "featured-image": featuredImage ? { url: featuredImage } : null,
+      // CATEGORY (auto-detected)
+      category: detectCategory(name),
 
-      // Up to 5 gallery images
+      // Images
+      "featured-image": featuredImage ? { url: featuredImage } : null,
       "image-1": gallery[0] ? { url: gallery[0] } : null,
       "image-2": gallery[1] ? { url: gallery[1] } : null,
       "image-3": gallery[2] ? { url: gallery[2] } : null,
@@ -169,6 +188,7 @@ app.post("/webflow-sync", async (req, res) => {
       status: "ok",
       operation,
       itemId,
+      category: fieldData.category,
       featured: featuredImage,
       galleryUsed: gallery.slice(0, 5),
     });
