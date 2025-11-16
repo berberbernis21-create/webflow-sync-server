@@ -11,7 +11,7 @@ app.use(cors());
 app.use(express.json());
 
 /* ======================================================
-   CATEGORY DETECTOR (Simple + Reliable)
+   CATEGORY DETECTOR
 ====================================================== */
 function detectCategory(title) {
   if (!title) return "Other";
@@ -30,7 +30,7 @@ function detectCategory(title) {
 }
 
 /* ======================================================
-   SHOPIFY: FETCH ALL PRODUCTS (since_id pagination)
+   SHOPIFY — FETCH ALL PRODUCTS
 ====================================================== */
 async function fetchAllShopifyProducts() {
   const store = process.env.SHOPIFY_STORE;
@@ -64,7 +64,7 @@ async function fetchAllShopifyProducts() {
 
     if (!products.length) break;
 
-    allProducts = allProducts.concat(products);
+    allProducts.push(...products);
     lastId = products[products.length - 1].id;
 
     if (products.length < 250) break;
@@ -75,7 +75,7 @@ async function fetchAllShopifyProducts() {
 }
 
 /* ======================================================
-   WEBFLOW: FIND EXISTING ITEM
+   WEBFLOW — FIND EXISTING ITEM
 ====================================================== */
 async function findExistingWebflowItem(shopifyProductId) {
   let page = 1;
@@ -107,11 +107,12 @@ async function findExistingWebflowItem(shopifyProductId) {
 }
 
 /* ======================================================
-   CHANGE DETECTOR — ONLY UPDATE IF NECESSARY
+   CHANGE DETECTOR LOGIC
 ====================================================== */
 function isDifferent(a, b) {
   if (a === null && b === null) return false;
 
+  // Compare image fields like { url: "..." }
   if (typeof a === "object" && typeof b === "object") {
     return a?.url !== b?.url;
   }
@@ -149,16 +150,19 @@ async function syncSingleProduct(product) {
   // IMAGES
   const allImages = (product.images || []).map((img) => img.src);
   const featuredImage = product.image?.src || allImages[0] || null;
-  const gallery = allImages.filter((u) => u !== featuredImage);
+  const gallery = allImages.filter((url) => url !== featuredImage);
 
   // SOLD LOGIC
-  const firstVariant = product.variants?.[0];
-  const qty = typeof firstVariant?.inventory_quantity === "number"
-    ? firstVariant.inventory_quantity
-    : null;
+  const variant = product.variants?.[0];
+  const qty =
+    typeof variant?.inventory_quantity === "number"
+      ? variant.inventory_quantity
+      : null;
 
-  const normalizedTitle = (name || "").toLowerCase();
-  const soldByTitle = normalizedTitle.includes("sold") || normalizedTitle.includes("reserved");
+  const normalizedTitle = name.toLowerCase();
+  const soldByTitle =
+    normalizedTitle.includes("sold") ||
+    normalizedTitle.includes("reserved");
   const soldByInventory = qty !== null && qty <= 0;
   const recentlySold = soldByTitle || soldByInventory;
 
@@ -183,7 +187,6 @@ async function syncSingleProduct(product) {
     "shopify-url": shopifyUrl,
     category,
 
-    // IMAGES
     "featured-image": featuredImage ? { url: featuredImage } : null,
     "image-1": gallery[0] ? { url: gallery[0] } : null,
     "image-2": gallery[1] ? { url: gallery[1] } : null,
@@ -209,7 +212,7 @@ async function syncSingleProduct(product) {
     const needsUpdate = hasChanges(existing, fieldData);
 
     if (!needsUpdate) {
-      console.log(`⏩ Skipped (no changes): ${shopifyProductId}`);
+      console.log(`⏩ SKIPPED (no changes) → ${shopifyProductId}`);
       return { operation: "skip", id: existing.id };
     }
 
@@ -274,9 +277,9 @@ app.post("/sync-all", async (req, res) => {
         const result = await syncSingleProduct(product);
         if (result.operation === "create") created++;
         else if (result.operation === "update") updated++;
-        else if (result.operation === "skip") skipped++;
+        else skipped++;
       } catch (err) {
-        console.error("⚠️ Error syncing product:", product.id, err.toString());
+        console.error("⚠️ Error syncing:", product.id, err.toString());
         if (err.response) console.error("🔻", err.response.data);
       }
     }
