@@ -12,7 +12,6 @@ app.use(express.json());
 
 /* ======================================================
    CATEGORY DETECTOR (Simple + Reliable)
-   (for "normal" categories like Handbags, Wallets, etc.)
 ====================================================== */
 function detectCategory(title) {
   if (!title) return "Other";
@@ -33,7 +32,6 @@ function detectCategory(title) {
 /* ======================================================
    SHOPIFY: FETCH ALL PRODUCTS (since_id pagination)
 ====================================================== */
-
 async function fetchAllShopifyProducts() {
   const store = process.env.SHOPIFY_STORE;
   const token = process.env.SHOPIFY_ACCESS_TOKEN;
@@ -69,7 +67,7 @@ async function fetchAllShopifyProducts() {
     allProducts = allProducts.concat(products);
     lastId = products[products.length - 1].id;
 
-    if (products.length < 250) break; // no more pages
+    if (products.length < 250) break;
   }
 
   console.log(`📦 Total Shopify products fetched: ${allProducts.length}`);
@@ -77,9 +75,8 @@ async function fetchAllShopifyProducts() {
 }
 
 /* ======================================================
-   WEBFLOW: FIND EXISTING ITEM BY shopify-product-id
+   WEBFLOW: FIND EXISTING ITEM
 ====================================================== */
-
 async function findExistingWebflowItem(shopifyProductId) {
   let page = 1;
 
@@ -110,9 +107,36 @@ async function findExistingWebflowItem(shopifyProductId) {
 }
 
 /* ======================================================
-   CORE: SYNC A SINGLE SHOPIFY PRODUCT → WEBFLOW
+   CHANGE DETECTOR — ONLY UPDATE IF NECESSARY
 ====================================================== */
+function isDifferent(a, b) {
+  if (a === null && b === null) return false;
 
+  if (typeof a === "object" && typeof b === "object") {
+    return a?.url !== b?.url;
+  }
+
+  return a !== b;
+}
+
+function hasChanges(existing, newFields) {
+  if (!existing?.fieldData) return true;
+
+  for (const key of Object.keys(newFields)) {
+    const oldVal = existing.fieldData[key];
+    const newVal = newFields[key];
+
+    if (isDifferent(oldVal, newVal)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/* ======================================================
+   CORE SYNC LOGIC
+====================================================== */
 async function syncSingleProduct(product) {
   const shopifyProductId = product.id;
   const name = product.title;
@@ -122,40 +146,32 @@ async function syncSingleProduct(product) {
   const slug = product.handle;
   const shopifyUrl = `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${slug}`;
 
-  // Images
+  // IMAGES
   const allImages = (product.images || []).map((img) => img.src);
   const featuredImage = product.image?.src || allImages[0] || null;
-  const gallery = allImages.filter((url) => url !== featuredImage);
+  const gallery = allImages.filter((u) => u !== featuredImage);
 
-  // Inventory (for SOLD logic)
+  // SOLD LOGIC
   const firstVariant = product.variants?.[0];
-  const inventoryQty = typeof firstVariant?.inventory_quantity === "number"
+  const qty = typeof firstVariant?.inventory_quantity === "number"
     ? firstVariant.inventory_quantity
     : null;
 
   const normalizedTitle = (name || "").toLowerCase();
+  const soldByTitle = normalizedTitle.includes("sold") || normalizedTitle.includes("reserved");
+  const soldByInventory = qty !== null && qty <= 0;
+  const recentlySold = soldByTitle || soldByInventory;
 
-  const isSoldByTitle =
-    normalizedTitle.includes("sold") ||
-    normalizedTitle.includes("reserved");
-
-  const isSoldByInventory =
-    inventoryQty !== null && inventoryQty <= 0;
-
-  const isRecentlySold = isSoldByTitle || isSoldByInventory;
-
-  // Base category from keywords
   let category = detectCategory(name);
-
-  // Override category + visibility if Recently Sold
   let showOnWebflow = true;
-  if (isRecentlySold) {
+
+  if (recentlySold) {
     category = "Recently Sold";
     showOnWebflow = false;
   }
 
   console.log(
-    `🔁 Syncing product ${shopifyProductId} | "${name}" | qty=${inventoryQty} | RecentlySold=${isRecentlySold}`
+    `🔁 Product ${shopifyProductId} | "${name}" | qty=${qty} | RecentlySold=${recentlySold}`
   );
 
   const fieldDataBase = {
@@ -167,7 +183,7 @@ async function syncSingleProduct(product) {
     "shopify-url": shopifyUrl,
     category,
 
-    // Images
+    // IMAGES
     "featured-image": featuredImage ? { url: featuredImage } : null,
     "image-1": gallery[0] ? { url: gallery[0] } : null,
     "image-2": gallery[1] ? { url: gallery[1] } : null,
@@ -181,13 +197,23 @@ async function syncSingleProduct(product) {
 
   const existing = await findExistingWebflowItem(shopifyProductId);
 
+  /* ---------------------------
+     UPDATE ONLY IF CHANGED
+  ----------------------------*/
   if (existing) {
-    console.log("✏️ Updating Webflow item:", existing.id);
-
     const fieldData = {
       ...fieldDataBase,
-      slug: existing.fieldData.slug, // keep existing slug
+      slug: existing.fieldData.slug,
     };
+
+    const needsUpdate = hasChanges(existing, fieldData);
+
+    if (!needsUpdate) {
+      console.log(`⏩ Skipped (no changes): ${shopifyProductId}`);
+      return { operation: "skip", id: existing.id };
+    }
+
+    console.log(`✏️ Updating Webflow item: ${existing.id}`);
 
     await axios.patch(
       `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items/${existing.id}`,
@@ -201,58 +227,57 @@ async function syncSingleProduct(product) {
     );
 
     return { operation: "update", id: existing.id };
-  } else {
-    console.log("🆕 Creating new Webflow item…");
-
-    const fieldData = {
-      ...fieldDataBase,
-      slug, // use Shopify slug on creation
-    };
-
-    const createResp = await axios.post(
-      `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items`,
-      { fieldData },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
-
-    return { operation: "create", id: createResp.data.id };
   }
+
+  /* ---------------------------
+     CREATE NEW ITEM
+  ----------------------------*/
+  console.log("🆕 Creating new Webflow item…");
+
+  const createPayload = {
+    ...fieldDataBase,
+    slug,
+  };
+
+  const createResp = await axios.post(
+    `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items`,
+    { fieldData: createPayload },
+    {
+      headers: {
+        Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+
+  return { operation: "create", id: createResp.data.id };
 }
 
 /* ======================================================
    ROUTES
 ====================================================== */
-
 app.get("/", (req, res) => {
   res.send("Lost & Found – Full Shopify → Webflow Sync (No Make.com)");
 });
 
-/**
- * 🔄 FULL SYNC ENDPOINT
- * Call this from a cron / Render job / button in an internal tool
- */
 app.post("/sync-all", async (req, res) => {
   try {
     console.log("🔄 FULL SYNC STARTED…");
-
     const products = await fetchAllShopifyProducts();
 
     let created = 0;
     let updated = 0;
+    let skipped = 0;
 
     for (const product of products) {
       try {
         const result = await syncSingleProduct(product);
         if (result.operation === "create") created++;
-        if (result.operation === "update") updated++;
-      } catch (innerErr) {
-        console.error("⚠️ Error syncing product", product.id, innerErr.toString());
-        if (innerErr.response) console.error("🔻", innerErr.response.data);
+        else if (result.operation === "update") updated++;
+        else if (result.operation === "skip") skipped++;
+      } catch (err) {
+        console.error("⚠️ Error syncing product:", product.id, err.toString());
+        if (err.response) console.error("🔻", err.response.data);
       }
     }
 
@@ -260,14 +285,15 @@ app.post("/sync-all", async (req, res) => {
       total: products.length,
       created,
       updated,
+      skipped,
     });
 
     res.json({
       status: "ok",
-      message: "Full sync complete",
       total: products.length,
       created,
       updated,
+      skipped,
     });
   } catch (err) {
     console.error("🔥 /sync-all ERROR:", err);
@@ -279,7 +305,6 @@ app.post("/sync-all", async (req, res) => {
 /* ======================================================
    SERVER
 ====================================================== */
-
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`🔥 L&F Sync Server running on port ${PORT}`);
