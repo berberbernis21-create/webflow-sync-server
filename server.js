@@ -2,6 +2,7 @@ import express from "express";
 import axios from "axios";
 import cors from "cors";
 import dotenv from "dotenv";
+import fs from "fs";
 import { CATEGORY_KEYWORDS } from "./categoryKeywords.js";
 
 dotenv.config();
@@ -9,6 +10,64 @@ dotenv.config();
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+/* ======================================================
+   PATHS / CACHE SETUP
+====================================================== */
+const DATA_DIR = "./data";
+const CACHE_FILE = `${DATA_DIR}/lastSync.json`;
+
+function ensureDataDir() {
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+}
+
+function loadCache() {
+  try {
+    ensureDataDir();
+    if (!fs.existsSync(CACHE_FILE)) return {};
+    const raw = fs.readFileSync(CACHE_FILE, "utf8");
+    return JSON.parse(raw);
+  } catch (err) {
+    console.error("⚠️ Failed to load cache:", err.toString());
+    return {};
+  }
+}
+
+function saveCache(cache) {
+  try {
+    ensureDataDir();
+    fs.writeFileSync(CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
+  } catch (err) {
+    console.error("⚠️ Failed to save cache:", err.toString());
+  }
+}
+
+/**
+ * Only the fields we actually care about for "did this change?"
+ */
+function shopifyHash(product) {
+  return {
+    title: product.title,
+    vendor: product.vendor,
+    body_html: product.body_html,
+    price: product.variants?.[0]?.price || null,
+    qty: product.variants?.[0]?.inventory_quantity ?? null,
+    images: (product.images || []).map((i) => i.src),
+    slug: product.handle,
+  };
+}
+
+function changedSinceLastSync(product, cache) {
+  const id = String(product.id);
+  const previous = cache[id];
+  const current = shopifyHash(product);
+
+  if (!previous) return true; // first time seeing this product
+
+  return JSON.stringify(previous) !== JSON.stringify(current);
+}
 
 /* ======================================================
    CATEGORY DETECTOR
@@ -107,39 +166,12 @@ async function findExistingWebflowItem(shopifyProductId) {
 }
 
 /* ======================================================
-   CHANGE DETECTOR LOGIC
+   CORE SYNC LOGIC (one product)
 ====================================================== */
-function isDifferent(a, b) {
-  if (a === null && b === null) return false;
-
-  // Compare image fields like { url: "..." }
-  if (typeof a === "object" && typeof b === "object") {
-    return a?.url !== b?.url;
-  }
-
-  return a !== b;
-}
-
-function hasChanges(existing, newFields) {
-  if (!existing?.fieldData) return true;
-
-  for (const key of Object.keys(newFields)) {
-    const oldVal = existing.fieldData[key];
-    const newVal = newFields[key];
-
-    if (isDifferent(oldVal, newVal)) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-/* ======================================================
-   CORE SYNC LOGIC
-====================================================== */
-async function syncSingleProduct(product) {
+async function syncSingleProduct(product, cache) {
   const shopifyProductId = product.id;
+  const idStr = String(shopifyProductId);
+
   const name = product.title;
   const brand = product.vendor;
   const description = product.body_html;
@@ -159,7 +191,7 @@ async function syncSingleProduct(product) {
       ? variant.inventory_quantity
       : null;
 
-  const normalizedTitle = name.toLowerCase();
+  const normalizedTitle = (name || "").toLowerCase();
   const soldByTitle =
     normalizedTitle.includes("sold") ||
     normalizedTitle.includes("reserved");
@@ -183,7 +215,7 @@ async function syncSingleProduct(product) {
     brand,
     price,
     description,
-    "shopify-product-id": String(shopifyProductId),
+    "shopify-product-id": idStr,
     "shopify-url": shopifyUrl,
     category,
 
@@ -198,29 +230,26 @@ async function syncSingleProduct(product) {
     "featured-item-on-homepage": false,
   };
 
+  // 1️⃣ Look up Webflow item
   const existing = await findExistingWebflowItem(shopifyProductId);
 
+  // 2️⃣ Compute hash of current Shopify state
+  const currentHash = shopifyHash(product);
+
   /* ---------------------------
-     UPDATE ONLY IF CHANGED
+     CREATE NEW ITEM (no Webflow item)
   ----------------------------*/
-  if (existing) {
-    const fieldData = {
+  if (!existing) {
+    console.log("🆕 Creating new Webflow item…");
+
+    const createPayload = {
       ...fieldDataBase,
-      slug: existing.fieldData.slug,
+      slug,
     };
 
-    const needsUpdate = hasChanges(existing, fieldData);
-
-    if (!needsUpdate) {
-      console.log(`⏩ SKIPPED (no changes) → ${shopifyProductId}`);
-      return { operation: "skip", id: existing.id };
-    }
-
-    console.log(`✏️ Updating Webflow item: ${existing.id}`);
-
-    await axios.patch(
-      `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items/${existing.id}`,
-      { fieldData },
+    const createResp = await axios.post(
+      `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items`,
+      { fieldData: createPayload },
       {
         headers: {
           Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
@@ -229,22 +258,33 @@ async function syncSingleProduct(product) {
       }
     );
 
-    return { operation: "update", id: existing.id };
+    cache[idStr] = currentHash;
+    return { operation: "create", id: createResp.data.id };
   }
 
   /* ---------------------------
-     CREATE NEW ITEM
+     UPDATE ONLY IF SHOPIFY CHANGED
   ----------------------------*/
-  console.log("🆕 Creating new Webflow item…");
+  const previousHash = cache[idStr];
+  const hasChanged =
+    !previousHash ||
+    JSON.stringify(previousHash) !== JSON.stringify(currentHash);
 
-  const createPayload = {
+  if (!hasChanged) {
+    console.log(`⏩ SKIPPED (Shopify unchanged) → ${shopifyProductId}`);
+    return { operation: "skip", id: existing.id };
+  }
+
+  console.log(`✏️ Updating Webflow item: ${existing.id}`);
+
+  const fieldData = {
     ...fieldDataBase,
-    slug,
+    slug: existing.fieldData.slug, // preserve existing slug
   };
 
-  const createResp = await axios.post(
-    `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items`,
-    { fieldData: createPayload },
+  await axios.patch(
+    `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items/${existing.id}`,
+    { fieldData },
     {
       headers: {
         Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
@@ -253,20 +293,23 @@ async function syncSingleProduct(product) {
     }
   );
 
-  return { operation: "create", id: createResp.data.id };
+  cache[idStr] = currentHash;
+  return { operation: "update", id: existing.id };
 }
 
 /* ======================================================
    ROUTES
 ====================================================== */
 app.get("/", (req, res) => {
-  res.send("Lost & Found – Full Shopify → Webflow Sync (No Make.com)");
+  res.send("Lost & Found – Full Shopify → Webflow Sync (No Make.com, With Cache)");
 });
 
 app.post("/sync-all", async (req, res) => {
   try {
     console.log("🔄 FULL SYNC STARTED…");
+
     const products = await fetchAllShopifyProducts();
+    const cache = loadCache();
 
     let created = 0;
     let updated = 0;
@@ -274,15 +317,18 @@ app.post("/sync-all", async (req, res) => {
 
     for (const product of products) {
       try {
-        const result = await syncSingleProduct(product);
+        const result = await syncSingleProduct(product, cache);
         if (result.operation === "create") created++;
         else if (result.operation === "update") updated++;
-        else skipped++;
+        else if (result.operation === "skip") skipped++;
       } catch (err) {
         console.error("⚠️ Error syncing:", product.id, err.toString());
         if (err.response) console.error("🔻", err.response.data);
       }
     }
+
+    // Save the updated cache *once* per full run
+    saveCache(cache);
 
     console.log("✅ FULL SYNC COMPLETE:", {
       total: products.length,
