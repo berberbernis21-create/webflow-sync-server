@@ -84,7 +84,6 @@ function detectCategory(title) {
       }
     }
   }
-
   return "Other";
 }
 
@@ -210,6 +209,37 @@ async function syncSingleProduct(product, cache) {
     `🔁 Product ${shopifyProductId} | "${name}" | qty=${qty} | RecentlySold=${recentlySold}`
   );
 
+  /* ======================================================
+     UPDATE SHOPIFY METAFIELD (custom.category)
+  ====================================================== */
+  try {
+    await axios.put(
+      `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products/${product.id}.json`,
+      {
+        product: {
+          id: product.id,
+          metafields: [
+            {
+              namespace: "custom",
+              key: "category",
+              type: "single_line_text_field",
+              value: category,
+            },
+          ],
+        },
+      },
+      {
+        headers: {
+          "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+    console.log(`🛍️ Shopify category updated → ${category}`);
+  } catch (err) {
+    console.error("⚠️ Failed to update Shopify category:", err.response?.data || err.toString());
+  }
+
   const fieldDataBase = {
     name,
     brand,
@@ -237,7 +267,7 @@ async function syncSingleProduct(product, cache) {
   const currentHash = shopifyHash(product);
 
   /* ---------------------------
-     CREATE NEW ITEM (no Webflow item)
+     CREATE NEW ITEM
   ----------------------------*/
   if (!existing) {
     console.log("🆕 Creating new Webflow item…");
@@ -263,7 +293,7 @@ async function syncSingleProduct(product, cache) {
   }
 
   /* ---------------------------
-     UPDATE ONLY IF SHOPIFY CHANGED
+     UPDATE ONLY IF NEEDED
   ----------------------------*/
   const previousHash = cache[idStr];
   const hasChanged =
@@ -279,7 +309,7 @@ async function syncSingleProduct(product, cache) {
 
   const fieldData = {
     ...fieldDataBase,
-    slug: existing.fieldData.slug, // preserve existing slug
+    slug: existing.fieldData.slug,
   };
 
   await axios.patch(
@@ -327,7 +357,6 @@ app.post("/sync-all", async (req, res) => {
       }
     }
 
-    // Save the updated cache *once* per full run
     saveCache(cache);
 
     console.log("✅ FULL SYNC COMPLETE:", {
