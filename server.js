@@ -4,6 +4,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import fs from "fs";
 import { CATEGORY_KEYWORDS } from "./categoryKeywords.js";
+import { detectBrandFromProduct } from "./brand.js";   // ✅ NEW IMPORT
 
 dotenv.config();
 
@@ -44,9 +45,9 @@ function saveCache(cache) {
   }
 }
 
-/**
- * Only the fields we actually care about for "did this change?"
- */
+/* ======================================================
+   HASH FOR CHANGE DETECTION
+====================================================== */
 function shopifyHash(product) {
   return {
     title: product.title,
@@ -63,9 +64,7 @@ function changedSinceLastSync(product, cache) {
   const id = String(product.id);
   const previous = cache[id];
   const current = shopifyHash(product);
-
-  if (!previous) return true; // first time seeing this product
-
+  if (!previous) return true;
   return JSON.stringify(previous) !== JSON.stringify(current);
 }
 
@@ -74,14 +73,10 @@ function changedSinceLastSync(product, cache) {
 ====================================================== */
 function detectCategory(title) {
   if (!title) return "Other";
-
   const normalized = title.toLowerCase();
-
   for (const [category, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
-    for (const keyword of keywords) {
-      if (normalized.includes(keyword.toLowerCase())) {
-        return category;
-      }
+    for (const kw of keywords) {
+      if (normalized.includes(kw.toLowerCase())) return category;
     }
   }
   return "Other";
@@ -118,8 +113,6 @@ async function fetchAllShopifyProducts() {
     });
 
     const products = response.data.products || [];
-    console.log(`   → Received ${products.length} products`);
-
     if (!products.length) break;
 
     allProducts.push(...products);
@@ -157,7 +150,6 @@ async function findExistingWebflowItem(shopifyProductId) {
     }
 
     if (!response.data.pagination?.nextPage) break;
-
     page = response.data.pagination.nextPage;
   }
 
@@ -165,53 +157,86 @@ async function findExistingWebflowItem(shopifyProductId) {
 }
 
 /* ======================================================
-   CORE SYNC LOGIC (one product)
+   CORE SYNC LOGIC
 ====================================================== */
 async function syncSingleProduct(product, cache) {
   const shopifyProductId = product.id;
   const idStr = String(shopifyProductId);
 
   const name = product.title;
-  const brand = product.vendor;
   const description = product.body_html;
   const price = product.variants?.[0]?.price || null;
   const slug = product.handle;
   const shopifyUrl = `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${slug}`;
 
-  // IMAGES
+  /* ======================================================
+     BRAND DETECTION + SHOPIFY VENDOR FIX
+  ======================================================= */
+  let detectedBrand = detectBrandFromProduct(product.title, product.vendor);
+
+  // If detection failed, fallback to Shopify vendor
+  if (!detectedBrand) detectedBrand = product.vendor || null;
+
+  // If the detected brand is DIFFERENT, update Shopify vendor
+  if (detectedBrand && detectedBrand !== product.vendor) {
+    try {
+      await axios.put(
+        `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products/${product.id}.json`,
+        {
+          product: {
+            id: product.id,
+            vendor: detectedBrand,
+          },
+        },
+        {
+          headers: {
+            "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+      console.log(`🏷️ Vendor updated → ${detectedBrand}`);
+    } catch (err) {
+      console.error("⚠️ Failed to update Shopify vendor:", err.response?.data || err.toString());
+    }
+  }
+
+  const brand = detectedBrand;  // use normalized brand everywhere
+
+  /* ======================================================
+     IMAGE PREP
+  ======================================================= */
   const allImages = (product.images || []).map((img) => img.src);
   const featuredImage = product.image?.src || allImages[0] || null;
   const gallery = allImages.filter((url) => url !== featuredImage);
 
-  // SOLD LOGIC
+  /* ======================================================
+     SOLD LOGIC
+  ======================================================= */
   const variant = product.variants?.[0];
   const qty =
     typeof variant?.inventory_quantity === "number"
       ? variant.inventory_quantity
       : null;
 
-  const normalizedTitle = (name || "").toLowerCase();
+  const titleNormalized = (name || "").toLowerCase();
   const soldByTitle =
-    normalizedTitle.includes("sold") ||
-    normalizedTitle.includes("reserved");
+    titleNormalized.includes("sold") ||
+    titleNormalized.includes("reserved");
   const soldByInventory = qty !== null && qty <= 0;
   const recentlySold = soldByTitle || soldByInventory;
 
   let category = detectCategory(name);
-  let showOnWebflow = true;
-
-  if (recentlySold) {
-    category = "Recently Sold";
-    showOnWebflow = false;
-  }
+  let showOnWebflow = !recentlySold;
+  if (recentlySold) category = "Recently Sold";
 
   console.log(
-    `🔁 Product ${shopifyProductId} | "${name}" | qty=${qty} | RecentlySold=${recentlySold}`
+    `🔁 Product ${shopifyProductId} | "${name}" | brand=${brand} | qty=${qty} | sold=${recentlySold}`
   );
 
   /* ======================================================
-     UPDATE SHOPIFY METAFIELD (custom.category)
-  ====================================================== */
+     UPDATE SHOPIFY METAFIELD
+  ======================================================= */
   try {
     await axios.put(
       `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products/${product.id}.json`,
@@ -235,14 +260,17 @@ async function syncSingleProduct(product, cache) {
         },
       }
     );
-    console.log(`🛍️ Shopify category updated → ${category}`);
+    console.log(`🛍️ Category updated → ${category}`);
   } catch (err) {
-    console.error("⚠️ Failed to update Shopify category:", err.response?.data || err.toString());
+    console.error("⚠️ Failed to update category:", err.response?.data || err.toString());
   }
 
+  /* ======================================================
+     WEBFLOW FIELD DATA
+  ======================================================= */
   const fieldDataBase = {
     name,
-    brand,
+    brand,   // ✅ send normalized brand
     price,
     description,
     "shopify-product-id": idStr,
@@ -260,17 +288,17 @@ async function syncSingleProduct(product, cache) {
     "featured-item-on-homepage": false,
   };
 
-  // 1️⃣ Look up Webflow item
+  /* ======================================================
+     LOOKUP EXISTING WEBFLOW ITEM
+  ======================================================= */
   const existing = await findExistingWebflowItem(shopifyProductId);
-
-  // 2️⃣ Compute hash of current Shopify state
   const currentHash = shopifyHash(product);
 
-  /* ---------------------------
+  /* ======================================================
      CREATE NEW ITEM
-  ----------------------------*/
+  ======================================================= */
   if (!existing) {
-    console.log("🆕 Creating new Webflow item…");
+    console.log("🆕 Creating Webflow item…");
 
     const createPayload = {
       ...fieldDataBase,
@@ -292,16 +320,15 @@ async function syncSingleProduct(product, cache) {
     return { operation: "create", id: createResp.data.id };
   }
 
-  /* ---------------------------
-     UPDATE ONLY IF NEEDED
-  ----------------------------*/
+  /* ======================================================
+     UPDATE ITEM IF CHANGED
+  ======================================================= */
   const previousHash = cache[idStr];
   const hasChanged =
-    !previousHash ||
-    JSON.stringify(previousHash) !== JSON.stringify(currentHash);
+    !previousHash || JSON.stringify(previousHash) !== JSON.stringify(currentHash);
 
   if (!hasChanged) {
-    console.log(`⏩ SKIPPED (Shopify unchanged) → ${shopifyProductId}`);
+    console.log(`⏩ SKIPPED → ${shopifyProductId} (no change)`);
     return { operation: "skip", id: existing.id };
   }
 
@@ -331,7 +358,7 @@ async function syncSingleProduct(product, cache) {
    ROUTES
 ====================================================== */
 app.get("/", (req, res) => {
-  res.send("Lost & Found – Full Shopify → Webflow Sync (No Make.com, With Cache)");
+  res.send("Lost & Found – Full Shopify → Webflow Sync (with normalized brands)");
 });
 
 app.post("/sync-all", async (req, res) => {
@@ -350,21 +377,15 @@ app.post("/sync-all", async (req, res) => {
         const result = await syncSingleProduct(product, cache);
         if (result.operation === "create") created++;
         else if (result.operation === "update") updated++;
-        else if (result.operation === "skip") skipped++;
+        else skipped++;
       } catch (err) {
         console.error("⚠️ Error syncing:", product.id, err.toString());
-        if (err.response) console.error("🔻", err.response.data);
       }
     }
 
     saveCache(cache);
 
-    console.log("✅ FULL SYNC COMPLETE:", {
-      total: products.length,
-      created,
-      updated,
-      skipped,
-    });
+    console.log("✅ COMPLETE:", { total: products.length, created, updated, skipped });
 
     res.json({
       status: "ok",
@@ -375,7 +396,6 @@ app.post("/sync-all", async (req, res) => {
     });
   } catch (err) {
     console.error("🔥 /sync-all ERROR:", err);
-    if (err.response) console.error("🔻", err.response.data);
     res.status(500).json({ error: err.toString() });
   }
 });
