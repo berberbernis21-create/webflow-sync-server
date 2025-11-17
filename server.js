@@ -4,13 +4,28 @@ import cors from "cors";
 import dotenv from "dotenv";
 import fs from "fs";
 import { CATEGORY_KEYWORDS } from "./categoryKeywords.js";
-import { detectBrandFromProduct } from "./brand.js";   // ✅ NEW IMPORT
+import { detectBrandFromProduct } from "./brand.js";
 
 dotenv.config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+/* ======================================================
+   SANITIZATION HELPERS
+====================================================== */
+function sanitizeText(input) {
+  if (!input) return "";
+  return input
+    .normalize("NFKD")                 // split accents into ASCII base letters
+    .replace(/[^\x00-\x7F]/g, "")      // remove all non-ASCII characters
+    .replace(/–|—/g, "-")              // normalize dashes
+    .replace(/\//g, " and ")           // replace slashes
+    .replace(/&/g, "and")              // replace ampersands
+    .replace(/\s+/g, " ")              // collapse spaces
+    .trim();
+}
 
 /* ======================================================
    PATHS / CACHE SETUP
@@ -89,9 +104,7 @@ async function fetchAllShopifyProducts() {
   const store = process.env.SHOPIFY_STORE;
   const token = process.env.SHOPIFY_ACCESS_TOKEN;
 
-  if (!store || !token) {
-    throw new Error("Missing SHOPIFY_STORE or SHOPIFY_ACCESS_TOKEN");
-  }
+  if (!store || !token) throw new Error("Missing SHOPIFY_STORE or SHOPIFY_ACCESS_TOKEN");
 
   let allProducts = [];
   let lastId = 0;
@@ -99,9 +112,7 @@ async function fetchAllShopifyProducts() {
   while (true) {
     const baseUrl = `https://${store}.myshopify.com/admin/api/2024-01/products.json`;
     const url =
-      lastId === 0
-        ? `${baseUrl}?limit=250`
-        : `${baseUrl}?limit=250&since_id=${lastId}`;
+      lastId === 0 ? `${baseUrl}?limit=250` : `${baseUrl}?limit=250&since_id=${lastId}`;
 
     console.log("🛒 Fetching Shopify products:", url);
 
@@ -142,7 +153,6 @@ async function findExistingWebflowItem(shopifyProductId) {
     });
 
     const items = response.data.items || [];
-
     for (const item of items) {
       if (item.fieldData?.["shopify-product-id"] === String(shopifyProductId)) {
         return item;
@@ -163,30 +173,28 @@ async function syncSingleProduct(product, cache) {
   const shopifyProductId = product.id;
   const idStr = String(shopifyProductId);
 
-  const name = product.title;
+  // ✅ sanitize the only two fields Webflow chokes on
+  const rawBrand = detectBrandFromProduct(product.title, product.vendor);
+  const brand = sanitizeText(rawBrand || product.vendor);
+
+  const name = sanitizeText(product.title);
+
+  // ❌ leave description untouched (HTML preserved)
   const description = product.body_html;
+
   const price = product.variants?.[0]?.price || null;
   const slug = product.handle;
   const shopifyUrl = `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${slug}`;
 
   /* ======================================================
-     BRAND DETECTION + SHOPIFY VENDOR FIX
+     UPDATE SHOPIFY VENDOR (raw, not sanitized)
   ======================================================= */
-  let detectedBrand = detectBrandFromProduct(product.title, product.vendor);
-
-  // If detection failed, fallback to Shopify vendor
-  if (!detectedBrand) detectedBrand = product.vendor || null;
-
-  // If the detected brand is DIFFERENT, update Shopify vendor
-  if (detectedBrand && detectedBrand !== product.vendor) {
+  if (rawBrand && rawBrand !== product.vendor) {
     try {
       await axios.put(
         `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products/${product.id}.json`,
         {
-          product: {
-            id: product.id,
-            vendor: detectedBrand,
-          },
+          product: { id: product.id, vendor: rawBrand },
         },
         {
           headers: {
@@ -195,35 +203,29 @@ async function syncSingleProduct(product, cache) {
           },
         }
       );
-      console.log(`🏷️ Vendor updated → ${detectedBrand}`);
+      console.log(`🏷️ Vendor updated → ${rawBrand}`);
     } catch (err) {
       console.error("⚠️ Failed to update Shopify vendor:", err.response?.data || err.toString());
     }
   }
 
-  const brand = detectedBrand;  // use normalized brand everywhere
-
   /* ======================================================
-     IMAGE PREP
+     IMAGES
   ======================================================= */
-  const allImages = (product.images || []).map((img) => img.src);
+  const allImages = (product.images || []).map((i) => i.src);
   const featuredImage = product.image?.src || allImages[0] || null;
-  const gallery = allImages.filter((url) => url !== featuredImage);
+  const gallery = allImages.filter((u) => u !== featuredImage);
 
   /* ======================================================
      SOLD LOGIC
   ======================================================= */
   const variant = product.variants?.[0];
-  const qty =
-    typeof variant?.inventory_quantity === "number"
-      ? variant.inventory_quantity
-      : null;
+  const qty = typeof variant?.inventory_quantity === "number" ? variant.inventory_quantity : null;
 
-  const titleNormalized = (name || "").toLowerCase();
   const soldByTitle =
-    titleNormalized.includes("sold") ||
-    titleNormalized.includes("reserved");
+    name.toLowerCase().includes("sold") || name.toLowerCase().includes("reserved");
   const soldByInventory = qty !== null && qty <= 0;
+
   const recentlySold = soldByTitle || soldByInventory;
 
   let category = detectCategory(name);
@@ -235,7 +237,7 @@ async function syncSingleProduct(product, cache) {
   );
 
   /* ======================================================
-     UPDATE SHOPIFY METAFIELD
+     UPDATE SHOPIFY CATEGORY METAFIELD
   ======================================================= */
   try {
     await axios.put(
@@ -266,16 +268,16 @@ async function syncSingleProduct(product, cache) {
   }
 
   /* ======================================================
-     WEBFLOW FIELD DATA
+     WEBFLOW PAYLOAD
   ======================================================= */
   const fieldDataBase = {
     name,
-    brand,   // ✅ send normalized brand
+    brand,
     price,
     description,
+    category,
     "shopify-product-id": idStr,
     "shopify-url": shopifyUrl,
-    category,
 
     "featured-image": featuredImage ? { url: featuredImage } : null,
     "image-1": gallery[0] ? { url: gallery[0] } : null,
@@ -289,21 +291,15 @@ async function syncSingleProduct(product, cache) {
   };
 
   /* ======================================================
-     LOOKUP EXISTING WEBFLOW ITEM
+     CREATE OR UPDATE WEBFLOW ITEM
   ======================================================= */
   const existing = await findExistingWebflowItem(shopifyProductId);
   const currentHash = shopifyHash(product);
 
-  /* ======================================================
-     CREATE NEW ITEM
-  ======================================================= */
   if (!existing) {
     console.log("🆕 Creating Webflow item…");
 
-    const createPayload = {
-      ...fieldDataBase,
-      slug,
-    };
+    const createPayload = { ...fieldDataBase, slug };
 
     const createResp = await axios.post(
       `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items`,
@@ -320,12 +316,8 @@ async function syncSingleProduct(product, cache) {
     return { operation: "create", id: createResp.data.id };
   }
 
-  /* ======================================================
-     UPDATE ITEM IF CHANGED
-  ======================================================= */
   const previousHash = cache[idStr];
-  const hasChanged =
-    !previousHash || JSON.stringify(previousHash) !== JSON.stringify(currentHash);
+  const hasChanged = !previousHash || JSON.stringify(previousHash) !== JSON.stringify(currentHash);
 
   if (!hasChanged) {
     console.log(`⏩ SKIPPED → ${shopifyProductId} (no change)`);
@@ -334,14 +326,14 @@ async function syncSingleProduct(product, cache) {
 
   console.log(`✏️ Updating Webflow item: ${existing.id}`);
 
-  const fieldData = {
+  const updatePayload = {
     ...fieldDataBase,
     slug: existing.fieldData.slug,
   };
 
   await axios.patch(
     `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items/${existing.id}`,
-    { fieldData },
+    { fieldData: updatePayload },
     {
       headers: {
         Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
