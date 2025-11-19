@@ -58,6 +58,7 @@ export const CATEGORY_KEYWORDS = {
   Accessories: [
     "belt bag", "belt", "bag charm", "keychain", "strap",
     "dust bag", "cosmetic pouch", "cosmetic case", "makeup bag",
-    "vanity case", "sunglasses case", "eyeglass case", "phone case"
+    "vanity case", "sunglasses case", "eyeglass case", "phone case",
+    "scarf", "scarves", "silk scarf", "wool scarf", "shawl", "wrap", "stole"
   ]
 };
