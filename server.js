@@ -46,6 +46,100 @@ function saveCache(cache) {
 }
 
 /* ======================================================
+   SHOPIFY — AUTO PUBLISH TO SALES CHANNELS
+====================================================== */
+
+const SHOPIFY_GRAPHQL_URL = `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/graphql.json`;
+
+let cachedPublicationIds = null;
+
+// 1. Get publication IDs once and cache them
+async function getPublicationIds() {
+  if (cachedPublicationIds) return cachedPublicationIds;
+
+  const query = `
+    {
+      publications(first: 10) {
+        edges {
+          node {
+            id
+            name
+          }
+        }
+      }
+    }
+  `;
+
+  const resp = await axios.post(
+    SHOPIFY_GRAPHQL_URL,
+    { query },
+    {
+      headers: {
+        "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN,
+        "Content-Type": "application/json"
+      }
+    }
+  );
+
+  const all = resp.data?.data?.publications?.edges || [];
+
+  // Map channel names you want
+  const publishTargets = all.filter(edge => {
+    const n = edge.node.name.toLowerCase();
+
+    return (
+      n.includes("online store") ||
+      n.includes("facebook") ||
+      n.includes("instagram") ||
+      n.includes("buy button") ||
+      n.includes("shop")       // shop app
+    );
+  });
+
+  const ids = publishTargets.map(e => e.node.id);
+  cachedPublicationIds = ids;
+
+  console.log("🟢 Loaded publication IDs:", publishTargets.map(p => p.node.name));
+
+  return ids;
+}
+
+// 2. Publish product to all selected sales channels
+async function publishToSalesChannels(productId) {
+  const pubIds = await getPublicationIds();
+
+  for (const publicationId of pubIds) {
+    const mutation = `
+      mutation {
+        publishablePublish(
+          id: "gid://shopify/Product/${productId}"
+          input: { publicationId: "${publicationId}" }
+        ) {
+          userErrors { message }
+        }
+      }
+    `;
+
+    try {
+      await axios.post(
+        SHOPIFY_GRAPHQL_URL,
+        { query: mutation },
+        {
+          headers: {
+            "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN,
+            "Content-Type": "application/json"
+          }
+        }
+      );
+
+      console.log(`🌐 Published ${productId} → ${publicationId}`);
+    } catch (err) {
+      console.error("⚠️ Publishing error:", err.response?.data || err.toString());
+    }
+  }
+}
+
+/* ======================================================
    HASH FOR CHANGE DETECTION
 ====================================================== */
 function shopifyHash(product) {
@@ -249,6 +343,13 @@ async function syncSingleProduct(product, cache) {
     );
   } catch {}
 
+     /* AUTO PUBLISH TO SHOPIFY SALES CHANNELS */
+  try {
+    await publishToSalesChannels(product.id);
+  } catch (err) {
+    console.error("⚠️ Failed to publish:", err.toString());
+  }
+   
   /* WEBFLOW PAYLOAD */
   const fieldDataBase = {
     name,
@@ -384,3 +485,4 @@ const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`🔥 L&F Sync Server running on port ${PORT}`);
 });
+
