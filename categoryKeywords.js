@@ -1,4 +1,4 @@
-export const CATEGORY_KEYWORDS = {
+export const CATEGORY_KEYWORDS = { 
   Handbags: [
     "handbag", "shoulder bag", "top handle", "hobo", "satchel",
     "bowler", "structured", "shopper", "shopping bag",
@@ -55,10 +55,22 @@ export const CATEGORY_KEYWORDS = {
     "rolling suitcase", "train case", "steamer bag", "travel pouch"
   ],
 
+  Scarves: [
+    "scarf", "scarves", "silk scarf", "wool scarf",
+    "cashmere scarf", "shawl", "wrap", "stole",
+    "muffler", "handkerchief", "foulard", "bandana",
+    "kerchief", "square 90", "carre", "hijab"
+  ],
+
+  Belts: [
+    "belt", "belts", "waist belt", "leather belt",
+    "chain belt", "canvas belt", "logo belt",
+    "gg belt", "buckle belt", "hip belt"
+  ],
+
   Accessories: [
-    "belt bag", "belt", "bag charm", "keychain", "strap",
+    "belt bag", "bag charm", "keychain", "strap",
     "dust bag", "cosmetic pouch", "cosmetic case", "makeup bag",
-    "vanity case", "sunglasses case", "eyeglass case", "phone case",
-    "scarf", "scarves", "silk scarf", "wool scarf", "shawl", "wrap", "stole"
+    "vanity case", "sunglasses case", "eyeglass case", "phone case"
   ]
 };
