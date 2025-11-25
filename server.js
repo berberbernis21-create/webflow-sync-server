@@ -46,6 +46,58 @@ function saveCache(cache) {
 }
 
 /* ======================================================
+   SLUGIFY HELPER
+====================================================== */
+function slugify(str = "") {
+  return str
+    .toString()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+/* ======================================================
+   LOAD WEBFLOW BRAND COLLECTION
+====================================================== */
+let brandReferenceMap = null;
+
+async function loadBrandReferenceMap() {
+  if (brandReferenceMap) return brandReferenceMap;
+
+  const map = {};
+  let page = 1;
+  const BRAND_COLLECTION_ID = "6923887d5ff23fcb91ef9ef1";
+
+  while (true) {
+    const url = `https://api.webflow.com/v2/collections/${BRAND_COLLECTION_ID}/items?page=${page}&limit=100`;
+
+    const resp = await axios.get(url, {
+      headers: {
+        Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
+        accept: "application/json"
+      }
+    });
+
+    const items = resp.data.items || [];
+
+    for (const item of items) {
+      const slug = item.fieldData.slug;
+      map[slug] = item.id;
+    }
+
+    if (!resp.data.pagination?.nextPage) break;
+    page = resp.data.pagination.nextPage;
+  }
+
+  console.log("🟢 Loaded Brand Reference Map:", Object.keys(map).length);
+  brandReferenceMap = map;
+  return map;
+}
+
+/* ======================================================
    SHOPIFY — AUTO PUBLISH TO SALES CHANNELS
 ====================================================== */
 
@@ -83,16 +135,14 @@ async function getPublicationIds() {
 
   const all = resp.data?.data?.publications?.edges || [];
 
-  // Map channel names you want
   const publishTargets = all.filter(edge => {
     const n = edge.node.name.toLowerCase();
-
     return (
       n.includes("online store") ||
       n.includes("facebook") ||
       n.includes("instagram") ||
       n.includes("buy button") ||
-      n.includes("shop")       // shop app
+      n.includes("shop")
     );
   });
 
@@ -104,7 +154,7 @@ async function getPublicationIds() {
   return ids;
 }
 
-// 2. Publish product to all selected sales channels
+// 2. Publish product
 async function publishToSalesChannels(productId) {
   const pubIds = await getPublicationIds();
 
@@ -150,7 +200,7 @@ function shopifyHash(product) {
     price: product.variants?.[0]?.price || null,
     qty: product.variants?.[0]?.inventory_quantity ?? null,
     images: (product.images || []).map((i) => i.src),
-    slug: product.handle,
+    slug: product.handle
   };
 }
 
@@ -190,8 +240,8 @@ async function fetchAllShopifyProducts() {
     const response = await axios.get(url, {
       headers: {
         "X-Shopify-Access-Token": token,
-        "Content-Type": "application/json",
-      },
+        "Content-Type": "application/json"
+      }
     });
 
     const products = response.data.products || [];
@@ -219,8 +269,8 @@ async function findExistingWebflowItem(shopifyProductId) {
     const response = await axios.get(url, {
       headers: {
         Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
-        accept: "application/json",
-      },
+        accept: "application/json"
+      }
     });
 
     const items = response.data.items || [];
@@ -239,7 +289,7 @@ async function findExistingWebflowItem(shopifyProductId) {
 }
 
 /* ======================================================
-   ⭐ ADDED BLOCK — MARK AS SOLD IN WEBFLOW
+   ⭐ MARK AS SOLD
 ====================================================== */
 async function markAsSold(existing) {
   if (!existing) return;
@@ -248,7 +298,7 @@ async function markAsSold(existing) {
     fieldData: {
       ...existing.fieldData,
       category: "Recently Sold",
-      "show-on-webflow": false,
+      "show-on-webflow": false
     }
   };
 
@@ -258,8 +308,8 @@ async function markAsSold(existing) {
     {
       headers: {
         Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
-        "Content-Type": "application/json",
-      },
+        "Content-Type": "application/json"
+      }
     }
   );
 
@@ -288,16 +338,23 @@ async function syncSingleProduct(product, cache) {
       await axios.put(
         `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products/${product.id}.json`,
         { product: { id: product.id, vendor: detectedBrand } },
-        { headers: {
+        {
+          headers: {
             "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN,
-            "Content-Type": "application/json",
-        }}
+            "Content-Type": "application/json"
+          }
+        }
       );
       console.log(`🏷️ Shopify vendor updated → ${detectedBrand}`);
     } catch {}
   }
 
   const brand = detectedBrand;
+
+  /* BRAND LINK MAPPING */
+  const brandMap = await loadBrandReferenceMap();
+  const brandSlug = brand ? slugify(brand) : null;
+  const brandLinkId = brandSlug ? brandMap[brandSlug] : null;
 
   /* IMAGES */
   const allImages = (product.images || []).map((img) => img.src);
@@ -320,36 +377,42 @@ async function syncSingleProduct(product, cache) {
   if (recentlySold) category = "Recently Sold";
 
   console.log(
-    `🔁 Product ${shopifyProductId} | "${name}" | brand=${brand} | qty=${qty} | sold=${recentlySold}`
+    `🔁 Product ${shopifyProductId} | "${name}" | brand=${brand} | link=${brandLinkId} | qty=${qty} | sold=${recentlySold}`
   );
 
   /* SHOPIFY METAFIELD UPDATE */
   try {
     await axios.put(
       `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/products/${product.id}.json`,
-      { product: {
+      {
+        product: {
           id: product.id,
-          metafields: [{
-            namespace: "custom",
-            key: "category",
-            type: "single_line_text_field",
-            value: category,
-          }],
-      }},
-      { headers: {
+          metafields: [
+            {
+              namespace: "custom",
+              key: "category",
+              type: "single_line_text_field",
+              value: category
+            }
+          ]
+        }
+      },
+      {
+        headers: {
           "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN,
-          "Content-Type": "application/json",
-      }}
+          "Content-Type": "application/json"
+        }
+      }
     );
   } catch {}
 
-     /* AUTO PUBLISH TO SHOPIFY SALES CHANNELS */
+  /* AUTO PUBLISH TO SHOPIFY CHANNELS */
   try {
     await publishToSalesChannels(product.id);
   } catch (err) {
     console.error("⚠️ Failed to publish:", err.toString());
   }
-   
+
   /* WEBFLOW PAYLOAD */
   const fieldDataBase = {
     name,
@@ -365,29 +428,32 @@ async function syncSingleProduct(product, cache) {
     "image-3": gallery[2] ? { url: gallery[2] } : null,
     "image-4": gallery[3] ? { url: gallery[3] } : null,
     "image-5": gallery[4] ? { url: gallery[4] } : null,
-    "show-on-webflow": showOnWebflow
+    "show-on-webflow": showOnWebflow,
+    "brand-link": brandLinkId || null
   };
 
   const existing = await findExistingWebflowItem(shopifyProductId);
   const currentHash = shopifyHash(product);
 
-  /* IF SOLD → HANDLE IT */
+  /* SOLD → UPDATE */
   if (recentlySold && existing) {
     await markAsSold(existing);
     cache[idStr] = currentHash;
     return { operation: "sold", id: existing.id };
   }
 
-  /* CREATE NEW ITEM */
+  /* CREATE NEW ITEM ONLY IF NOT FOUND */
   if (!existing) {
     const createPayload = { ...fieldDataBase, slug };
     const resp = await axios.post(
       `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items`,
       { fieldData: createPayload },
-      { headers: {
+      {
+        headers: {
           Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
-          "Content-Type": "application/json",
-      }}
+          "Content-Type": "application/json"
+        }
+      }
     );
 
     cache[idStr] = currentHash;
@@ -396,17 +462,21 @@ async function syncSingleProduct(product, cache) {
 
   /* UPDATE IF CHANGED */
   const previousHash = cache[idStr];
-  const hasChanged = !previousHash || JSON.stringify(previousHash) !== JSON.stringify(currentHash);
+  const hasChanged =
+    !previousHash ||
+    JSON.stringify(previousHash) !== JSON.stringify(currentHash);
 
   if (!hasChanged) return { operation: "skip", id: existing.id };
 
   await axios.patch(
     `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items/${existing.id}`,
     { fieldData: { ...fieldDataBase, slug: existing.fieldData.slug }},
-    { headers: {
+    {
+      headers: {
         Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
-        "Content-Type": "application/json",
-    }}
+        "Content-Type": "application/json"
+      }
+    }
   );
 
   cache[idStr] = currentHash;
@@ -417,7 +487,7 @@ async function syncSingleProduct(product, cache) {
    ROUTES
 ====================================================== */
 app.get("/", (req, res) => {
-  res.send("Lost & Found – Full Shopify → Webflow Sync (Brand Normalized, Fixed)");
+  res.send("Lost & Found – Full Shopify → Webflow Sync (Brand Linked, Clean)");
 });
 
 app.post("/sync-all", async (req, res) => {
@@ -432,7 +502,7 @@ app.post("/sync-all", async (req, res) => {
     let skipped = 0;
     let sold = 0;
 
-    /* ⭐ ADDED: detect disappeared (= SOLD) Shopify items */
+    /* DETECT DISAPPEARED SHOPIFY ITEMS */
     const previousIds = Object.keys(cache);
     const currentIds = products.map((p) => String(p.id));
 
@@ -447,7 +517,7 @@ app.post("/sync-all", async (req, res) => {
       delete cache[goneId];
     }
 
-    /* Process current products */
+    /* PROCESS ALL PRODUCTS */
     for (const product of products) {
       try {
         const result = await syncSingleProduct(product, cache);
@@ -485,4 +555,3 @@ const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`🔥 L&F Sync Server running on port ${PORT}`);
 });
-
