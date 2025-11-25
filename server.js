@@ -46,7 +46,7 @@ function saveCache(cache) {
 }
 
 /* ======================================================
-   SLUGIFY HELPER
+   SLUGIFY HELPER (for brands, NOT products)
 ====================================================== */
 function slugify(str = "") {
   return str
@@ -98,10 +98,14 @@ async function loadBrandReferenceMap() {
 }
 
 /* ======================================================
-   WEBFLOW — FIND EXISTING ITEM (BY SHOPIFY PRODUCT ID)
+   WEBFLOW — FIND EXISTING ITEM
+   Primary: match by Shopify Product ID
+   Secondary: match by slug = Shopify handle
 ====================================================== */
-async function findExistingWebflowItem(shopifyProductId) {
+async function findExistingWebflowItem(shopifyProductId, productSlug) {
   const idStr = String(shopifyProductId);
+  let matchById = null;
+  let matchBySlug = null;
 
   let page = 1;
   while (true) {
@@ -117,16 +121,37 @@ async function findExistingWebflowItem(shopifyProductId) {
     const items = response.data.items || [];
 
     for (const item of items) {
-      if (item.fieldData?.["shopify-product-id"] === idStr) {
-        return item;
+      const fd = item.fieldData || {};
+
+      // Primary: match by Shopify Product ID
+      if (fd["shopify-product-id"] === idStr) {
+        matchById = item;
+        break;
+      }
+
+      // Secondary: match by slug (handle) if we don't have an ID match yet
+      if (!matchById && productSlug && fd.slug === productSlug && !matchBySlug) {
+        matchBySlug = item;
       }
     }
+
+    if (matchById) break;
 
     if (!response.data.pagination?.nextPage) break;
     page = response.data.pagination.nextPage;
   }
 
-  // Not found
+  if (matchById) {
+    return matchById;
+  }
+
+  if (matchBySlug) {
+    console.log(
+      `🧷 Fallback matched by slug "${productSlug}" for Shopify product ${idStr}`
+    );
+    return matchBySlug;
+  }
+
   return null;
 }
 
@@ -326,8 +351,10 @@ async function syncSingleProduct(product, cache) {
   const name = product.title;
   const description = product.body_html;
   const price = product.variants?.[0]?.price || null;
-  const slug = product.handle;
-  const shopifyUrl = `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${slug}`;
+
+  // Use Shopify handle as THE slug for the Webflow item
+  const productSlug = product.handle;
+  const shopifyUrl = `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${productSlug}`;
 
   /* BRAND DETECTION */
   let detectedBrand = detectBrandFromProduct(product.title, product.vendor);
@@ -435,7 +462,8 @@ async function syncSingleProduct(product, cache) {
     "brand-link": brandLinkId || null
   };
 
-  const existing = await findExistingWebflowItem(shopifyProductId);
+  // 🔍 Find existing by product ID, then by slug/handle
+  const existing = await findExistingWebflowItem(shopifyProductId, productSlug);
   const currentHash = shopifyHash(product);
 
   /* SOLD → UPDATE */
@@ -445,9 +473,9 @@ async function syncSingleProduct(product, cache) {
     return { operation: "sold", id: existing.id };
   }
 
-  /* CREATE IF NOT FOUND (NO SLUG REUSE BUG) */
+  /* CREATE IF NOT FOUND (USE HANDLE AS SLUG) */
   if (!existing) {
-    const createPayload = { ...fieldDataBase, slug };
+    const createPayload = { ...fieldDataBase, slug: productSlug };
     const resp = await axios.post(
       `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items`,
       { fieldData: createPayload },
@@ -460,6 +488,7 @@ async function syncSingleProduct(product, cache) {
     );
 
     cache[idStr] = currentHash;
+    console.log(`🆕 Created Webflow item for Shopify product ${idStr}`);
     return { operation: "create", id: resp.data.id };
   }
 
@@ -469,14 +498,16 @@ async function syncSingleProduct(product, cache) {
     !previousHash ||
     JSON.stringify(previousHash) !== JSON.stringify(currentHash);
 
-  if (!hasChanged) return { operation: "skip", id: existing.id };
+  if (!hasChanged) {
+    return { operation: "skip", id: existing.id };
+  }
 
   await axios.patch(
     `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items/${existing.id}`,
     {
       fieldData: {
         ...fieldDataBase,
-        // preserve the existing slug so Webflow doesn't treat as a new item
+        // 🔒 Preserve existing slug so Webflow doesn't treat it as a new item
         slug: existing.fieldData.slug
       }
     },
@@ -489,6 +520,7 @@ async function syncSingleProduct(product, cache) {
   );
 
   cache[idStr] = currentHash;
+  console.log(`✏️ Updated Webflow item ${existing.id} for Shopify product ${idStr}`);
   return { operation: "update", id: existing.id };
 }
 
@@ -497,7 +529,7 @@ async function syncSingleProduct(product, cache) {
 ====================================================== */
 app.get("/", (req, res) => {
   res.send(
-    "Lost & Found – Full Shopify → Webflow Sync (Brand Linked, Clean, Duplicate-Proof)"
+    "Lost & Found – Full Shopify → Webflow Sync (Brand Linked, Clean, Duplicate-Proof, Slug-Fallback)"
   );
 });
 
@@ -522,7 +554,7 @@ app.post("/sync-all", async (req, res) => {
     );
 
     for (const goneId of disappeared) {
-      const existing = await findExistingWebflowItem(goneId);
+      const existing = await findExistingWebflowItem(goneId, null);
       if (existing) {
         await markAsSold(existing);
         sold++;
