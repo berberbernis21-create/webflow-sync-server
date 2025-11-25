@@ -98,12 +98,11 @@ async function loadBrandReferenceMap() {
 }
 
 /* ======================================================
-   WEBFLOW — FIND EXISTING ITEM (STRONG VERSION)
+   WEBFLOW — FIND EXISTING ITEM (BY SHOPIFY PRODUCT ID)
 ====================================================== */
 async function findExistingWebflowItem(shopifyProductId) {
   const idStr = String(shopifyProductId);
 
-  // PASS 1 — normal collection pagination scan (your original logic)
   let page = 1;
   while (true) {
     const url = `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items?page=${page}&limit=100`;
@@ -125,24 +124,6 @@ async function findExistingWebflowItem(shopifyProductId) {
 
     if (!response.data.pagination?.nextPage) break;
     page = response.data.pagination.nextPage;
-  }
-
-  // PASS 2 — direct query filter (ensures nothing is missed)
-  try {
-    const searchUrl = `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items?filter[shopify-product-id]=${idStr}`;
-
-    const directResp = await axios.get(searchUrl, {
-      headers: {
-        Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
-        accept: "application/json"
-      }
-    });
-
-    if (directResp.data.items?.length > 0) {
-      return directResp.data.items[0];
-    }
-  } catch (err) {
-    console.error("⚠️ Webflow direct query failed:", err.toString());
   }
 
   // Not found
@@ -382,13 +363,16 @@ async function syncSingleProduct(product, cache) {
 
   /* SOLD LOGIC */
   const variant = product.variants?.[0];
-  const qty = typeof variant?.inventory_quantity === "number"
+  const qty =
+    typeof variant?.inventory_quantity === "number"
       ? variant.inventory_quantity
       : null;
 
   const soldByInventory = qty !== null && qty <= 0;
   const normalizedTitle = (name || "").toLowerCase();
-  const soldByTitle = normalizedTitle.includes("sold") || normalizedTitle.includes("reserved");
+  const soldByTitle =
+    normalizedTitle.includes("sold") ||
+    normalizedTitle.includes("reserved");
   const recentlySold = soldByInventory || soldByTitle;
 
   let category = detectCategory(name);
@@ -461,14 +445,8 @@ async function syncSingleProduct(product, cache) {
     return { operation: "sold", id: existing.id };
   }
 
-  /* HARD DUPLICATE BLOCK — FINAL CHECK BEFORE CREATE */
+  /* CREATE IF NOT FOUND (NO SLUG REUSE BUG) */
   if (!existing) {
-    const finalCheck = await findExistingWebflowItem(shopifyProductId);
-    if (finalCheck) {
-      console.log("🛑 BLOCKED DUPLICATE — existing found during final check");
-      return { operation: "skip", id: finalCheck.id };
-    }
-
     const createPayload = { ...fieldDataBase, slug };
     const resp = await axios.post(
       `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items`,
@@ -495,7 +473,13 @@ async function syncSingleProduct(product, cache) {
 
   await axios.patch(
     `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items/${existing.id}`,
-    { fieldData: { ...fieldDataBase, slug: existing.fieldData.slug }},
+    {
+      fieldData: {
+        ...fieldDataBase,
+        // preserve the existing slug so Webflow doesn't treat as a new item
+        slug: existing.fieldData.slug
+      }
+    },
     {
       headers: {
         Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
@@ -512,7 +496,9 @@ async function syncSingleProduct(product, cache) {
    ROUTES
 ====================================================== */
 app.get("/", (req, res) => {
-  res.send("Lost & Found – Full Shopify → Webflow Sync (Brand Linked, Clean, Duplicate-Proof)");
+  res.send(
+    "Lost & Found – Full Shopify → Webflow Sync (Brand Linked, Clean, Duplicate-Proof)"
+  );
 });
 
 app.post("/sync-all", async (req, res) => {
@@ -531,7 +517,9 @@ app.post("/sync-all", async (req, res) => {
     const previousIds = Object.keys(cache);
     const currentIds = products.map((p) => String(p.id));
 
-    const disappeared = previousIds.filter(id => !currentIds.includes(id));
+    const disappeared = previousIds.filter(
+      (id) => !currentIds.includes(id)
+    );
 
     for (const goneId of disappeared) {
       const existing = await findExistingWebflowItem(goneId);
@@ -551,7 +539,6 @@ app.post("/sync-all", async (req, res) => {
         else if (result.operation === "update") updated++;
         else if (result.operation === "sold") sold++;
         else skipped++;
-
       } catch (err) {
         console.error("⚠️ Error syncing:", product.id, err.toString());
       }
@@ -567,7 +554,6 @@ app.post("/sync-all", async (req, res) => {
       skipped,
       sold
     });
-
   } catch (err) {
     res.status(500).json({ error: err.toString() });
   }
