@@ -98,6 +98,58 @@ async function loadBrandReferenceMap() {
 }
 
 /* ======================================================
+   WEBFLOW — FIND EXISTING ITEM (STRONG VERSION)
+====================================================== */
+async function findExistingWebflowItem(shopifyProductId) {
+  const idStr = String(shopifyProductId);
+
+  // PASS 1 — normal collection pagination scan (your original logic)
+  let page = 1;
+  while (true) {
+    const url = `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items?page=${page}&limit=100`;
+
+    const response = await axios.get(url, {
+      headers: {
+        Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
+        accept: "application/json"
+      }
+    });
+
+    const items = response.data.items || [];
+
+    for (const item of items) {
+      if (item.fieldData?.["shopify-product-id"] === idStr) {
+        return item;
+      }
+    }
+
+    if (!response.data.pagination?.nextPage) break;
+    page = response.data.pagination.nextPage;
+  }
+
+  // PASS 2 — direct query filter (ensures nothing is missed)
+  try {
+    const searchUrl = `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items?filter[shopify-product-id]=${idStr}`;
+
+    const directResp = await axios.get(searchUrl, {
+      headers: {
+        Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
+        accept: "application/json"
+      }
+    });
+
+    if (directResp.data.items?.length > 0) {
+      return directResp.data.items[0];
+    }
+  } catch (err) {
+    console.error("⚠️ Webflow direct query failed:", err.toString());
+  }
+
+  // Not found
+  return null;
+}
+
+/* ======================================================
    SHOPIFY — AUTO PUBLISH TO SALES CHANNELS
 ====================================================== */
 
@@ -105,7 +157,6 @@ const SHOPIFY_GRAPHQL_URL = `https://${process.env.SHOPIFY_STORE}.myshopify.com/
 
 let cachedPublicationIds = null;
 
-// 1. Get publication IDs once and cache them
 async function getPublicationIds() {
   if (cachedPublicationIds) return cachedPublicationIds;
 
@@ -154,7 +205,6 @@ async function getPublicationIds() {
   return ids;
 }
 
-// 2. Publish product
 async function publishToSalesChannels(productId) {
   const pubIds = await getPublicationIds();
 
@@ -255,37 +305,6 @@ async function fetchAllShopifyProducts() {
 
   console.log(`📦 Total Shopify products fetched: ${allProducts.length}`);
   return allProducts;
-}
-
-/* ======================================================
-   WEBFLOW — FIND EXISTING ITEM
-====================================================== */
-async function findExistingWebflowItem(shopifyProductId) {
-  let page = 1;
-
-  while (true) {
-    const url = `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items?page=${page}&limit=100`;
-
-    const response = await axios.get(url, {
-      headers: {
-        Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
-        accept: "application/json"
-      }
-    });
-
-    const items = response.data.items || [];
-
-    for (const item of items) {
-      if (item.fieldData?.["shopify-product-id"] === String(shopifyProductId)) {
-        return item;
-      }
-    }
-
-    if (!response.data.pagination?.nextPage) break;
-    page = response.data.pagination.nextPage;
-  }
-
-  return null;
 }
 
 /* ======================================================
@@ -406,14 +425,14 @@ async function syncSingleProduct(product, cache) {
     );
   } catch {}
 
-  /* AUTO PUBLISH TO SHOPIFY CHANNELS */
+  /* AUTO PUBLISH */
   try {
     await publishToSalesChannels(product.id);
   } catch (err) {
     console.error("⚠️ Failed to publish:", err.toString());
   }
 
-  /* WEBFLOW PAYLOAD */
+  /* BASE WEBFLOW PAYLOAD */
   const fieldDataBase = {
     name,
     brand,
@@ -442,8 +461,14 @@ async function syncSingleProduct(product, cache) {
     return { operation: "sold", id: existing.id };
   }
 
-  /* CREATE NEW ITEM ONLY IF NOT FOUND */
+  /* HARD DUPLICATE BLOCK — FINAL CHECK BEFORE CREATE */
   if (!existing) {
+    const finalCheck = await findExistingWebflowItem(shopifyProductId);
+    if (finalCheck) {
+      console.log("🛑 BLOCKED DUPLICATE — existing found during final check");
+      return { operation: "skip", id: finalCheck.id };
+    }
+
     const createPayload = { ...fieldDataBase, slug };
     const resp = await axios.post(
       `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items`,
@@ -487,7 +512,7 @@ async function syncSingleProduct(product, cache) {
    ROUTES
 ====================================================== */
 app.get("/", (req, res) => {
-  res.send("Lost & Found – Full Shopify → Webflow Sync (Brand Linked, Clean)");
+  res.send("Lost & Found – Full Shopify → Webflow Sync (Brand Linked, Clean, Duplicate-Proof)");
 });
 
 app.post("/sync-all", async (req, res) => {
@@ -517,7 +542,7 @@ app.post("/sync-all", async (req, res) => {
       delete cache[goneId];
     }
 
-    /* PROCESS ALL PRODUCTS */
+    /* PROCESS PRODUCTS */
     for (const product of products) {
       try {
         const result = await syncSingleProduct(product, cache);
