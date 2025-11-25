@@ -2,7 +2,7 @@
 // Brand normalization + fuzzy detection for Lost & Found sync server
 
 // ---------------------------
-// 1. Canonical Brand List
+// 1. Canonical Brand List (exact Webflow names, accent-free)
 // ---------------------------
 
 export const CANONICAL_BRANDS = [
@@ -11,7 +11,7 @@ export const CANONICAL_BRANDS = [
   "Acne Studios",
   "Aimee Kestenberg",
   "Akris",
-  "Alaïa",
+  "Alaia",
   "Alexander McQueen",
   "Alexander Wang",
   "Alexis",
@@ -23,7 +23,7 @@ export const CANONICAL_BRANDS = [
   "Anya Hindmarch",
   "Aquatalia",
   "Aquazzura",
-  "Arc’teryx",
+  "Arcteryx",
   "Armani",
   "Aspinal of London",
   "Badgley Mischka",
@@ -45,12 +45,12 @@ export const CANONICAL_BRANDS = [
   "Celine",
   "Chiara Boni",
   "Chanel",
-  "Chloé",
+  "Chloe",
   "Christian Dior",
   "Christian Louboutin",
   "Coach",
   "Cole Haan",
-  "Comme des Garçons",
+  "Comme des Garcons",
   "Consuela",
   "Cult Gaia",
   "Dagne Dover",
@@ -81,7 +81,7 @@ export const CANONICAL_BRANDS = [
   "Helen Kaminski",
   "Helmut Lang",
   "Henri Bendel",
-  "Hermès",
+  "Hermes",
   "Hobo",
   "Hogan",
   "Il Bisonte",
@@ -94,10 +94,10 @@ export const CANONICAL_BRANDS = [
   "Johnny Was",
   "Joseph",
   "Judith Leiber",
-  "Kate Spade New York",
   "Kara",
   "Karl Lagerfeld",
   "Kassl Editions",
+  "Kate Spade New York",
   "Khaite",
   "Kurt Geiger London",
   "Lacoste",
@@ -112,16 +112,16 @@ export const CANONICAL_BRANDS = [
   "Lucky Brand",
   "Lululemon",
   "M2Malletier",
+  "MCM",
+  "MM6 Maison Margiela",
+  "Maison Kitsune",
   "Maison Margiela",
-  "Maison Kitsuné",
   "Maje",
   "Marc Jacobs",
   "Marni",
   "Mary Frances",
-  "MCM",
   "Michael Kors",
   "Miu Miu",
-  "MM6 Maison Margiela",
   "Moncler",
   "Moschino",
   "Mulberry",
@@ -132,31 +132,31 @@ export const CANONICAL_BRANDS = [
   "Off-White",
   "Oryany",
   "Oscar de la Renta",
+  "PINKO",
   "Paco Rabanne",
   "Pajar",
   "Palm Angels",
   "Patricia Nash",
   "Paul Smith",
-  "PINKO",
   "Polo Ralph Lauren",
   "Porsche Design",
   "Prada",
   "Proenza Schouler",
   "R13",
   "Rabanne",
-  "Rag & Bone",
   "Radley London",
+  "Rag & Bone",
   "Ralph Lauren",
   "Ray-Ban",
   "Rebecca Minkoff",
   "Rick Owens",
   "Rimowa",
-  "Rothy’s",
+  "Rothys",
   "Saint Laurent",
   "Salvatore Ferragamo",
   "Sam Edelman",
-  "Sezane",
   "Senreve",
+  "Sezane",
   "Staud",
   "Stella McCartney",
   "Surell",
@@ -165,9 +165,9 @@ export const CANONICAL_BRANDS = [
   "The Row",
   "The Sak",
   "Thom Browne",
-  "Tod’s",
+  "Tods",
   "Tory Burch",
-  "Totême",
+  "Toteme",
   "Tumi",
   "Tyler Ellis",
   "Ulla Johnson",
@@ -193,9 +193,7 @@ export const CANONICAL_BRANDS = [
 // ---------------------------
 // 2. Aliases / Sub-brands
 // ---------------------------
-//
-// Key: normalized lower-case alias
-// Value: canonical Title Case brand
+// All aliases map to the UPDATED canonical names above.
 
 export const BRAND_ALIASES = {
   // Louis Vuitton
@@ -223,9 +221,9 @@ export const BRAND_ALIASES = {
   "cc": "Chanel",
   "coco chanel": "Chanel",
 
-  // Hermès
-  "hermes": "Hermès",
-  "hermes paris": "Hermès",
+  // Hermes (accent-free)
+  "hermes": "Hermes",
+  "hermes paris": "Hermes",
 
   // Ralph Lauren family
   "polo": "Ralph Lauren",
@@ -267,45 +265,36 @@ export const BRAND_ALIASES = {
   "dooney": "Dooney & Bourke",
   "dooney and bourke": "Dooney & Bourke",
 
-  // Other common normalizations
+  // Other normalizations
   "stella mccartney": "Stella McCartney",
-  "tod's": "Tod’s",
-  "tods": "Tod’s",
+  "tods": "Tods",
+  "tod s": "Tods",
   "valentino": "Valentino Garavani",
   "ysl saint laurent": "Saint Laurent"
 };
 
 // ---------------------------
-// 3. Contextual Model Keywords
-//    (when brand name is missing)
+// 3. Contextual Model Keywords (brand inference when missing)
 // ---------------------------
-//
-// If any of these tokens appear in the title, we treat it as that brand,
-// *especially* when vendor is blank or generic.
 
 export const CONTEXT_BRAND_KEYWORDS = {
   "Louis Vuitton": [
     "neverfull",
     "speedy",
     "alma",
-    "pochette accessoires",
-    "pochette accessoire",
-    "pochette metis",
-    "palm springs mini",
+    "pochette",
+    "palm springs",
     "keepall",
-    "noé",
     "noe",
     "montsouris",
     "montaigne",
     "capucines",
     "multicolore",
-    "épi",
     "epi",
     "damier",
-    "monogram canvas",
     "monogram"
   ],
-  "Hermès": [
+  "Hermes": [
     "birkin",
     "kelly",
     "constance",
@@ -316,8 +305,7 @@ export const CONTEXT_BRAND_KEYWORDS = {
   "Chanel": [
     "classic flap",
     "boy bag",
-    "boy flap",
-    "caviar quilted",
+    "caviar",
     "gabrielle",
     "coco handle"
   ],
@@ -328,8 +316,8 @@ export const CONTEXT_BRAND_KEYWORDS = {
     "zucchino"
   ],
   "Goyard": [
-    "st louis tote",
-    "st. louis tote"
+    "st louis",
+    "st. louis"
   ],
   "Longchamp": [
     "le pliage"
@@ -350,76 +338,58 @@ function normalize(str = "") {
     .trim();
 }
 
-// Simple Levenshtein distance for fuzzy matching
+// Levenshtein
 function levenshtein(a, b) {
   if (a === b) return 0;
   if (!a.length) return b.length;
   if (!b.length) return a.length;
 
   const matrix = [];
-  const al = a.length;
-  const bl = b.length;
+  for (let i = 0; i <= b.length; i++) matrix[i] = [i];
+  for (let j = 0; j <= a.length; j++) matrix[0][j] = j;
 
-  for (let i = 0; i <= bl; i++) matrix[i] = [i];
-  for (let j = 0; j <= al; j++) matrix[0][j] = j;
-
-  for (let i = 1; i <= bl; i++) {
-    for (let j = 1; j <= al; j++) {
-      if (b.charAt(i - 1) === a.charAt(j - 1)) {
-        matrix[i][j] = matrix[i - 1][j - 1];
-      } else {
-        matrix[i][j] = Math.min(
-          matrix[i - 1][j - 1] + 1, // substitution
-          matrix[i][j - 1] + 1,     // insertion
-          matrix[i - 1][j] + 1      // deletion
-        );
-      }
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      matrix[i][j] =
+        b[i - 1] === a[j - 1]
+          ? matrix[i - 1][j - 1]
+          : Math.min(
+              matrix[i - 1][j - 1] + 1,
+              matrix[i][j - 1] + 1,
+              matrix[i - 1][j] + 1
+            );
     }
   }
-  return matrix[bl][al];
+  return matrix[b.length][a.length];
 }
 
 // ---------------------------
-// 5. Core detection logic
+// 5. Brand Detection Core
 // ---------------------------
 
-/**
- * Try to canonicalize an input string if it looks like a brand name.
- */
 export function canonicalizeBrand(rawBrand) {
   if (!rawBrand) return null;
-
   const norm = normalize(rawBrand);
 
-  // Direct alias lookup
-  if (BRAND_ALIASES[norm]) {
-    return BRAND_ALIASES[norm];
-  }
+  // Direct alias
+  if (BRAND_ALIASES[norm]) return BRAND_ALIASES[norm];
 
-  // Exact match against canonical brands (normalized)
+  // Exact match
   for (const brand of CANONICAL_BRANDS) {
-    if (normalize(brand) === norm) {
-      return brand;
-    }
+    if (normalize(brand) === norm) return brand;
   }
 
-  // Fuzzy match against canonical + aliases
+  // Fuzzy match
   let bestMatch = null;
   let bestDistance = Infinity;
 
-  const candidates = [
-    ...CANONICAL_BRANDS,
-    ...Object.keys(BRAND_ALIASES)
-  ];
+  const candidates = [...CANONICAL_BRANDS, ...Object.keys(BRAND_ALIASES)];
 
   for (const candidate of candidates) {
-    const candNorm = normalize(candidate);
-    const distance = levenshtein(norm, candNorm);
-    const len = Math.max(candNorm.length, norm.length);
-
-    // crude similarity threshold:
-    const ratio = distance / len;
-    if (ratio <= 0.3 && distance < bestDistance) {
+    const cNorm = normalize(candidate);
+    const distance = levenshtein(norm, cNorm);
+    const len = Math.max(norm.length, cNorm.length);
+    if (distance / len <= 0.3 && distance < bestDistance) {
       bestDistance = distance;
       bestMatch = candidate;
     }
@@ -427,72 +397,46 @@ export function canonicalizeBrand(rawBrand) {
 
   if (!bestMatch) return null;
 
-  // If the best match is an alias, map to canonical
-  const bestNorm = normalize(bestMatch);
-  if (BRAND_ALIASES[bestNorm]) {
-    return BRAND_ALIASES[bestNorm];
-  }
+  // Map alias → canonical
+  const bmNorm = normalize(bestMatch);
+  if (BRAND_ALIASES[bmNorm]) return BRAND_ALIASES[bmNorm];
 
-  // Otherwise assume it's canonical + Title Case already
-  const canonical = CANONICAL_BRANDS.find(
-    (b) => normalize(b) === normalize(bestMatch)
-  );
-  return canonical || null;
+  // Canonical brand
+  return CANONICAL_BRANDS.find(b => normalize(b) === normalize(bestMatch)) || null;
 }
 
-/**
- * Detect the correct brand from a title + existing vendor.
- * Priority:
- *   1. Vendor (if valid / mappable)
- *   2. Explicit brand name in title (canonical or alias)
- *   3. Contextual model keywords
- *   4. Fuzzy guess fallback
- */
 export function detectBrandFromProduct(title, vendor) {
   const normTitle = normalize(title || "");
   const normVendor = normalize(vendor || "");
 
-  // 1) Vendor → canonical if possible
+  // Vendor
   const vendorCanonical = canonicalizeBrand(vendor);
   if (vendorCanonical) return vendorCanonical;
 
-  // 2) Look for any canonical brand name inside the title
+  // Title contains brand
   for (const brand of CANONICAL_BRANDS) {
-    const bNorm = normalize(brand);
-    if (!bNorm) continue;
-    if (normTitle.includes(bNorm)) {
-      return brand;
-    }
+    if (normTitle.includes(normalize(brand))) return brand;
   }
 
-  // 3) Look for alias tokens in the title
+  // Alias in title
   for (const [aliasNorm, canonical] of Object.entries(BRAND_ALIASES)) {
-    if (normTitle.includes(aliasNorm)) {
-      return canonical;
-    }
+    if (normTitle.includes(aliasNorm)) return canonical;
   }
 
-  // 4) Contextual model keywords (LV / Hermès / Chanel etc)
+  // Contextual
   for (const [brand, keywords] of Object.entries(CONTEXT_BRAND_KEYWORDS)) {
     for (const kw of keywords) {
-      if (normTitle.includes(normalize(kw))) {
-        return brand;
-      }
+      if (normTitle.includes(normalize(kw))) return brand;
     }
   }
 
-  // 5) Fuzzy fallback from vendor or first token(s) in title
-  //    (only if we have something vaguely brand-like)
-  const candidates = [];
-  if (normVendor) candidates.push(normVendor);
-  const firstTwoWords = normTitle.split(" ").slice(0, 3).join(" ");
-  if (firstTwoWords) candidates.push(firstTwoWords);
+  // Fuzzy fallback
+  const attempts = [normVendor, normTitle.split(" ").slice(0, 3).join(" ")];
 
-  for (const c of candidates) {
-    const guess = canonicalizeBrand(c);
+  for (const attempt of attempts) {
+    const guess = canonicalizeBrand(attempt);
     if (guess) return guess;
   }
 
-  // If nothing matched, return null to keep Shopify vendor as-is
   return null;
 }
