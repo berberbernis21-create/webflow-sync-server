@@ -47,7 +47,7 @@ function saveCache(cache) {
 
 /**
  * Cache entry helper:
- * - New format: { hash, webflowId }
+ * - New format: { hash, webflowId, lastQty }
  * - Legacy: hash only (we normalize it)
  */
 function getCacheEntry(cache, idStr) {
@@ -55,11 +55,16 @@ function getCacheEntry(cache, idStr) {
   if (!entry) return null;
 
   if (entry && typeof entry === "object" && entry.hash) {
-    return entry;
+    return {
+      hash: entry.hash,
+      webflowId: entry.webflowId || null,
+      lastQty:
+        typeof entry.lastQty === "number" ? entry.lastQty : null,
+    };
   }
 
   // Legacy format: value is just the hash
-  return { hash: entry, webflowId: null };
+  return { hash: entry, webflowId: null, lastQty: null };
 }
 
 /**
@@ -338,7 +343,9 @@ async function syncSingleProduct(product, cache) {
         }
       );
       console.log(`🏷️ Shopify vendor updated → ${detectedBrand}`);
-    } catch {}
+    } catch {
+      // ignore vendor update errors
+    }
   }
 
   const brand = detectedBrand;
@@ -348,25 +355,35 @@ async function syncSingleProduct(product, cache) {
   const featuredImage = product.image?.src || allImages[0] || null;
   const gallery = allImages.filter((url) => url !== featuredImage);
 
-  /* SOLD LOGIC */
+  /* SOLD & QTY LOGIC */
   const variant = product.variants?.[0];
   const qty =
     typeof variant?.inventory_quantity === "number"
       ? variant.inventory_quantity
       : null;
 
-  const soldByInventory = qty !== null && qty <= 0;
+  const previousQty =
+    typeof cacheEntry?.lastQty === "number" ? cacheEntry.lastQty : null;
+
+  const soldByInventoryNow = qty !== null && qty <= 0;
   const normalizedTitle = (name || "").toLowerCase();
   const soldByTitle =
     normalizedTitle.includes("sold") || normalizedTitle.includes("reserved");
-  const recentlySold = soldByInventory || soldByTitle;
+
+  // For display/category, keep using both signals
+  const recentlySold = soldByInventoryNow || soldByTitle;
+
+  // For Webflow "mark as sold" side-effect, trigger only on transition:
+  // previously > 0 (or unknown) → now <= 0
+  const justSoldByInventory =
+    soldByInventoryNow && (previousQty === null || previousQty > 0);
 
   let category = detectCategory(name);
   let showOnWebflow = !recentlySold;
   if (recentlySold) category = "Recently Sold";
 
   console.log(
-    `🔁 Product ${shopifyProductId} | "${name}" | brand=${brand} | qty=${qty} | sold=${recentlySold}`
+    `🔁 Product ${shopifyProductId} | "${name}" | brand=${brand} | qty=${qty} | sold=${recentlySold} | prevQty=${previousQty} | justSold=${justSoldByInventory}`
   );
 
   /* SHOPIFY METAFIELD UPDATE */
@@ -393,7 +410,9 @@ async function syncSingleProduct(product, cache) {
         },
       }
     );
-  } catch {}
+  } catch {
+    // ignore metafield errors
+  }
 
   /* AUTO PUBLISH TO SHOPIFY SALES CHANNELS */
   try {
@@ -442,16 +461,30 @@ async function syncSingleProduct(product, cache) {
     console.error(
       `❌ SKIP: Shopify ${idStr} has cache entry but no Webflow item found. Avoiding duplicate create.`
     );
+
+    // Still update cache with latest qty + hash so transitions remain correct
+    cache[idStr] = {
+      hash: currentHash,
+      webflowId: cacheEntry.webflowId || null,
+      lastQty: qty,
+    };
+
     return { operation: "skip-missing-webflow", id: null };
   }
 
-  /* IF SOLD → HANDLE IT */
-  if (recentlySold && existing) {
-    await markAsSold(existing);
+  // Helper to write cache consistently
+  const setCacheEntry = (webflowIdValue) => {
     cache[idStr] = {
       hash: currentHash,
-      webflowId: existing.id,
+      webflowId: webflowIdValue || cacheEntry?.webflowId || existing?.id || null,
+      lastQty: qty,
     };
+  };
+
+  /* IF JUST SOLD → HANDLE IT (ONLY ON TRANSITION) */
+  if (justSoldByInventory && existing) {
+    await markAsSold(existing);
+    setCacheEntry(existing.id);
     return { operation: "sold", id: existing.id };
   }
 
@@ -478,18 +511,21 @@ async function syncSingleProduct(product, cache) {
     cache[idStr] = {
       hash: currentHash,
       webflowId: newId,
+      lastQty: qty,
     };
 
     console.log(`🆕 Created Webflow item ${newId} for Shopify ${idStr}`);
     return { operation: "create", id: newId };
   }
 
-  /* UPDATE IF CHANGED */
+  /* UPDATE IF CHANGED (NON-SOLD CASES) */
   const hasChanged =
     !previousHash ||
     JSON.stringify(previousHash) !== JSON.stringify(currentHash);
 
   if (!hasChanged) {
+    // No changes, but still update lastQty so transitions work next time
+    setCacheEntry(existing?.id || cacheEntry?.webflowId || null);
     return { operation: "skip", id: existing?.id || null };
   }
 
@@ -504,10 +540,7 @@ async function syncSingleProduct(product, cache) {
     }
   );
 
-  cache[idStr] = {
-    hash: currentHash,
-    webflowId: existing.id,
-  };
+  setCacheEntry(existing.id);
 
   console.log(`✏️ Updated Webflow item ${existing.id} for Shopify ${idStr}`);
   return { operation: "update", id: existing.id };
@@ -517,7 +550,9 @@ async function syncSingleProduct(product, cache) {
    ROUTES
 ====================================================== */
 app.get("/", (req, res) => {
-  res.send("Lost & Found – Full Shopify → Webflow Sync (Brand Normalized, Duplicate-Safe)");
+  res.send(
+    "Lost & Found – Full Shopify → Webflow Sync (Brand Normalized, Duplicate-Safe, Sold-by-Transition)"
+  );
 });
 
 app.post("/sync-all", async (req, res) => {
