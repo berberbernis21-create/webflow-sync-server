@@ -60,7 +60,7 @@ function getCacheEntry(cache, idStr) {
 }
 
 /* ======================================================
-   WEBFLOW DIRECT LOOKUP
+   WEBFLOW DIRECT LOOKUP (by ID)
 ====================================================== */
 async function getWebflowItemById(itemId) {
   if (!itemId) return null;
@@ -166,6 +166,7 @@ async function publishToSalesChannels(productId) {
     }
   }
 }
+
 /* ======================================================
    SHOPIFY — WRITE CATEGORY METAFIELD
 ====================================================== */
@@ -192,9 +193,9 @@ async function updateShopifyCategoryMetafield(productId, categoryValue) {
         key: "category",
         namespace: "custom",
         type: "single_line_text_field",
-        value: categoryValue
-      }
-    ]
+        value: categoryValue,
+      },
+    ],
   };
 
   await axios.post(
@@ -274,9 +275,10 @@ async function fetchAllShopifyProducts() {
 }
 
 /* ======================================================
-   WEBFLOW — SCAN COLLECTION FOR ITEM MATCH
+   WEBFLOW — SCAN ALL PAGES, MATCH BY MULTIPLE FIELDS
+   (product id, shopify url, slug)
 ====================================================== */
-async function findExistingWebflowItem(shopifyProductId) {
+async function findExistingWebflowItem(shopifyProductId, shopifyUrl, slug) {
   let page = 1;
 
   while (true) {
@@ -292,16 +294,27 @@ async function findExistingWebflowItem(shopifyProductId) {
     const items = response.data.items || [];
 
     for (const item of items) {
-      const wfId = item.fieldData?.["shopify-product-id"];
+      const fd = item.fieldData || {};
 
-      // Normalize BOTH values so number/string mismatches don't break the match
-      if (wfId && String(wfId) === String(shopifyProductId)) {
+      const wfId = fd["shopify-product-id"];
+      const wfUrl = fd["shopify-url"];
+      const wfSlug = fd["slug"];
+
+      const idMatch =
+        wfId && String(wfId).trim() === String(shopifyProductId).trim();
+      const urlMatch =
+        wfUrl && String(wfUrl).trim() === String(shopifyUrl).trim();
+      const slugMatch =
+        wfSlug && String(wfSlug).trim() === String(slug).trim();
+
+      if (idMatch || urlMatch || slugMatch) {
         return item;
       }
     }
 
-    if (!response.data.pagination?.nextPage) break;
-    page = response.data.pagination.nextPage;
+    const nextPage = response.data?.pagination?.nextPage;
+    if (!nextPage) break;
+    page = nextPage;
   }
 
   return null;
@@ -347,6 +360,8 @@ async function syncSingleProduct(product, cache) {
   let qty = product.variants?.[0]?.inventory_quantity ?? null;
   let slug = product.handle;
 
+  const shopifyUrl = `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${slug}`;
+
   let detectedBrand = detectBrandFromProduct(product.title, product.vendor);
   if (!detectedBrand) detectedBrand = product.vendor || null;
   const brand = detectedBrand;
@@ -361,7 +376,7 @@ async function syncSingleProduct(product, cache) {
   let showOnWebflow = !soldNow;
   if (soldNow) category = "Recently Sold";
   await updateShopifyCategoryMetafield(shopifyProductId, category);
- 
+
   const currentHash = shopifyHash(product);
 
   /* ======================================================
@@ -376,9 +391,13 @@ async function syncSingleProduct(product, cache) {
     existing = await getWebflowItemById(cacheEntry.webflowId);
   }
 
-  // 2. ALWAYS run fallback matcher
+  // 2. Fallback: full collection scan matching by ID / URL / slug
   if (!existing) {
-    existing = await findExistingWebflowItem(shopifyProductId);
+    existing = await findExistingWebflowItem(
+      shopifyProductId,
+      shopifyUrl,
+      slug
+    );
   }
 
   /* ======================================================
@@ -387,7 +406,6 @@ async function syncSingleProduct(product, cache) {
   ======================================================= */
 
   if (existing) {
-    // If newly sold
     const newlySold =
       (previousQty === null || previousQty > 0) && qty !== null && qty <= 0;
 
@@ -419,7 +437,7 @@ async function syncSingleProduct(product, cache) {
             price,
             description,
             "shopify-product-id": shopifyProductId,
-            "shopify-url": `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${slug}`,
+            "shopify-url": shopifyUrl,
             category,
             "featured-image": featuredImage ? { url: featuredImage } : null,
             "image-1": gallery[0] ? { url: gallery[0] } : null,
@@ -428,7 +446,7 @@ async function syncSingleProduct(product, cache) {
             "image-4": gallery[3] ? { url: gallery[3] } : null,
             "image-5": gallery[4] ? { url: gallery[4] } : null,
             "show-on-webflow": showOnWebflow,
-            slug: existing.fieldData.slug,
+            slug: existing.fieldData.slug, // never change Webflow slug
           },
         },
         {
@@ -461,10 +479,8 @@ async function syncSingleProduct(product, cache) {
      NO EXISTING ITEM FOUND IN WEBFLOW
      → Creation allowed ONLY if NO CACHE ENTRY exists.
   ======================================================= */
-    /* ======================================================
-     🔍 FINAL FAILSAFE — WEBFLOW SEARCH API
-     Ensures duplicates NEVER happen even if pagination misses the item
-  ======================================================= */
+
+  // FINAL FAILSAFE — Webflow Search API by product ID
   if (!existing) {
     try {
       const searchResp = await axios.post(
@@ -473,8 +489,8 @@ async function syncSingleProduct(product, cache) {
           filter: {
             fieldName: "shopify-product-id",
             operator: "equals",
-            value: shopifyProductId
-          }
+            value: shopifyProductId,
+          },
         },
         {
           headers: {
@@ -488,7 +504,6 @@ async function syncSingleProduct(product, cache) {
       if (foundItems.length > 0) {
         const found = foundItems[0];
 
-        // Save to cache so it never happens again
         cache[shopifyProductId] = {
           hash: currentHash,
           webflowId: found.id,
@@ -515,7 +530,7 @@ async function syncSingleProduct(product, cache) {
           price,
           description,
           "shopify-product-id": shopifyProductId,
-          "shopify-url": `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${slug}`,
+          "shopify-url": shopifyUrl,
           category,
           "featured-image": featuredImage ? { url: featuredImage } : null,
           "image-1": gallery[0] ? { url: gallery[0] } : null,
@@ -546,11 +561,7 @@ async function syncSingleProduct(product, cache) {
     return { operation: "create", id: newId };
   }
 
-  /* ======================================================
-     CACHE EXISTS BUT WEBFLOW MISSING
-     → NEVER CREATE (duplicate protection)
-  ======================================================= */
-
+  // CACHE EXISTS BUT WEBFLOW MISSING → NEVER CREATE (duplicate protection)
   return { operation: "skip-missing-webflow", id: null };
 }
 
@@ -584,7 +595,11 @@ app.post("/sync-all", async (req, res) => {
         existing = await getWebflowItemById(entry.webflowId);
       }
       if (!existing) {
-        existing = await findExistingWebflowItem(goneId);
+        existing = await findExistingWebflowItem(
+          goneId,
+          null,
+          null
+        );
       }
 
       if (existing) {
@@ -615,6 +630,7 @@ app.post("/sync-all", async (req, res) => {
       sold,
     });
   } catch (err) {
+    console.error("⚠️ /sync-all error:", err.toString());
     res.status(500).json({ error: err.toString() });
   }
 });
@@ -626,6 +642,3 @@ const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`🔥 Sync server running on ${PORT}`);
 });
-
-
-
