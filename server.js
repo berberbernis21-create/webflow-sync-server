@@ -166,6 +166,48 @@ async function publishToSalesChannels(productId) {
     }
   }
 }
+/* ======================================================
+   SHOPIFY — WRITE CATEGORY METAFIELD
+====================================================== */
+async function updateShopifyCategoryMetafield(productId, categoryValue) {
+  const mutation = `
+    mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
+      metafieldsSet(metafields: $metafields) {
+        metafields {
+          key
+          value
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+  `;
+
+  const variables = {
+    metafields: [
+      {
+        ownerId: `gid://shopify/Product/${productId}`,
+        key: "category",
+        namespace: "custom",
+        type: "single_line_text_field",
+        value: categoryValue
+      }
+    ]
+  };
+
+  await axios.post(
+    SHOPIFY_GRAPHQL_URL,
+    { query: mutation, variables },
+    {
+      headers: {
+        "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+}
 
 /* ======================================================
    HASH FOR CHANGE DETECTION
@@ -315,7 +357,8 @@ async function syncSingleProduct(product, cache) {
   let category = detectCategory(name);
   let showOnWebflow = !soldNow;
   if (soldNow) category = "Recently Sold";
-
+  await updateShopifyCategoryMetafield(shopifyProductId, category);
+ 
   const currentHash = shopifyHash(product);
 
   /* ======================================================
@@ -537,3 +580,4 @@ const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`🔥 Sync server running on ${PORT}`);
 });
+
