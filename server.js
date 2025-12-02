@@ -292,7 +292,10 @@ async function findExistingWebflowItem(shopifyProductId) {
     const items = response.data.items || [];
 
     for (const item of items) {
-      if (item.fieldData?.["shopify-product-id"] === String(shopifyProductId)) {
+      const wfId = item.fieldData?.["shopify-product-id"];
+
+      // Normalize BOTH values so number/string mismatches don't break the match
+      if (wfId && String(wfId) === String(shopifyProductId)) {
         return item;
       }
     }
@@ -580,4 +583,5 @@ const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`🔥 Sync server running on ${PORT}`);
 });
+
 
