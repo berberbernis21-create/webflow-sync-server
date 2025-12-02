@@ -275,39 +275,76 @@ async function fetchAllShopifyProducts() {
 }
 
 /* ======================================================
-   WEBFLOW — SCAN ALL PAGES, MATCH BY MULTIPLE FIELDS
-   (product id, shopify url, slug)
+   WEBFLOW — STRONG MATCHER (ID / URL / SLUG)
+   Logs EVERYTHING and returns FIRST match only
 ====================================================== */
 async function findExistingWebflowItem(shopifyProductId, shopifyUrl, slug) {
   let page = 1;
 
+  const shopifyUrlNorm = shopifyUrl ? String(shopifyUrl).trim() : null;
+  const slugNorm = slug ? String(slug).trim() : null;
+
+  console.log("\n=======================================");
+  console.log("🔍 START MATCH SCAN FOR SHOPIFY PRODUCT");
+  console.log("shopifyProductId =", shopifyProductId);
+  console.log("shopifyUrl       =", shopifyUrlNorm);
+  console.log("slug             =", slugNorm);
+  console.log("=======================================\n");
+
   while (true) {
     const url = `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items?page=${page}&limit=100`;
 
-    const response = await axios.get(url, {
-      headers: {
-        Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
-        accept: "application/json",
-      },
-    });
+    let response;
+    try {
+      response = await axios.get(url, {
+        headers: {
+          Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
+          accept: "application/json",
+        },
+      });
+    } catch (err) {
+      console.error(
+        "❌ Webflow scan error (page",
+        page,
+        ")",
+        err.response?.data || err.toString()
+      );
+      return null;
+    }
 
     const items = response.data.items || [];
+    console.log(`📄 Scanning Webflow page ${page} (${items.length} items)`);
 
     for (const item of items) {
       const fd = item.fieldData || {};
 
-      const wfId = fd["shopify-product-id"];
-      const wfUrl = fd["shopify-url"];
-      const wfSlug = fd["slug"];
+      const wfIdRaw = fd["shopify-product-id"] || null;
+      const wfUrlRaw = fd["shopify-url"] || null;
+      const wfSlugRaw = fd["slug"] || null;
+
+      const wfId = wfIdRaw ? String(wfIdRaw) : null;
+      const wfUrl = wfUrlRaw ? String(wfUrlRaw).trim() : null;
+      const wfSlug = wfSlugRaw ? String(wfSlugRaw).trim() : null;
 
       const idMatch = wfId && String(wfId) === String(shopifyProductId);
       const urlMatch =
-        wfUrl && String(wfUrl).trim() === String(shopifyUrl).trim();
+        wfUrl && shopifyUrlNorm && wfUrl === shopifyUrlNorm;
       const slugMatch =
-        wfSlug && String(wfSlug).trim() === String(slug).trim();
+        wfSlug && slugNorm && wfSlug === slugNorm;
+
+      console.log(
+        `🔎 CHECK: shopifyProductId=${shopifyProductId}, webflowShopifyId=${wfId || "null"}, webflowItemId=${
+          item.id
+        }, shopifyUrl=${shopifyUrlNorm || "null"}, webflowShopifyUrl=${
+          wfUrl || "null"
+        }, slug=${slugNorm || "null"}, webflowSlug=${wfSlug || "null"}, idMatch=${
+          idMatch
+        }, urlMatch=${urlMatch}, slugMatch=${slugMatch}`
+      );
 
       if (idMatch || urlMatch || slugMatch) {
-        return item;
+        console.log(`🎯 MATCH FOUND → Webflow itemId=${item.id}`);
+        return item; // FIRST match only
       }
     }
 
@@ -317,6 +354,7 @@ async function findExistingWebflowItem(shopifyProductId, shopifyUrl, slug) {
     page = nextPage;
   }
 
+  console.log("❌ NO MATCH FOUND IN WEBFLOW FOR shopifyProductId =", shopifyProductId);
   return null;
 }
 
@@ -374,6 +412,22 @@ async function syncSingleProduct(product, cache) {
   let showOnWebflow = !soldNow;
   if (soldNow) category = "Recently Sold";
 
+  const shopifyUrl = `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${slug}`;
+
+  // 🔎 PRE-OP LOGGING FOR THIS PRODUCT
+  console.log("\n=======================================");
+  console.log("🧾 SYNC PRODUCT");
+  console.log("shopifyProductId          =", shopifyProductId);
+  console.log("cache.webflowId           =", cacheEntry?.webflowId || "null");
+  console.log("previousQty               =", previousQty);
+  console.log("currentQty                =", qty);
+  console.log("category                  =", category);
+  console.log("soldNow                   =", soldNow);
+  console.log("shopifyUrl                =", shopifyUrl);
+  console.log("slug                      =", slug);
+  console.log("=======================================\n");
+
+  // Write category back to Shopify metafield custom.category
   await updateShopifyCategoryMetafield(shopifyProductId, category);
 
   const currentHash = shopifyHash(product);
@@ -386,16 +440,16 @@ async function syncSingleProduct(product, cache) {
 
   // 1. Fast lookup using cached Webflow ID
   if (cacheEntry?.webflowId) {
+    console.log("⚡ Trying cache.webflowId =", cacheEntry.webflowId);
     existing = await getWebflowItemById(cacheEntry.webflowId);
+    if (!existing) {
+      console.log("⚠️ Cached Webflow ID not found, falling back to scan.");
+    }
   }
 
   // 2. Fallback matcher (ID / URL / slug)
   if (!existing) {
-    existing = await findExistingWebflowItem(
-      shopifyProductId,
-      `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${slug}`,
-      slug
-    );
+    existing = await findExistingWebflowItem(shopifyProductId, shopifyUrl, slug);
   }
 
   /* ======================================================
@@ -404,11 +458,14 @@ async function syncSingleProduct(product, cache) {
   ======================================================= */
 
   if (existing) {
+    console.log("✅ EXISTING WEBFLOW ITEM LINKED:", existing.id);
+
     // If newly sold
     const newlySold =
       (previousQty === null || previousQty > 0) && qty !== null && qty <= 0;
 
     if (newlySold) {
+      console.log("🟠 Newly sold, marking as Recently Sold in Webflow.");
       await markAsSold(existing);
 
       cache[shopifyProductId] = {
@@ -427,6 +484,7 @@ async function syncSingleProduct(product, cache) {
       JSON.stringify(currentHash) !== JSON.stringify(previousHash);
 
     if (changed) {
+      console.log("✏️ Changes detected, updating Webflow item:", existing.id);
       await axios.patch(
         `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items/${existing.id}`,
         {
@@ -436,7 +494,7 @@ async function syncSingleProduct(product, cache) {
             price,
             description,
             "shopify-product-id": shopifyProductId,
-            "shopify-url": `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${slug}`,
+            "shopify-url": shopifyUrl,
             category,
             "featured-image": featuredImage ? { url: featuredImage } : null,
             "image-1": gallery[0] ? { url: gallery[0] } : null,
@@ -445,7 +503,7 @@ async function syncSingleProduct(product, cache) {
             "image-4": gallery[3] ? { url: gallery[3] } : null,
             "image-5": gallery[4] ? { url: gallery[4] } : null,
             "show-on-webflow": showOnWebflow,
-            slug: existing.fieldData.slug,
+            slug: existing.fieldData.slug, // preserve existing slug
           },
         },
         {
@@ -465,6 +523,8 @@ async function syncSingleProduct(product, cache) {
       return { operation: "update", id: existing.id };
     }
 
+    console.log("⏭️ No changes detected, skipping update for Webflow item:", existing.id);
+
     // SKIP if no changes
     cache[shopifyProductId] = {
       hash: currentHash,
@@ -480,6 +540,8 @@ async function syncSingleProduct(product, cache) {
   ======================================================= */
 
   if (!cacheEntry) {
+    console.log("🆕 NO CACHE + NO MATCH → Creating new Webflow item.");
+
     const resp = await axios.post(
       `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items`,
       {
@@ -489,7 +551,7 @@ async function syncSingleProduct(product, cache) {
           price,
           description,
           "shopify-product-id": shopifyProductId,
-          "shopify-url": `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${slug}`,
+          "shopify-url": shopifyUrl,
           category,
           "featured-image": featuredImage ? { url: featuredImage } : null,
           "image-1": gallery[0] ? { url: gallery[0] } : null,
@@ -510,6 +572,7 @@ async function syncSingleProduct(product, cache) {
     );
 
     const newId = resp.data.id;
+    console.log("✅ CREATED NEW WEBFLOW ITEM:", newId);
 
     cache[shopifyProductId] = {
       hash: currentHash,
@@ -521,6 +584,9 @@ async function syncSingleProduct(product, cache) {
   }
 
   // CACHE EXISTS BUT WEBFLOW MISSING → NEVER CREATE (duplicate protection)
+  console.log(
+    "🚫 CACHE EXISTS BUT NO WEBFLOW MATCH FOUND → NOT CREATING (skip-missing-webflow)"
+  );
   return { operation: "skip-missing-webflow", id: null };
 }
 
@@ -528,7 +594,9 @@ async function syncSingleProduct(product, cache) {
    ROUTES
 ====================================================== */
 app.get("/", (req, res) => {
-  res.send("Lost & Found — Clean Sync Server (No Duplicates, Sold Logic Fixed, Option A Enabled)");
+  res.send(
+    "Lost & Found — Clean Sync Server (No Duplicates, Sold Logic Fixed, Deep Scan Matcher + Logging)"
+  );
 });
 
 app.post("/sync-all", async (req, res) => {
@@ -546,24 +614,35 @@ app.post("/sync-all", async (req, res) => {
     const currentIds = products.map((p) => String(p.id));
     const disappeared = previousIds.filter((id) => !currentIds.includes(id));
 
+    console.log("\n=======================================");
+    console.log("🧹 CHECKING DISAPPEARED SHOPIFY PRODUCTS");
+    console.log("previousIds:", previousIds.length);
+    console.log("currentIds :", currentIds.length);
+    console.log("disappeared:", disappeared.length);
+    console.log("=======================================\n");
+
     for (const goneId of disappeared) {
       const entry = getCacheEntry(cache, goneId);
       let existing = null;
+
+      console.log(
+        `🕳️ DISAPPEARED: shopifyProductId=${goneId}, cache.webflowId=${entry?.webflowId || "null"}`
+      );
 
       if (entry?.webflowId) {
         existing = await getWebflowItemById(entry.webflowId);
       }
       if (!existing) {
-        existing = await findExistingWebflowItem(
-          goneId,
-          null,
-          null
-        );
+        // we don't know slug/url here → pass nulls, matcher will still log
+        existing = await findExistingWebflowItem(goneId, null, null);
       }
 
       if (existing) {
+        console.log("🟠 Marking disappeared product as Recently Sold in Webflow:", existing.id);
         await markAsSold(existing);
         sold++;
+      } else {
+        console.log("⚪ No Webflow item found for disappeared product", goneId);
       }
 
       delete cache[goneId];
