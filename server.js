@@ -60,7 +60,7 @@ function getCacheEntry(cache, idStr) {
 }
 
 /* ======================================================
-   WEBFLOW DIRECT LOOKUP (by ID)
+   WEBFLOW DIRECT LOOKUP
 ====================================================== */
 async function getWebflowItemById(itemId) {
   if (!itemId) return null;
@@ -168,7 +168,7 @@ async function publishToSalesChannels(productId) {
 }
 
 /* ======================================================
-   SHOPIFY — WRITE CATEGORY METAFIELD
+   SHOPIFY — WRITE CATEGORY METAFIELD (custom.category)
 ====================================================== */
 async function updateShopifyCategoryMetafield(productId, categoryValue) {
   const mutation = `
@@ -300,8 +300,7 @@ async function findExistingWebflowItem(shopifyProductId, shopifyUrl, slug) {
       const wfUrl = fd["shopify-url"];
       const wfSlug = fd["slug"];
 
-      const idMatch =
-        wfId && String(wfId).trim() === String(shopifyProductId).trim();
+      const idMatch = wfId && String(wfId) === String(shopifyProductId);
       const urlMatch =
         wfUrl && String(wfUrl).trim() === String(shopifyUrl).trim();
       const slugMatch =
@@ -314,6 +313,7 @@ async function findExistingWebflowItem(shopifyProductId, shopifyUrl, slug) {
 
     const nextPage = response.data?.pagination?.nextPage;
     if (!nextPage) break;
+
     page = nextPage;
   }
 
@@ -360,8 +360,6 @@ async function syncSingleProduct(product, cache) {
   let qty = product.variants?.[0]?.inventory_quantity ?? null;
   let slug = product.handle;
 
-  const shopifyUrl = `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${slug}`;
-
   let detectedBrand = detectBrandFromProduct(product.title, product.vendor);
   if (!detectedBrand) detectedBrand = product.vendor || null;
   const brand = detectedBrand;
@@ -375,13 +373,13 @@ async function syncSingleProduct(product, cache) {
   let category = detectCategory(name);
   let showOnWebflow = !soldNow;
   if (soldNow) category = "Recently Sold";
+
   await updateShopifyCategoryMetafield(shopifyProductId, category);
 
   const currentHash = shopifyHash(product);
 
   /* ======================================================
-     🔍 ALWAYS FIND EXISTING IN WEBFLOW
-     (fast lookup → fallback lookup)
+     🔍 FIND EXISTING IN WEBFLOW (cache → scan)
   ======================================================= */
 
   let existing = null;
@@ -391,11 +389,11 @@ async function syncSingleProduct(product, cache) {
     existing = await getWebflowItemById(cacheEntry.webflowId);
   }
 
-  // 2. Fallback: full collection scan matching by ID / URL / slug
+  // 2. Fallback matcher (ID / URL / slug)
   if (!existing) {
     existing = await findExistingWebflowItem(
       shopifyProductId,
-      shopifyUrl,
+      `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${slug}`,
       slug
     );
   }
@@ -406,6 +404,7 @@ async function syncSingleProduct(product, cache) {
   ======================================================= */
 
   if (existing) {
+    // If newly sold
     const newlySold =
       (previousQty === null || previousQty > 0) && qty !== null && qty <= 0;
 
@@ -437,7 +436,7 @@ async function syncSingleProduct(product, cache) {
             price,
             description,
             "shopify-product-id": shopifyProductId,
-            "shopify-url": shopifyUrl,
+            "shopify-url": `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${slug}`,
             category,
             "featured-image": featuredImage ? { url: featuredImage } : null,
             "image-1": gallery[0] ? { url: gallery[0] } : null,
@@ -446,7 +445,7 @@ async function syncSingleProduct(product, cache) {
             "image-4": gallery[3] ? { url: gallery[3] } : null,
             "image-5": gallery[4] ? { url: gallery[4] } : null,
             "show-on-webflow": showOnWebflow,
-            slug: existing.fieldData.slug, // never change Webflow slug
+            slug: existing.fieldData.slug,
           },
         },
         {
@@ -480,46 +479,6 @@ async function syncSingleProduct(product, cache) {
      → Creation allowed ONLY if NO CACHE ENTRY exists.
   ======================================================= */
 
-  // FINAL FAILSAFE — Webflow Search API by product ID
-  if (!existing) {
-    try {
-      const searchResp = await axios.post(
-        `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items/search`,
-        {
-          filter: {
-            fieldName: "shopify-product-id",
-            operator: "equals",
-            value: shopifyProductId,
-          },
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
-            "Content-Type": "application/json",
-          },
-        }
-      );
-
-      const foundItems = searchResp.data?.items || [];
-      if (foundItems.length > 0) {
-        const found = foundItems[0];
-
-        cache[shopifyProductId] = {
-          hash: currentHash,
-          webflowId: found.id,
-          lastQty: qty,
-        };
-
-        return { operation: "recover-existing", id: found.id };
-      }
-    } catch (err) {
-      console.error(
-        "⚠️ Webflow Search API failsafe error:",
-        err.response?.data || err.toString()
-      );
-    }
-  }
-
   if (!cacheEntry) {
     const resp = await axios.post(
       `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items`,
@@ -530,7 +489,7 @@ async function syncSingleProduct(product, cache) {
           price,
           description,
           "shopify-product-id": shopifyProductId,
-          "shopify-url": shopifyUrl,
+          "shopify-url": `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${slug}`,
           category,
           "featured-image": featuredImage ? { url: featuredImage } : null,
           "image-1": gallery[0] ? { url: gallery[0] } : null,
@@ -569,7 +528,7 @@ async function syncSingleProduct(product, cache) {
    ROUTES
 ====================================================== */
 app.get("/", (req, res) => {
-  res.send("Lost & Found — Clean Sync Server (No Duplicates, Sold Logic Fixed)");
+  res.send("Lost & Found — Clean Sync Server (No Duplicates, Sold Logic Fixed, Option A Enabled)");
 });
 
 app.post("/sync-all", async (req, res) => {
@@ -582,7 +541,7 @@ app.post("/sync-all", async (req, res) => {
       skipped = 0,
       sold = 0;
 
-    // detect disappeared Shopify items
+    // detect disappeared Shopify items (Option A behaviour)
     const previousIds = Object.keys(cache);
     const currentIds = products.map((p) => String(p.id));
     const disappeared = previousIds.filter((id) => !currentIds.includes(id));
@@ -630,7 +589,7 @@ app.post("/sync-all", async (req, res) => {
       sold,
     });
   } catch (err) {
-    console.error("⚠️ /sync-all error:", err.toString());
+    console.error("❌ sync-all error:", err.toString());
     res.status(500).json({ error: err.toString() });
   }
 });
