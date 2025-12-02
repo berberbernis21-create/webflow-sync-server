@@ -461,6 +461,49 @@ async function syncSingleProduct(product, cache) {
      NO EXISTING ITEM FOUND IN WEBFLOW
      → Creation allowed ONLY if NO CACHE ENTRY exists.
   ======================================================= */
+    /* ======================================================
+     🔍 FINAL FAILSAFE — WEBFLOW SEARCH API
+     Ensures duplicates NEVER happen even if pagination misses the item
+  ======================================================= */
+  if (!existing) {
+    try {
+      const searchResp = await axios.post(
+        `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items/search`,
+        {
+          filter: {
+            fieldName: "shopify-product-id",
+            operator: "equals",
+            value: shopifyProductId
+          }
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      const foundItems = searchResp.data?.items || [];
+      if (foundItems.length > 0) {
+        const found = foundItems[0];
+
+        // Save to cache so it never happens again
+        cache[shopifyProductId] = {
+          hash: currentHash,
+          webflowId: found.id,
+          lastQty: qty,
+        };
+
+        return { operation: "recover-existing", id: found.id };
+      }
+    } catch (err) {
+      console.error(
+        "⚠️ Webflow Search API failsafe error:",
+        err.response?.data || err.toString()
+      );
+    }
+  }
 
   if (!cacheEntry) {
     const resp = await axios.post(
@@ -583,5 +626,6 @@ const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`🔥 Sync server running on ${PORT}`);
 });
+
 
 
