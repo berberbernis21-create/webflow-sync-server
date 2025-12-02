@@ -279,8 +279,6 @@ async function fetchAllShopifyProducts() {
    Logs EVERYTHING and returns FIRST match only
 ====================================================== */
 async function findExistingWebflowItem(shopifyProductId, shopifyUrl, slug) {
-  let page = 1;
-
   const shopifyUrlNorm = shopifyUrl ? String(shopifyUrl).trim() : null;
   const slugNorm = slug ? String(slug).trim() : null;
 
@@ -291,8 +289,11 @@ async function findExistingWebflowItem(shopifyProductId, shopifyUrl, slug) {
   console.log("slug             =", slugNorm);
   console.log("=======================================\n");
 
+  let offset = 0;
+  const limit = 100;
+
   while (true) {
-    const url = `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items?page=${page}&limit=100`;
+    const url = `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items?limit=${limit}&offset=${offset}`;
 
     let response;
     try {
@@ -304,8 +305,8 @@ async function findExistingWebflowItem(shopifyProductId, shopifyUrl, slug) {
       });
     } catch (err) {
       console.error(
-        "❌ Webflow scan error (page",
-        page,
+        "❌ Webflow scan error (offset",
+        offset,
         ")",
         err.response?.data || err.toString()
       );
@@ -313,7 +314,7 @@ async function findExistingWebflowItem(shopifyProductId, shopifyUrl, slug) {
     }
 
     const items = response.data.items || [];
-    console.log(`📄 Scanning Webflow page ${page} (${items.length} items)`);
+    console.log(`📄 Scanning Webflow offset ${offset} (${items.length} items)`);
 
     for (const item of items) {
       const fd = item.fieldData || {};
@@ -327,10 +328,8 @@ async function findExistingWebflowItem(shopifyProductId, shopifyUrl, slug) {
       const wfSlug = wfSlugRaw ? String(wfSlugRaw).trim() : null;
 
       const idMatch = wfId && String(wfId) === String(shopifyProductId);
-      const urlMatch =
-        wfUrl && shopifyUrlNorm && wfUrl === shopifyUrlNorm;
-      const slugMatch =
-        wfSlug && slugNorm && wfSlug === slugNorm;
+      const urlMatch = wfUrl && shopifyUrlNorm && wfUrl === shopifyUrlNorm;
+      const slugMatch = wfSlug && slugNorm && wfSlug === slugNorm;
 
       console.log(
         `🔎 CHECK: shopifyProductId=${shopifyProductId}, webflowShopifyId=${wfId || "null"}, webflowItemId=${
@@ -344,14 +343,14 @@ async function findExistingWebflowItem(shopifyProductId, shopifyUrl, slug) {
 
       if (idMatch || urlMatch || slugMatch) {
         console.log(`🎯 MATCH FOUND → Webflow itemId=${item.id}`);
-        return item; // FIRST match only
+        return item; // Return the first match
       }
     }
 
-    const nextPage = response.data?.pagination?.nextPage;
-    if (!nextPage) break;
+    // Stop when no more items
+    if (items.length < limit) break;
 
-    page = nextPage;
+    offset += limit; // Move to next batch of 100
   }
 
   console.log("❌ NO MATCH FOUND IN WEBFLOW FOR shopifyProductId =", shopifyProductId);
@@ -680,3 +679,4 @@ const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`🔥 Sync server running on ${PORT}`);
 });
+
