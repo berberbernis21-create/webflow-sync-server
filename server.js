@@ -240,6 +240,31 @@ function detectCategory(title) {
 }
 
 /* ======================================================
+   MAP CATEGORY TO SHOPIFY METAFIELD VALUES
+   (Shopify dropdown requires exact matches)
+====================================================== */
+function mapCategoryForShopify(category) {
+  const map = {
+    Handbags: "Handbags",
+    Totes: "Totes",
+    Crossbody: "Crossbody",
+    Wallets: "Wallets",
+    Backpacks: "Backpacks",
+    Luggage: "Luggage",
+    Scarves: "Scarves",
+    Belts: "Belts",
+    Accessories: "Accessories",
+    "Small Bags": "Small Bags",
+
+    // EVERYTHING ELSE must map to "Other " WITH TRAILING SPACE
+    default: "Other ",
+  };
+
+  return map[category] || map.default;
+}
+
+
+/* ======================================================
    SHOPIFY — FETCH ALL PRODUCTS
 ====================================================== */
 async function fetchAllShopifyProducts() {
@@ -407,9 +432,18 @@ async function syncSingleProduct(product, cache) {
 
   const soldNow = qty !== null && qty <= 0;
 
-  let category = detectCategory(name);
-  let showOnWebflow = !soldNow;
-  if (soldNow) category = "Recently Sold";
+  // Detect category for Webflow
+const detectedCategory = detectCategory(name);
+
+// Webflow category uses detected category (free text)
+let category = detectedCategory;
+
+// Shopify category must match dropdown EXACTLY
+const shopifyCategory = mapCategoryForShopify(detectedCategory);
+
+let showOnWebflow = !soldNow;
+if (soldNow) category = "Recently Sold";
+
 
   const shopifyUrl = `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${slug}`;
 
@@ -427,7 +461,8 @@ async function syncSingleProduct(product, cache) {
   console.log("=======================================\n");
 
   // Write category back to Shopify metafield custom.category
-  await updateShopifyCategoryMetafield(shopifyProductId, category);
+  await updateShopifyCategoryMetafield(shopifyProductId, shopifyCategory);
+
 
   const currentHash = shopifyHash(product);
 
@@ -679,4 +714,5 @@ const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`🔥 Sync server running on ${PORT}`);
 });
+
 
