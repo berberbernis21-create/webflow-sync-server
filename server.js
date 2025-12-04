@@ -209,6 +209,43 @@ async function updateShopifyCategoryMetafield(productId, categoryValue) {
     }
   );
 }
+/* ======================================================
+   SHOPIFY — WRITE BRAND INTO VENDOR FIELD
+====================================================== */
+async function updateShopifyVendor(productId, brandValue) {
+  const mutation = `
+    mutation UpdateProductVendor($input: ProductInput!) {
+      productUpdate(input: $input) {
+        product {
+          id
+          vendor
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+  `;
+
+  const variables = {
+    input: {
+      id: `gid://shopify/Product/${productId}`,
+      vendor: brandValue || "Unknown",
+    },
+  };
+
+  await axios.post(
+    SHOPIFY_GRAPHQL_URL,
+    { query: mutation, variables },
+    {
+      headers: {
+        "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN,
+        "Content-Type": "application/json",
+      }
+    }
+  );
+}
 
 /* ======================================================
    HASH FOR CHANGE DETECTION
@@ -463,9 +500,9 @@ if (soldNow) category = "Recently Sold";
   // Write category back to Shopify metafield custom.category
   await updateShopifyCategoryMetafield(shopifyProductId, shopifyCategory);
 
-
-  const currentHash = shopifyHash(product);
-
+  // Write brand back to Shopify vendor field
+  await updateShopifyVendor(shopifyProductId, brand);
+    const currentHash = shopifyHash(product);
   /* ======================================================
      🔍 FIND EXISTING IN WEBFLOW (cache → scan)
   ======================================================= */
@@ -714,5 +751,6 @@ const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`🔥 Sync server running on ${PORT}`);
 });
+
 
 
