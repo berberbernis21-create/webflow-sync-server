@@ -59,6 +59,7 @@ export const CANONICAL_BRANDS = [
   "Derek Lam",
   "Demellier",
   "Dooney & Bourke",
+  "Dolce & Gabbana",
   "Dries Van Noten",
   "Emilio Pucci",
   "Emporio Armani",
@@ -270,7 +271,20 @@ export const BRAND_ALIASES = {
   "tods": "Tods",
   "tod s": "Tods",
   "valentino": "Valentino Garavani",
-  "ysl saint laurent": "Saint Laurent"
+  "ysl saint laurent": "Saint Laurent",
+
+  // Salvatore Ferragamo
+  "ferragamo": "Salvatore Ferragamo",
+  "salvatore ferragamo": "Salvatore Ferragamo",
+  "salvatore-ferragamo": "Salvatore Ferragamo",
+
+  // Dolce & Gabbana
+  "dolce gabbana": "Dolce & Gabbana",
+  "dolce and gabbana": "Dolce & Gabbana",
+  "dolce & gabbana": "Dolce & Gabbana",
+  "d g": "Dolce & Gabbana",
+  "d&g": "Dolce & Gabbana",
+  "dg": "Dolce & Gabbana",
 };
 
 // ---------------------------
