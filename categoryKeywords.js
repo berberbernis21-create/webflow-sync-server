@@ -2,7 +2,7 @@ export const CATEGORY_KEYWORDS = {
   Handbags: [
     "handbag", "shoulder bag", "top handle", "hobo", "satchel",
     "bowler", "structured", "shopper", "shopping bag",
-    "doctor bag", "frame bag", "barrel bag", "bucket handbag", "bucket bag"
+    "doctor bag", "frame bag", "barrel bag", "bucket handbag", "bucket bag",
     "north south bag", "east west bag", "musubi", "jumbo flap",
     "single flap", "day bag", "mini shoulder bag", "boston bag",
     "bowling bag", "moon bag", "kiss-lock", "kiss lock",
@@ -74,4 +74,5 @@ export const CATEGORY_KEYWORDS = {
     "vanity case", "sunglasses case", "eyeglass case", "phone case"
   ]
 };
+
 
