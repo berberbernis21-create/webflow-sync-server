@@ -2,7 +2,7 @@ export const CATEGORY_KEYWORDS = {
   Handbags: [
     "handbag", "shoulder bag", "top handle", "hobo", "satchel",
     "bowler", "structured", "shopper", "shopping bag",
-    "doctor bag", "frame bag", "barrel bag", "bucket handbag",
+    "doctor bag", "frame bag", "barrel bag", "bucket handbag", "bucket bag"
     "north south bag", "east west bag", "musubi", "jumbo flap",
     "single flap", "day bag", "mini shoulder bag", "boston bag",
     "bowling bag", "moon bag", "kiss-lock", "kiss lock",
@@ -52,7 +52,7 @@ export const CATEGORY_KEYWORDS = {
     "briefcase", "travel case", "weekender", "duffle", "duffel",
     "keepall", "carry-on", "garment bag", "overnight bag",
     "pilot case", "business bag", "portfolio bag", "roller bag",
-    "rolling suitcase", "train case", "steamer bag", "travel pouch"
+    "rolling suitcase", "train case", "Travel Bag", "steamer bag", "travel pouch"
   ],
 
   Scarves: [
@@ -74,3 +74,4 @@ export const CATEGORY_KEYWORDS = {
     "vanity case", "sunglasses case", "eyeglass case", "phone case"
   ]
 };
+
