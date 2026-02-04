@@ -202,10 +202,7 @@ async function syncFurnitureEcommerceSku(product, webflowProductId, config) {
   const moreImagesUrls = allImages.slice(1);
   const fieldData = {
     price: priceCents != null ? { value: priceCents, unit: "USD" } : null,
-    weight: dimensions.weight != null && !Number.isNaN(dimensions.weight) ? dimensions.weight : null,
-    width: dimensions.width != null && !Number.isNaN(dimensions.width) ? dimensions.width : null,
-    height: dimensions.height != null && !Number.isNaN(dimensions.height) ? dimensions.height : null,
-    length: dimensions.length != null && !Number.isNaN(dimensions.length) ? dimensions.length : null,
+    ...skuDimensionFields(dimensions),
     "main-image": mainImageUrl ? { url: mainImageUrl } : null,
     "more-images": moreImagesUrls.length > 0 ? moreImagesUrls.slice(0, 10).map((url) => (url ? { url } : null)).filter(Boolean) : null,
   };
@@ -499,6 +496,17 @@ function hasAnyDimensions(dims) {
   );
 }
 
+/** Webflow SKU dimension fields must be numbers; omit keys when value is null/NaN. */
+function skuDimensionFields(dimensions) {
+  const d = dimensions || {};
+  const out = {};
+  if (d.weight != null && !Number.isNaN(d.weight) && d.weight > 0) out.weight = Number(d.weight);
+  if (d.width != null && !Number.isNaN(d.width)) out.width = Number(d.width);
+  if (d.height != null && !Number.isNaN(d.height)) out.height = Number(d.height);
+  if (d.length != null && !Number.isNaN(d.length)) out.length = Number(d.length);
+  return out;
+}
+
 /* ======================================================
    SHOPIFY — FETCH ALL PRODUCTS
 ====================================================== */
@@ -658,10 +666,7 @@ async function syncFurnitureSku(product, webflowProductId, config) {
   const skuFieldData = {
     product: webflowProductId,
     price: priceCents != null ? { value: priceCents, unit: "USD" } : null,
-    weight: dimensions.weight != null && !Number.isNaN(dimensions.weight) ? dimensions.weight : null,
-    width: dimensions.width != null && !Number.isNaN(dimensions.width) ? dimensions.width : null,
-    height: dimensions.height != null && !Number.isNaN(dimensions.height) ? dimensions.height : null,
-    length: dimensions.length != null && !Number.isNaN(dimensions.length) ? dimensions.length : null,
+    ...skuDimensionFields(dimensions),
     "main-image": mainImageUrl ? { url: mainImageUrl } : null,
     "more-images":
       moreImagesUrls.length > 0
@@ -959,10 +964,7 @@ async function syncSingleProduct(product, cache) {
         name: name ? `${name} - Default` : "Default SKU",
         slug: slug ? `${slug}-default-sku` : `sku-${shopifyProductId}`,
         price: priceCents != null ? { value: priceCents, unit: "USD" } : null,
-        weight: dims?.weight != null && !Number.isNaN(dims.weight) ? dims.weight : null,
-        width: dims?.width != null && !Number.isNaN(dims.width) ? dims.width : null,
-        height: dims?.height != null && !Number.isNaN(dims.height) ? dims.height : null,
-        length: dims?.length != null && !Number.isNaN(dims.length) ? dims.length : null,
+        ...skuDimensionFields(dims),
         "main-image": featuredImage ? { url: featuredImage } : null,
         "more-images": (gallery || []).slice(0, 10).map((url) => (url ? { url } : null)).filter(Boolean),
       };
