@@ -1,53 +1,100 @@
 // =======================================================
 // FURNITURE CATEGORY KEYWORDS
 // Maps item names → normalized furniture categories
-// (These categories will later map to WEBFLOW categories)
+// (These map to Webflow/Shopify "Furniture & Home" subcategories)
+// If no keyword matches → use "Accessories" as fallback.
 // =======================================================
 
 export const CATEGORY_KEYWORDS_FURNITURE = {
   LivingRoom: [
-    "sofa", "loveseat", "sectional", "couch", "armchair",
-    "accent chair", "slipper chair", "chaise", "recliner",
-    "coffee table", "side table", "end table", "console table",
-    "media console", "tv stand", "bookshelf", "bookcase"
+    "sofa", "sofas", "loveseat", "loveseats", "sectional", "sectionals",
+    "couch", "couches", "armchair", "armchairs", "accent chair",
+    "slipper chair", "chaise", "chaises", "recliner", "recliners",
+    "coffee table", "coffee tables", "side table", "side tables",
+    "end table", "end tables", "console table", "console tables",
+    "media console", "media consoles", "tv stand", "tv stands",
+    "bookshelf", "bookshelves", "bookcase", "bookcases",
+    "entertainment center", "credenza", "cabinet", "ottoman", "ottomans",
+    "settee", "settees", "canape", "divan", "chesterfield",
+    "nesting tables", "drink table", "cocktail table", "lift top table",
+    "hall tree", "hall table", "sofa table"
   ],
 
   DiningRoom: [
-    "dining table", "dining chair", "buffet", "sideboard",
-    "china cabinet", "bar cabinet", "bar cart", "server"
+    "dining table", "dining tables", "dining chair", "dining chairs",
+    "buffet", "buffets", "sideboard", "sideboards",
+    "china cabinet", "china cabinets", "bar cabinet", "bar cabinets",
+    "bar cart", "bar carts", "server", "serving",
+    "breakfast table", "kitchen table", "kitchen island",
+    "dining set", "table and chairs", "extension table",
+    "pedestal table", "drop leaf", "harvest table", "trestle table",
+    "banquette", "dining bench", "hutch", "wardrobe"
   ],
 
   OfficeDen: [
-    "desk", "writing desk", "office chair", "task chair",
-    "filing cabinet", "file cabinet", "bookcase", "bookshelf"
+    "desk", "desks", "writing desk", "writing table",
+    "office chair", "office chairs", "task chair", "task chairs",
+    "filing cabinet", "filing cabinets", "file cabinet", "file cabinets",
+    "bookcase", "bookcases", "bookshelf", "bookshelves",
+    "secretary", "secretary desk", "rolltop", "roll-top",
+    "lateral file", "credenza", "standing desk", "executive desk",
+    "computer desk", "workstation", "library table", "study desk"
   ],
 
   Rugs: [
-    "rug", "runner", "area rug"
+    "rug", "rugs", "runner", "runners", "area rug", "area rugs",
+    "oriental rug", "persian rug", "kilim", "braided rug",
+    "dhurrie", "sisal", "jute rug", "wool rug", "wool carpet",
+    "doormat", "door mat", "hall runner", "stair runner"
   ],
 
   ArtMirrors: [
-    "art", "canvas", "painting", "framed art", "print",
-    "mirror", "wall mirror", "vanity mirror"
+    "art", "canvas", "painting", "paintings", "framed art", "print", "prints",
+    "mirror", "mirrors", "wall mirror", "wall mirrors", "vanity mirror",
+    "pier mirror", "convex mirror", "sunburst mirror", "gilt mirror",
+    "floor mirror", "full length mirror", "cheval mirror", "trumeau",
+    "poster", "lithograph", "etching", "wall art", "gallery wall"
   ],
 
   Bedroom: [
-    "bed", "headboard", "nightstand", "dresser", "chest",
-    "armoire", "bunk bed", "bed frame"
+    "bed", "beds", "headboard", "headboards", "nightstand", "nightstands",
+    "dresser", "dressers", "chest", "chest of drawers", "armoire", "armoires",
+    "bunk bed", "bunk beds", "bed frame", "bedframe", "bed frames",
+    "vanity", "vanity table", "vanity desk", "wardrobe", "wardrobes",
+    "highboy", "lowboy", "tall boy", "blanket chest", "hope chest",
+    "canopy bed", "four poster", "sleigh bed", "platform bed",
+    "bedroom set", "master bedroom"
   ],
 
   Accessories: [
-    "vase", "tray", "decor", "sculpture", "bowl", "jar",
-    "planter", "basket", "figurine", "bookend", "centerpiece"
+    "vase", "vases", "tray", "trays", "decor", "sculpture", "sculptures",
+    "bowl", "bowls", "jar", "jars", "planter", "planters",
+    "basket", "baskets", "figurine", "figurines", "bookend", "bookends",
+    "centerpiece", "centerpieces", "candlestick", "candlesticks",
+    "picture frame", "frames", "clock", "clocks", "mantel", "mantle",
+    "throw pillow", "pillow", "cushion", "blanket", "throw",
+    "curtain", "curtains", "drapery", "draperies", "valance",
+    "door knocker", "door hardware", "hardware", "knob", "pull",
+    "umbrella stand", "coat rack", "hat rack", "key holder",
+    "trinket", "objet", "ornament", "decorative", "accent piece"
   ],
 
   OutdoorPatio: [
-    "outdoor", "patio", "wicker", "rattan",
-    "outdoor chair", "outdoor sofa", "outdoor table", "garden"
+    "outdoor", "patio", "wicker", "rattan", "bamboo",
+    "outdoor chair", "outdoor chairs", "outdoor sofa", "outdoor sofas",
+    "outdoor table", "outdoor tables", "garden", "garden furniture",
+    "adirondack", "chaise lounge", "lounger", "sun lounger",
+    "bistro set", "bistro table", "patio set", "deck",
+    "porch swing", "swing", "hammock", "fire pit", "firepit",
+    "planter box", "window box", "trellis", "arbor"
   ],
 
   Lighting: [
-    "lamp", "floor lamp", "table lamp", "chandelier",
-    "pendant", "sconce", "light fixture"
+    "lamp", "lamps", "floor lamp", "floor lamps", "table lamp", "table lamps",
+    "chandelier", "chandeliers", "pendant", "pendants", "pendant light",
+    "sconce", "sconces", "light fixture", "light fixtures",
+    "ceiling light", "flush mount", "semi-flush", "track light",
+    "desk lamp", "task lamp", "reading lamp", "torchiere",
+    "lantern", "lanterns", "candelabra", "candle holder"
   ]
 };

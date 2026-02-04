@@ -4,9 +4,32 @@ import cors from "cors";
 import dotenv from "dotenv";
 import fs from "fs";
 import { CATEGORY_KEYWORDS } from "./categoryKeywords.js";
+import { CATEGORY_KEYWORDS_FURNITURE } from "./categoryKeywordsFurniture.js";
 import { detectBrandFromProduct } from "./brand.js";
+import { detectVertical } from "./vertical.js";
 
 dotenv.config();
+
+/* ======================================================
+   DUAL-PIPELINE: WEBFLOW ENV CONFIG
+   Luxury = existing. Furniture = new env vars.
+====================================================== */
+function getWebflowConfig(vertical) {
+  if (vertical === "furniture") {
+    return {
+      collectionId: process.env.RESALE_Products_Collection_ID,
+      skuCollectionId: process.env.RESALE_SKUs_Collection_ID,
+      token: process.env.RESALE_TOKEN,
+      siteId: process.env.RESALE_WEBFLOW_SITE_ID,
+    };
+  }
+  return {
+    collectionId: process.env.WEBFLOW_COLLECTION_ID,
+    skuCollectionId: null,
+    token: process.env.WEBFLOW_TOKEN,
+    siteId: null,
+  };
+}
 
 const app = express();
 app.use(cors());
@@ -46,29 +69,29 @@ function saveCache(cache) {
 }
 
 /**
- * Normalize old cache entries (legacy hash-only)
+ * Normalize old cache entries (legacy hash-only or without vertical)
  */
 function getCacheEntry(cache, idStr) {
   const entry = cache[idStr];
   if (!entry) return null;
 
   if (typeof entry === "object" && entry.hash) {
-    return entry; // new format
+    return { ...entry, vertical: entry.vertical ?? "luxury" };
   }
 
-  return { hash: entry, webflowId: null, lastQty: null };
+  return { hash: entry, webflowId: null, lastQty: null, vertical: "luxury" };
 }
 
 /* ======================================================
-   WEBFLOW DIRECT LOOKUP
+   WEBFLOW DIRECT LOOKUP (parameterized by collection)
 ====================================================== */
-async function getWebflowItemById(itemId) {
-  if (!itemId) return null;
+async function getWebflowItemById(itemId, config) {
+  if (!itemId || !config?.collectionId || !config?.token) return null;
   try {
-    const url = `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items/${itemId}`;
+    const url = `https://api.webflow.com/v2/collections/${config.collectionId}/items/${itemId}`;
     const response = await axios.get(url, {
       headers: {
-        Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
+        Authorization: `Bearer ${config.token}`,
         accept: "application/json",
       },
     });
@@ -168,39 +191,47 @@ async function publishToSalesChannels(productId) {
 }
 
 /* ======================================================
-   SHOPIFY — WRITE CATEGORY METAFIELD (custom.category)
+   SHOPIFY — WRITE METAFIELDS (category, vertical, dimensions_status)
 ====================================================== */
-async function updateShopifyCategoryMetafield(productId, categoryValue) {
+async function updateShopifyMetafields(productId, { category, vertical, dimensionsStatus }) {
+  const ownerId = `gid://shopify/Product/${productId}`;
+  const metafields = [
+    {
+      ownerId,
+      key: "category",
+      namespace: "custom",
+      type: "single_line_text_field",
+      value: category ?? "",
+    },
+    {
+      ownerId,
+      key: "vertical",
+      namespace: "custom",
+      type: "single_line_text_field",
+      value: vertical ?? "luxury",
+    },
+  ];
+  if (dimensionsStatus != null) {
+    metafields.push({
+      ownerId,
+      key: "dimensions_status",
+      namespace: "custom",
+      type: "single_line_text_field",
+      value: dimensionsStatus,
+    });
+  }
+
   const mutation = `
     mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
       metafieldsSet(metafields: $metafields) {
-        metafields {
-          key
-          value
-        }
-        userErrors {
-          field
-          message
-        }
+        metafields { key value }
+        userErrors { field message }
       }
     }
   `;
-
-  const variables = {
-    metafields: [
-      {
-        ownerId: `gid://shopify/Product/${productId}`,
-        key: "category",
-        namespace: "custom",
-        type: "single_line_text_field",
-        value: categoryValue,
-      },
-    ],
-  };
-
   await axios.post(
     SHOPIFY_GRAPHQL_URL,
-    { query: mutation, variables },
+    { query: mutation, variables: { metafields } },
     {
       headers: {
         "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN,
@@ -300,6 +331,67 @@ function mapCategoryForShopify(category) {
   return map[category] || map.default;
 }
 
+/* ======================================================
+   FURNITURE CATEGORY — detect + map to Shopify display
+   Fallback: Accessories when no keyword matches.
+====================================================== */
+function detectCategoryFurniture(title) {
+  if (!title) return "Accessories";
+  const normalized = title.toLowerCase();
+  for (const [category, keywords] of Object.entries(CATEGORY_KEYWORDS_FURNITURE)) {
+    for (const kw of keywords) {
+      if (normalized.includes(kw.toLowerCase())) return category;
+    }
+  }
+  return "Accessories";
+}
+
+const FURNITURE_CATEGORY_TO_SHOPIFY = {
+  LivingRoom: "Living Room",
+  DiningRoom: "Dining Room",
+  OfficeDen: "Office Den",
+  Rugs: "Rugs",
+  ArtMirrors: "Art / Mirrors",
+  Bedroom: "Bedroom",
+  Accessories: "Accessories",
+  OutdoorPatio: "Outdoor / Patio",
+  Lighting: "Lighting",
+};
+
+function mapFurnitureCategoryForShopify(category) {
+  return FURNITURE_CATEGORY_TO_SHOPIFY[category] ?? "Accessories";
+}
+
+/* ======================================================
+   DIMENSIONS — extract from Shopify (Furniture)
+   Native: weight, width, height, length on variant.
+   Metafields: custom.width, custom.height, custom.length.
+   If missing → dimensions_status = "missing".
+====================================================== */
+function getDimensionsFromProduct(product) {
+  const v = product.variants?.[0];
+  if (!v) return { weight: null, width: null, height: null, length: null };
+  const weight = v.weight != null && v.weight > 0 ? Number(v.weight) : null;
+  let width = null,
+    height = null,
+    length = null;
+  const metafields = Array.isArray(product.metafields) ? product.metafields : [];
+  for (const m of metafields) {
+    if (m.namespace === "custom" && m.key === "width" && m.value) width = parseFloat(m.value);
+    if (m.namespace === "custom" && m.key === "height" && m.value) height = parseFloat(m.value);
+    if (m.namespace === "custom" && m.key === "length" && m.value) length = parseFloat(m.value);
+  }
+  return { weight, width, height, length };
+}
+
+function hasAnyDimensions(dims) {
+  return (
+    (dims.weight != null && dims.weight > 0) ||
+    (dims.width != null && !Number.isNaN(dims.width)) ||
+    (dims.height != null && !Number.isNaN(dims.height)) ||
+    (dims.length != null && !Number.isNaN(dims.length))
+  );
+}
 
 /* ======================================================
    SHOPIFY — FETCH ALL PRODUCTS
@@ -338,9 +430,10 @@ async function fetchAllShopifyProducts() {
 
 /* ======================================================
    WEBFLOW — STRONG MATCHER (ID / URL / SLUG)
-   Logs EVERYTHING and returns FIRST match only
+   Uses config (collectionId + token) for target collection.
 ====================================================== */
-async function findExistingWebflowItem(shopifyProductId, shopifyUrl, slug) {
+async function findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, config) {
+  if (!config?.collectionId || !config?.token) return null;
   const shopifyUrlNorm = shopifyUrl ? String(shopifyUrl).trim() : null;
   const slugNorm = slug ? String(slug).trim() : null;
 
@@ -355,13 +448,13 @@ async function findExistingWebflowItem(shopifyProductId, shopifyUrl, slug) {
   const limit = 100;
 
   while (true) {
-    const url = `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items?limit=${limit}&offset=${offset}`;
+    const url = `https://api.webflow.com/v2/collections/${config.collectionId}/items?limit=${limit}&offset=${offset}`;
 
     let response;
     try {
       response = await axios.get(url, {
         headers: {
-          Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
+          Authorization: `Bearer ${config.token}`,
           accept: "application/json",
         },
       });
@@ -380,39 +473,29 @@ async function findExistingWebflowItem(shopifyProductId, shopifyUrl, slug) {
 
     for (const item of items) {
       const fd = item.fieldData || {};
-
       const wfIdRaw = fd["shopify-product-id"] || null;
       const wfUrlRaw = fd["shopify-url"] || null;
       const wfSlugRaw = fd["slug"] || null;
-
+      const wfSlug2Raw = fd["shopify-slug-2"] || null;
       const wfId = wfIdRaw ? String(wfIdRaw) : null;
       const wfUrl = wfUrlRaw ? String(wfUrlRaw).trim() : null;
-      const wfSlug = wfSlugRaw ? String(wfSlugRaw).trim() : null;
-
+      const wfSlug = (wfSlugRaw ? String(wfSlugRaw).trim() : null) || (wfSlug2Raw ? String(wfSlug2Raw).trim() : null);
       const idMatch = wfId && String(wfId) === String(shopifyProductId);
       const urlMatch = wfUrl && shopifyUrlNorm && wfUrl === shopifyUrlNorm;
       const slugMatch = wfSlug && slugNorm && wfSlug === slugNorm;
 
       console.log(
-        `🔎 CHECK: shopifyProductId=${shopifyProductId}, webflowShopifyId=${wfId || "null"}, webflowItemId=${
-          item.id
-        }, shopifyUrl=${shopifyUrlNorm || "null"}, webflowShopifyUrl=${
-          wfUrl || "null"
-        }, slug=${slugNorm || "null"}, webflowSlug=${wfSlug || "null"}, idMatch=${
-          idMatch
-        }, urlMatch=${urlMatch}, slugMatch=${slugMatch}`
+        `🔎 CHECK: shopifyProductId=${shopifyProductId}, webflowShopifyId=${wfId || "null"}, webflowItemId=${item.id}, idMatch=${idMatch}, urlMatch=${urlMatch}, slugMatch=${slugMatch}`
       );
 
       if (idMatch || urlMatch || slugMatch) {
         console.log(`🎯 MATCH FOUND → Webflow itemId=${item.id}`);
-        return item; // Return the first match
+        return item;
       }
     }
 
-    // Stop when no more items
     if (items.length < limit) break;
-
-    offset += limit; // Move to next batch of 100
+    offset += limit;
   }
 
   console.log("❌ NO MATCH FOUND IN WEBFLOW FOR shopifyProductId =", shopifyProductId);
@@ -420,24 +503,120 @@ async function findExistingWebflowItem(shopifyProductId, shopifyUrl, slug) {
 }
 
 /* ======================================================
-   MARK AS SOLD (once)
+   FURNITURE SKU — find by product reference (required for PATCH)
 ====================================================== */
-async function markAsSold(existing) {
-  if (!existing) return;
-  const soldPayload = {
-    fieldData: {
-      ...existing.fieldData,
-      category: "Recently Sold",
-      "show-on-webflow": false,
-    },
+async function findExistingSkuByProductId(skuCollectionId, webflowProductId, token) {
+  if (!skuCollectionId || !token || !webflowProductId) return null;
+  let offset = 0;
+  const limit = 100;
+  while (true) {
+    const url = `https://api.webflow.com/v2/collections/${skuCollectionId}/items?limit=${limit}&offset=${offset}`;
+    let response;
+    try {
+      response = await axios.get(url, {
+        headers: { Authorization: `Bearer ${token}`, accept: "application/json" },
+      });
+    } catch (err) {
+      console.error("⚠️ SKU list error:", err.response?.data || err.message);
+      return null;
+    }
+    const items = response.data.items || [];
+    for (const item of items) {
+      const productRef = item.fieldData?.product;
+      if (productRef && String(productRef) === String(webflowProductId)) {
+        return item;
+      }
+    }
+    if (items.length < limit) break;
+    offset += limit;
+  }
+  return null;
+}
+
+/* ======================================================
+   FURNITURE SKU — sync default SKU (price, images, weight, dimensions)
+   Products collection = metadata only. SKU = commerce + images.
+   Every SKU PATCH/CREATE MUST include "product": "<WEBFLOW_PRODUCT_ID>".
+====================================================== */
+async function syncFurnitureSku(product, webflowProductId, config) {
+  if (!config?.skuCollectionId || !config?.token || !webflowProductId) return;
+  const price = product.variants?.[0]?.price;
+  const priceDollars = price != null && price !== "" ? parseFloat(price) : null;
+  const priceCents =
+    priceDollars != null && !Number.isNaN(priceDollars) ? Math.round(priceDollars * 100) : null;
+  const dimensions = getDimensionsFromProduct(product);
+  const allImages = (product.images || []).map((img) => img.src);
+  const mainImageUrl = allImages[0] || null;
+  const moreImagesUrls = allImages.slice(1);
+
+  const skuFieldData = {
+    product: webflowProductId,
+    price: priceCents != null ? { value: priceCents, unit: "USD" } : null,
+    weight: dimensions.weight != null && !Number.isNaN(dimensions.weight) ? dimensions.weight : null,
+    width: dimensions.width != null && !Number.isNaN(dimensions.width) ? dimensions.width : null,
+    height: dimensions.height != null && !Number.isNaN(dimensions.height) ? dimensions.height : null,
+    length: dimensions.length != null && !Number.isNaN(dimensions.length) ? dimensions.length : null,
+    "main-image": mainImageUrl ? { url: mainImageUrl } : null,
+    "more-images":
+      moreImagesUrls.length > 0
+        ? moreImagesUrls.slice(0, 10).map((url) => (url ? { url } : null)).filter(Boolean)
+        : null,
   };
 
+  const existingSku = await findExistingSkuByProductId(
+    config.skuCollectionId,
+    webflowProductId,
+    config.token
+  );
+
+  const headers = {
+    Authorization: `Bearer ${config.token}`,
+    "Content-Type": "application/json",
+  };
+
+  if (existingSku) {
+    console.log("✏️ PATCH Furniture SKU:", existingSku.id);
+    const fd = existingSku.fieldData || {};
+    await axios.patch(
+      `https://api.webflow.com/v2/collections/${config.skuCollectionId}/items/${existingSku.id}`,
+      {
+        fieldData: {
+          ...skuFieldData,
+          slug: fd.slug ?? existingSku.slug,
+        },
+      },
+      { headers }
+    );
+  } else {
+    const name = product.title ? `${product.title} - Default` : "Default SKU";
+    const slug = product.handle ? `${product.handle}-default-sku` : `sku-${webflowProductId}`;
+    console.log("🆕 CREATE Furniture SKU for product:", webflowProductId);
+    await axios.post(
+      `https://api.webflow.com/v2/collections/${config.skuCollectionId}/items`,
+      { fieldData: { ...skuFieldData, name, slug } },
+      { headers }
+    );
+  }
+}
+
+/* ======================================================
+   MARK AS SOLD — per vertical
+   Luxury: Recently Sold + hide. Furniture: SOLD = true, stay visible.
+====================================================== */
+async function markAsSold(existing, vertical, config) {
+  if (!existing || !config?.collectionId || !config?.token) return;
+  const base = { ...existing.fieldData };
+  const fieldData =
+    vertical === "furniture"
+      ? { ...base, sold: true }
+      : { ...base, category: "Recently Sold", "show-on-webflow": false };
+
   await axios.patch(
-    `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items/${existing.id}`,
-    soldPayload,
+    `https://api.webflow.com/v2/collections/${config.collectionId}/items/${existing.id}`,
+    { fieldData },
     {
       headers: {
-        Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
+        Authorization: `Bearer ${config.token}`,
         "Content-Type": "application/json",
       },
     }
@@ -445,14 +624,18 @@ async function markAsSold(existing) {
 }
 
 /* ======================================================
-   ⭐ CORE SYNC LOGIC — NO DUPLICATES EVER ⭐
+   ⭐ CORE SYNC LOGIC — DUAL PIPELINE, NO DUPLICATES ⭐
 ====================================================== */
 async function syncSingleProduct(product, cache) {
   const shopifyProductId = String(product.id);
   const cacheEntry = getCacheEntry(cache, shopifyProductId);
 
-  const previousQty = cacheEntry?.lastQty ?? null;
+  // Vertical detection first (before any Webflow or category logic)
+  const detectedVertical = detectVertical(product);
+  const vertical = cacheEntry?.vertical ?? detectedVertical;
+  const config = getWebflowConfig(vertical);
 
+  const previousQty = cacheEntry?.lastQty ?? null;
   let name = product.title;
   let description = product.body_html;
   let price = product.variants?.[0]?.price || null;
@@ -469,25 +652,44 @@ async function syncSingleProduct(product, cache) {
 
   const soldNow = qty !== null && qty <= 0;
 
-  // Detect category for Webflow
-const detectedCategory = detectCategory(name);
+  // Category and Shopify value by vertical
+  let category;
+  let shopifyCategoryValue;
+  if (vertical === "furniture") {
+    const detFurn = detectCategoryFurniture(name);
+    category = mapFurnitureCategoryForShopify(detFurn);
+    shopifyCategoryValue = category;
+  } else {
+    const detLux = detectCategory(name);
+    category = soldNow ? "Recently Sold" : detLux;
+    shopifyCategoryValue = mapCategoryForShopify(detLux);
+  }
 
-// Webflow category uses detected category (free text)
-let category = detectedCategory;
-
-// Shopify category must match dropdown EXACTLY
-const shopifyCategory = mapCategoryForShopify(detectedCategory);
-
-let showOnWebflow = !soldNow;
-if (soldNow) category = "Recently Sold";
-
-
+  const showOnWebflow = vertical === "luxury" ? !soldNow : true;
   const shopifyUrl = `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${slug}`;
 
-  // 🔎 PRE-OP LOGGING FOR THIS PRODUCT
+  // Dimensions (Furniture only): do not guess; mark missing when absent
+  let dimensionsStatus = null;
+  let dimensions = null;
+  if (vertical === "furniture") {
+    dimensions = getDimensionsFromProduct(product);
+    dimensionsStatus = hasAnyDimensions(dimensions) ? "present" : "missing";
+  }
+
+  // Write back to Shopify: vertical, category, dimensions_status (furniture), vendor
+  await updateShopifyMetafields(shopifyProductId, {
+    category: shopifyCategoryValue,
+    vertical: detectedVertical,
+    dimensionsStatus: vertical === "furniture" ? dimensionsStatus : undefined,
+  });
+  await updateShopifyVendor(shopifyProductId, brand);
+
+  const currentHash = shopifyHash(product);
+
   console.log("\n=======================================");
   console.log("🧾 SYNC PRODUCT");
   console.log("shopifyProductId          =", shopifyProductId);
+  console.log("vertical                  =", vertical);
   console.log("cache.webflowId           =", cacheEntry?.webflowId || "null");
   console.log("previousQty               =", previousQty);
   console.log("currentQty                =", qty);
@@ -495,60 +697,41 @@ if (soldNow) category = "Recently Sold";
   console.log("soldNow                   =", soldNow);
   console.log("shopifyUrl                =", shopifyUrl);
   console.log("slug                      =", slug);
+  if (vertical === "furniture") console.log("dimensions_status          =", dimensionsStatus);
   console.log("=======================================\n");
 
-  // Write category back to Shopify metafield custom.category
-  await updateShopifyCategoryMetafield(shopifyProductId, shopifyCategory);
-
-  // Write brand back to Shopify vendor field
-  await updateShopifyVendor(shopifyProductId, brand);
-    const currentHash = shopifyHash(product);
-  /* ======================================================
-     🔍 FIND EXISTING IN WEBFLOW (cache → scan)
-  ======================================================= */
-
+  // Find existing in the collection for this vertical (cache → scan)
   let existing = null;
-
-  // 1. Fast lookup using cached Webflow ID
   if (cacheEntry?.webflowId) {
     console.log("⚡ Trying cache.webflowId =", cacheEntry.webflowId);
-    existing = await getWebflowItemById(cacheEntry.webflowId);
-    if (!existing) {
-      console.log("⚠️ Cached Webflow ID not found, falling back to scan.");
-    }
+    existing = await getWebflowItemById(cacheEntry.webflowId, config);
+    if (!existing) console.log("⚠️ Cached Webflow ID not found, falling back to scan.");
   }
-
-  // 2. Fallback matcher (ID / URL / slug)
   if (!existing) {
-    existing = await findExistingWebflowItem(shopifyProductId, shopifyUrl, slug);
+    existing = await findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, config);
   }
-
-  /* ======================================================
-     🔒 HARD RULE:
-     If a Webflow item exists, we NEVER create a new one.
-  ======================================================= */
 
   if (existing) {
     console.log("✅ EXISTING WEBFLOW ITEM LINKED:", existing.id);
 
-    // If newly sold
     const newlySold =
       (previousQty === null || previousQty > 0) && qty !== null && qty <= 0;
 
     if (newlySold) {
-      console.log("🟠 Newly sold, marking as Recently Sold in Webflow.");
-      await markAsSold(existing);
-
+      console.log("🟠 Newly sold, marking per vertical in Webflow.");
+      await markAsSold(existing, vertical, config);
+      if (vertical === "furniture" && config.skuCollectionId) {
+        await syncFurnitureSku(product, existing.id, config);
+      }
       cache[shopifyProductId] = {
         hash: currentHash,
         webflowId: existing.id,
         lastQty: qty,
+        vertical,
       };
-
       return { operation: "sold", id: existing.id };
     }
 
-    // UPDATE ONLY IF HASH CHANGED
     const previousHash = cacheEntry?.hash || null;
     const changed =
       !previousHash ||
@@ -556,109 +739,178 @@ if (soldNow) category = "Recently Sold";
 
     if (changed) {
       console.log("✏️ Changes detected, updating Webflow item:", existing.id);
+      const fieldData = buildWebflowFieldData({
+        vertical,
+        name,
+        brand,
+        price,
+        description,
+        shopifyProductId,
+        shopifyUrl,
+        shopifySlug: slug,
+        productType: product.product_type,
+        category,
+        featuredImage,
+        gallery,
+        showOnWebflow,
+        soldNow,
+        dimensions,
+        dimensionsStatus,
+        existingSlug: existing.fieldData?.slug,
+        newSlug: slug,
+      });
       await axios.patch(
-        `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items/${existing.id}`,
-        {
-          fieldData: {
-            name,
-            brand,
-            price,
-            description,
-            "shopify-product-id": shopifyProductId,
-            "shopify-url": shopifyUrl,
-            category,
-            "featured-image": featuredImage ? { url: featuredImage } : null,
-            "image-1": gallery[0] ? { url: gallery[0] } : null,
-            "image-2": gallery[1] ? { url: gallery[1] } : null,
-            "image-3": gallery[2] ? { url: gallery[2] } : null,
-            "image-4": gallery[3] ? { url: gallery[3] } : null,
-            "image-5": gallery[4] ? { url: gallery[4] } : null,
-            "show-on-webflow": showOnWebflow,
-            slug: existing.fieldData.slug, // preserve existing slug
-          },
-        },
+        `https://api.webflow.com/v2/collections/${config.collectionId}/items/${existing.id}`,
+        { fieldData },
         {
           headers: {
-            Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
+            Authorization: `Bearer ${config.token}`,
             "Content-Type": "application/json",
           },
         }
       );
-
+      if (vertical === "furniture" && config.skuCollectionId) {
+        await syncFurnitureSku(product, existing.id, config);
+      }
       cache[shopifyProductId] = {
         hash: currentHash,
         webflowId: existing.id,
         lastQty: qty,
+        vertical,
       };
-
       return { operation: "update", id: existing.id };
     }
 
     console.log("⏭️ No changes detected, skipping update for Webflow item:", existing.id);
-
-    // SKIP if no changes
     cache[shopifyProductId] = {
       hash: currentHash,
       webflowId: existing.id,
       lastQty: qty,
+      vertical,
     };
     return { operation: "skip", id: existing.id };
   }
 
-  /* ======================================================
-     NO EXISTING ITEM FOUND IN WEBFLOW
-     → Creation allowed ONLY if NO CACHE ENTRY exists.
-  ======================================================= */
-
   if (!cacheEntry) {
     console.log("🆕 NO CACHE + NO MATCH → Creating new Webflow item.");
 
+    const fieldData = buildWebflowFieldData({
+      vertical: detectedVertical,
+      name,
+      brand,
+      price,
+      description,
+      shopifyProductId,
+      shopifyUrl,
+      shopifySlug: slug,
+      productType: product.product_type,
+      category,
+      featuredImage,
+      gallery,
+      showOnWebflow,
+      soldNow,
+      dimensions,
+      dimensionsStatus,
+      existingSlug: null,
+      newSlug: slug,
+    });
+    const createConfig = getWebflowConfig(detectedVertical);
     const resp = await axios.post(
-      `https://api.webflow.com/v2/collections/${process.env.WEBFLOW_COLLECTION_ID}/items`,
-      {
-        fieldData: {
-          name,
-          brand,
-          price,
-          description,
-          "shopify-product-id": shopifyProductId,
-          "shopify-url": shopifyUrl,
-          category,
-          "featured-image": featuredImage ? { url: featuredImage } : null,
-          "image-1": gallery[0] ? { url: gallery[0] } : null,
-          "image-2": gallery[1] ? { url: gallery[1] } : null,
-          "image-3": gallery[2] ? { url: gallery[2] } : null,
-          "image-4": gallery[3] ? { url: gallery[3] } : null,
-          "image-5": gallery[4] ? { url: gallery[4] } : null,
-          "show-on-webflow": showOnWebflow,
-          slug,
-        },
-      },
+      `https://api.webflow.com/v2/collections/${createConfig.collectionId}/items`,
+      { fieldData },
       {
         headers: {
-          Authorization: `Bearer ${process.env.WEBFLOW_TOKEN}`,
+          Authorization: `Bearer ${createConfig.token}`,
           "Content-Type": "application/json",
         },
       }
     );
-
     const newId = resp.data.id;
     console.log("✅ CREATED NEW WEBFLOW ITEM:", newId);
-
+    if (detectedVertical === "furniture" && createConfig.skuCollectionId) {
+      await syncFurnitureSku(product, newId, createConfig);
+    }
     cache[shopifyProductId] = {
       hash: currentHash,
       webflowId: newId,
       lastQty: qty,
+      vertical: detectedVertical,
     };
-
     return { operation: "create", id: newId };
   }
 
-  // CACHE EXISTS BUT WEBFLOW MISSING → NEVER CREATE (duplicate protection)
   console.log(
     "🚫 CACHE EXISTS BUT NO WEBFLOW MATCH FOUND → NOT CREATING (skip-missing-webflow)"
   );
   return { operation: "skip-missing-webflow", id: null };
+}
+
+/* ======================================================
+   BUILD WEBFLOW fieldData BY VERTICAL
+   Luxury: featured-image, image-1..5, show-on-webflow, brand, price, shopify-url.
+   Furniture: slugs match CMS — name, slug, description, category, sold,
+   shopify-product-id, shopify-slug-2, main-description-2, ec-product-type, shippable.
+   (Images live on SKU; no dimension fields on this collection.)
+====================================================== */
+function buildWebflowFieldData(opts) {
+  const {
+    vertical,
+    name,
+    brand,
+    price,
+    description,
+    shopifyProductId,
+    shopifyUrl,
+    shopifySlug,
+    productType,
+    category,
+    featuredImage,
+    gallery,
+    showOnWebflow,
+    soldNow,
+    dimensions,
+    dimensionsStatus,
+    existingSlug,
+    newSlug,
+  } = opts;
+
+  const slug = existingSlug ?? newSlug ?? "";
+
+  if (vertical === "furniture") {
+    return {
+      name,
+      slug,
+      description: description ?? "",
+      category,
+      sold: !!soldNow,
+      "shopify-product-id": shopifyProductId,
+      "shopify-slug-2": shopifySlug ?? newSlug ?? "",
+      "main-description-2": description ?? null,
+      "ec-product-type": productType ?? null,
+      shippable: true,
+    };
+  }
+
+  const base = {
+    name,
+    brand,
+    price,
+    description,
+    "shopify-product-id": shopifyProductId,
+    "shopify-url": shopifyUrl,
+    category,
+    slug,
+  };
+  return {
+    ...base,
+    "featured-image": featuredImage ? { url: featuredImage } : null,
+    "image-1": gallery?.[0] ? { url: gallery[0] } : null,
+    "image-2": gallery?.[1] ? { url: gallery[1] } : null,
+    "image-3": gallery?.[2] ? { url: gallery[2] } : null,
+    "image-4": gallery?.[3] ? { url: gallery[3] } : null,
+    "image-5": gallery?.[4] ? { url: gallery[4] } : null,
+    "show-on-webflow": showOnWebflow,
+  };
 }
 
 /* ======================================================
@@ -694,23 +946,24 @@ app.post("/sync-all", async (req, res) => {
 
     for (const goneId of disappeared) {
       const entry = getCacheEntry(cache, goneId);
+      const vertical = entry?.vertical ?? "luxury";
+      const config = getWebflowConfig(vertical);
       let existing = null;
 
       console.log(
-        `🕳️ DISAPPEARED: shopifyProductId=${goneId}, cache.webflowId=${entry?.webflowId || "null"}`
+        `🕳️ DISAPPEARED: shopifyProductId=${goneId}, cache.webflowId=${entry?.webflowId || "null"}, vertical=${vertical}`
       );
 
       if (entry?.webflowId) {
-        existing = await getWebflowItemById(entry.webflowId);
+        existing = await getWebflowItemById(entry.webflowId, config);
       }
       if (!existing) {
-        // we don't know slug/url here → pass nulls, matcher will still log
-        existing = await findExistingWebflowItem(goneId, null, null);
+        existing = await findExistingWebflowItem(goneId, null, null, config);
       }
 
       if (existing) {
-        console.log("🟠 Marking disappeared product as Recently Sold in Webflow:", existing.id);
-        await markAsSold(existing);
+        console.log("🟠 Marking disappeared product as SOLD in Webflow:", existing.id, "vertical:", vertical);
+        await markAsSold(existing, vertical, config);
         sold++;
       } else {
         console.log("⚪ No Webflow item found for disappeared product", goneId);
