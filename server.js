@@ -84,6 +84,7 @@ function getCacheEntry(cache, idStr) {
 
 /* ======================================================
    WEBFLOW DIRECT LOOKUP (parameterized by collection)
+   CMS only. For ecommerce (Furniture) use getWebflowEcommerceProductById.
 ====================================================== */
 async function getWebflowItemById(itemId, config) {
   if (!itemId || !config?.collectionId || !config?.token) return null;
@@ -104,6 +105,111 @@ async function getWebflowItemById(itemId, config) {
     console.error("⚠️ getWebflowItemById error:", err.toString());
     return null;
   }
+}
+
+/* ======================================================
+   WEBFLOW ECOMMERCE API (Furniture — uses site_id, not collection_id)
+   Required: ecommerce:write scope. Products collection is ecommerce.
+====================================================== */
+async function getWebflowEcommerceProductById(siteId, productId, token) {
+  if (!siteId || !productId || !token) return null;
+  try {
+    const url = `https://api.webflow.com/v2/sites/${siteId}/products/${productId}`;
+    const response = await axios.get(url, {
+      headers: { Authorization: `Bearer ${token}`, accept: "application/json" },
+    });
+    return response.data;
+  } catch (err) {
+    if (err.response?.status === 404) return null;
+    console.error("⚠️ getWebflowEcommerceProductById error:", err.message, err.response?.data);
+    return null;
+  }
+}
+
+async function findExistingWebflowEcommerceProduct(shopifyProductId, slug, config) {
+  if (!config?.siteId || !config?.token) return null;
+  let offset = 0;
+  const limit = 100;
+  const slugNorm = slug ? String(slug).trim() : null;
+  while (true) {
+    const url = `https://api.webflow.com/v2/sites/${config.siteId}/products?limit=${limit}&offset=${offset}`;
+    let response;
+    try {
+      response = await axios.get(url, {
+        headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
+      });
+    } catch (err) {
+      console.error("❌ Webflow ecommerce list error:", err.response?.data || err.message);
+      return null;
+    }
+    const raw = response.data.products ?? response.data.items ?? [];
+    const products = Array.isArray(raw) ? raw.map((i) => i.product || i) : [];
+    for (const item of products) {
+      const fd = item.fieldData || {};
+      const wfId = fd["shopify-product-id"] ? String(fd["shopify-product-id"]) : null;
+      const wfSlug = (fd["slug"] || fd["shopify-slug-2"]) ? String(fd.slug || fd["shopify-slug-2"]).trim() : null;
+      if (wfId && String(wfId) === String(shopifyProductId)) return item;
+      if (slugNorm && wfSlug && wfSlug === slugNorm) return item;
+    }
+    if (products.length < limit) break;
+    offset += limit;
+  }
+  return null;
+}
+
+async function createWebflowEcommerceProduct(siteId, productFieldData, skuFieldData, token) {
+  const url = `https://api.webflow.com/v2/sites/${siteId}/products`;
+  const payload = {
+    product: { fieldData: productFieldData },
+    sku: { fieldData: skuFieldData },
+    publishStatus: "staging",
+  };
+  const response = await axios.post(url, payload, {
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+  });
+  return response.data;
+}
+
+async function updateWebflowEcommerceProduct(siteId, productId, fieldData, token) {
+  const url = `https://api.webflow.com/v2/sites/${siteId}/products/${productId}`;
+  await axios.patch(url, { fieldData }, {
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+  });
+}
+
+async function updateWebflowEcommerceSku(siteId, productId, skuId, fieldData, token) {
+  const url = `https://api.webflow.com/v2/sites/${siteId}/products/${productId}/skus/${skuId}`;
+  await axios.patch(url, { fieldData }, {
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+  });
+}
+
+/** Sync default SKU for ecommerce product (price, images, weight, dimensions). */
+async function syncFurnitureEcommerceSku(product, webflowProductId, config) {
+  if (!config?.siteId || !config?.token) return;
+  const full = await getWebflowEcommerceProductById(config.siteId, webflowProductId, config.token);
+  const skus = full?.skus ?? [];
+  const defaultSku = skus[0];
+  if (!defaultSku?.id) {
+    console.warn("[Furniture] No default SKU found on product", webflowProductId);
+    return;
+  }
+  const price = product.variants?.[0]?.price;
+  const priceCents = price != null && price !== "" ? Math.round(parseFloat(price) * 100) : null;
+  const dimensions = getDimensionsFromProduct(product);
+  const allImages = (product.images || []).map((img) => img.src);
+  const mainImageUrl = allImages[0] || null;
+  const moreImagesUrls = allImages.slice(1);
+  const fieldData = {
+    price: priceCents != null ? { value: priceCents, unit: "USD" } : null,
+    weight: dimensions.weight != null && !Number.isNaN(dimensions.weight) ? dimensions.weight : null,
+    width: dimensions.width != null && !Number.isNaN(dimensions.width) ? dimensions.width : null,
+    height: dimensions.height != null && !Number.isNaN(dimensions.height) ? dimensions.height : null,
+    length: dimensions.length != null && !Number.isNaN(dimensions.length) ? dimensions.length : null,
+    "main-image": mainImageUrl ? { url: mainImageUrl } : null,
+    "more-images": moreImagesUrls.length > 0 ? moreImagesUrls.slice(0, 10).map((url) => (url ? { url } : null)).filter(Boolean) : null,
+  };
+  await updateWebflowEcommerceSku(config.siteId, webflowProductId, defaultSku.id, { ...defaultSku.fieldData, ...fieldData }, config.token);
 }
 
 /* ======================================================
@@ -601,16 +707,29 @@ async function syncFurnitureSku(product, webflowProductId, config) {
 
 /* ======================================================
    MARK AS SOLD — per vertical
-   Luxury: Recently Sold + hide. Furniture: SOLD = true, stay visible.
+   Luxury: CMS PATCH. Furniture: ecommerce PATCH (siteId).
 ====================================================== */
 async function markAsSold(existing, vertical, config) {
-  if (!existing || !config?.collectionId || !config?.token) return;
-  const base = { ...existing.fieldData };
+  if (!existing || !config?.token) return;
+  const base = { ...(existing.fieldData || {}) };
   const fieldData =
     vertical === "furniture"
       ? { ...base, sold: true }
       : { ...base, category: "Recently Sold", "show-on-webflow": false };
 
+  if (vertical === "furniture" && config.siteId) {
+    await axios.patch(
+      `https://api.webflow.com/v2/sites/${config.siteId}/products/${existing.id}`,
+      { fieldData },
+      {
+        headers: {
+          Authorization: `Bearer ${config.token}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+    return;
+  }
   await axios.patch(
     `https://api.webflow.com/v2/collections/${config.collectionId}/items/${existing.id}`,
     { fieldData },
@@ -700,15 +819,26 @@ async function syncSingleProduct(product, cache) {
   if (vertical === "furniture") console.log("dimensions_status          =", dimensionsStatus);
   console.log("=======================================\n");
 
-  // Find existing in the collection for this vertical (cache → scan)
+  // Find existing: ecommerce API for Furniture (siteId), CMS for Luxury (collectionId)
   let existing = null;
-  if (cacheEntry?.webflowId) {
-    console.log("⚡ Trying cache.webflowId =", cacheEntry.webflowId);
-    existing = await getWebflowItemById(cacheEntry.webflowId, config);
-    if (!existing) console.log("⚠️ Cached Webflow ID not found, falling back to scan.");
-  }
-  if (!existing) {
-    existing = await findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, config);
+  if (vertical === "furniture" && config.siteId) {
+    if (cacheEntry?.webflowId) {
+      console.log("⚡ Trying cache.webflowId (ecommerce) =", cacheEntry.webflowId);
+      existing = await getWebflowEcommerceProductById(config.siteId, cacheEntry.webflowId, config.token);
+      if (!existing) console.log("⚠️ Cached Webflow product not found, falling back to scan.");
+    }
+    if (!existing) {
+      existing = await findExistingWebflowEcommerceProduct(shopifyProductId, slug, config);
+    }
+  } else {
+    if (cacheEntry?.webflowId) {
+      console.log("⚡ Trying cache.webflowId =", cacheEntry.webflowId);
+      existing = await getWebflowItemById(cacheEntry.webflowId, config);
+      if (!existing) console.log("⚠️ Cached Webflow ID not found, falling back to scan.");
+    }
+    if (!existing) {
+      existing = await findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, config);
+    }
   }
 
   if (existing) {
@@ -720,8 +850,8 @@ async function syncSingleProduct(product, cache) {
     if (newlySold) {
       console.log("🟠 Newly sold, marking per vertical in Webflow.");
       await markAsSold(existing, vertical, config);
-      if (vertical === "furniture" && config.skuCollectionId) {
-        await syncFurnitureSku(product, existing.id, config);
+      if (vertical === "furniture" && config.siteId) {
+        await syncFurnitureEcommerceSku(product, existing.id, config);
       }
       cache[shopifyProductId] = {
         hash: currentHash,
@@ -759,18 +889,20 @@ async function syncSingleProduct(product, cache) {
         existingSlug: existing.fieldData?.slug,
         newSlug: slug,
       });
-      await axios.patch(
-        `https://api.webflow.com/v2/collections/${config.collectionId}/items/${existing.id}`,
-        { fieldData },
-        {
-          headers: {
-            Authorization: `Bearer ${config.token}`,
-            "Content-Type": "application/json",
-          },
-        }
-      );
-      if (vertical === "furniture" && config.skuCollectionId) {
-        await syncFurnitureSku(product, existing.id, config);
+      if (vertical === "furniture" && config.siteId) {
+        await updateWebflowEcommerceProduct(config.siteId, existing.id, fieldData, config.token);
+        await syncFurnitureEcommerceSku(product, existing.id, config);
+      } else {
+        await axios.patch(
+          `https://api.webflow.com/v2/collections/${config.collectionId}/items/${existing.id}`,
+          { fieldData },
+          {
+            headers: {
+              Authorization: `Bearer ${config.token}`,
+              "Content-Type": "application/json",
+            },
+          }
+        );
       }
       cache[shopifyProductId] = {
         hash: currentHash,
@@ -796,7 +928,8 @@ async function syncSingleProduct(product, cache) {
     console.log("🆕 CREATE PATH — NO CACHE + NO MATCH → Creating new Webflow item.");
     console.log("=".repeat(60));
 
-    const fieldData = buildWebflowFieldData({
+    const createConfig = getWebflowConfig(detectedVertical);
+    const productFieldData = buildWebflowFieldData({
       vertical: detectedVertical,
       name,
       brand,
@@ -816,50 +949,67 @@ async function syncSingleProduct(product, cache) {
       existingSlug: null,
       newSlug: slug,
     });
-    const createConfig = getWebflowConfig(detectedVertical);
 
-    console.log("[CREATE] detectedVertical     =", detectedVertical);
-    console.log("[CREATE] shopifyProductId     =", shopifyProductId);
-    console.log("[CREATE] name (title)         =", name);
-    console.log("[CREATE] slug (handle)        =", slug);
-    console.log("[CREATE] category            =", category);
-    console.log("[CREATE] product_type         =", product.product_type ?? "(null)");
-    console.log("[CREATE] createConfig.collectionId   =", createConfig.collectionId ?? "(null)");
-    console.log("[CREATE] createConfig.skuCollectionId=", createConfig.skuCollectionId ?? "(null)");
-    console.log("[CREATE] createConfig.siteId         =", createConfig.siteId ?? "(null)");
-    console.log("[CREATE] createConfig.token set?    =", !!createConfig.token);
-    console.log("[CREATE] request URL =", `https://api.webflow.com/v2/collections/${createConfig.collectionId}/items`);
-    console.log("[CREATE] fieldData (exact payload):");
-    console.log(JSON.stringify(fieldData, null, 2));
-    console.log("[CREATE] sending POST...");
+    let newId;
 
-    let resp;
-    try {
-      resp = await axios.post(
-        `https://api.webflow.com/v2/collections/${createConfig.collectionId}/items`,
-        { fieldData },
-        {
-          headers: {
-            Authorization: `Bearer ${createConfig.token}`,
-            "Content-Type": "application/json",
-          },
-        }
-      );
-    } catch (createErr) {
-      console.error("[CREATE] ❌ POST failed:", createErr.message);
-      console.error("[CREATE] status  =", createErr.response?.status);
-      console.error("[CREATE] headers =", JSON.stringify(createErr.response?.headers, null, 2));
-      console.error("[CREATE] body    =", JSON.stringify(createErr.response?.data, null, 2));
-      console.error("[CREATE] fieldData that was sent:", JSON.stringify(fieldData, null, 2));
-      throw createErr;
+    if (detectedVertical === "furniture" && createConfig.siteId) {
+      const priceCents = price != null && price !== "" ? Math.round(parseFloat(price) * 100) : null;
+      const dims = dimensions || getDimensionsFromProduct(product);
+      const skuFieldData = {
+        name: name ? `${name} - Default` : "Default SKU",
+        slug: slug ? `${slug}-default-sku` : `sku-${shopifyProductId}`,
+        price: priceCents != null ? { value: priceCents, unit: "USD" } : null,
+        weight: dims?.weight != null && !Number.isNaN(dims.weight) ? dims.weight : null,
+        width: dims?.width != null && !Number.isNaN(dims.width) ? dims.width : null,
+        height: dims?.height != null && !Number.isNaN(dims.height) ? dims.height : null,
+        length: dims?.length != null && !Number.isNaN(dims.length) ? dims.length : null,
+        "main-image": featuredImage ? { url: featuredImage } : null,
+        "more-images": (gallery || []).slice(0, 10).map((url) => (url ? { url } : null)).filter(Boolean),
+      };
+      console.log("[CREATE] ecommerce: POST /v2/sites/" + createConfig.siteId + "/products");
+      console.log("[CREATE] productFieldData:", JSON.stringify(productFieldData, null, 2));
+      console.log("[CREATE] skuFieldData:", JSON.stringify(skuFieldData, null, 2));
+      try {
+        const createResp = await createWebflowEcommerceProduct(
+          createConfig.siteId,
+          productFieldData,
+          skuFieldData,
+          createConfig.token
+        );
+        newId = createResp.product?.id;
+        if (!newId) throw new Error("No product.id in ecommerce create response");
+        console.log("[CREATE] ✅ CREATED NEW ECOMMERCE PRODUCT id =", newId);
+      } catch (createErr) {
+        console.error("[CREATE] ❌ Ecommerce create failed:", createErr.message);
+        console.error("[CREATE] status =", createErr.response?.status);
+        console.error("[CREATE] body   =", JSON.stringify(createErr.response?.data, null, 2));
+        throw createErr;
+      }
+    } else {
+      console.log("[CREATE] CMS: POST /v2/collections/" + createConfig.collectionId + "/items");
+      console.log("[CREATE] fieldData:", JSON.stringify(productFieldData, null, 2));
+      let resp;
+      try {
+        resp = await axios.post(
+          `https://api.webflow.com/v2/collections/${createConfig.collectionId}/items`,
+          { fieldData: productFieldData },
+          {
+            headers: {
+              Authorization: `Bearer ${createConfig.token}`,
+              "Content-Type": "application/json",
+            },
+          }
+        );
+      } catch (createErr) {
+        console.error("[CREATE] ❌ POST failed:", createErr.message);
+        console.error("[CREATE] status  =", createErr.response?.status);
+        console.error("[CREATE] body    =", JSON.stringify(createErr.response?.data, null, 2));
+        throw createErr;
+      }
+      newId = resp.data.id;
+      console.log("[CREATE] ✅ CREATED NEW WEBFLOW ITEM id =", newId);
     }
-
-    const newId = resp.data.id;
-    console.log("[CREATE] ✅ CREATED NEW WEBFLOW ITEM id =", newId);
     console.log("=".repeat(60) + "\n");
-    if (detectedVertical === "furniture" && createConfig.skuCollectionId) {
-      await syncFurnitureSku(product, newId, createConfig);
-    }
     cache[shopifyProductId] = {
       hash: currentHash,
       webflowId: newId,
@@ -985,10 +1135,18 @@ app.post("/sync-all", async (req, res) => {
       );
 
       if (entry?.webflowId) {
-        existing = await getWebflowItemById(entry.webflowId, config);
+        if (vertical === "furniture" && config.siteId) {
+          existing = await getWebflowEcommerceProductById(config.siteId, entry.webflowId, config.token);
+        } else {
+          existing = await getWebflowItemById(entry.webflowId, config);
+        }
       }
       if (!existing) {
-        existing = await findExistingWebflowItem(goneId, null, null, config);
+        if (vertical === "furniture" && config.siteId) {
+          existing = await findExistingWebflowEcommerceProduct(goneId, null, config);
+        } else {
+          existing = await findExistingWebflowItem(goneId, null, null, config);
+        }
       }
 
       if (existing) {
