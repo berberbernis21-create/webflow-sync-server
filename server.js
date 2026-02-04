@@ -792,7 +792,9 @@ async function syncSingleProduct(product, cache) {
   }
 
   if (!cacheEntry) {
-    console.log("🆕 NO CACHE + NO MATCH → Creating new Webflow item.");
+    console.log("\n" + "=".repeat(60));
+    console.log("🆕 CREATE PATH — NO CACHE + NO MATCH → Creating new Webflow item.");
+    console.log("=".repeat(60));
 
     const fieldData = buildWebflowFieldData({
       vertical: detectedVertical,
@@ -815,18 +817,46 @@ async function syncSingleProduct(product, cache) {
       newSlug: slug,
     });
     const createConfig = getWebflowConfig(detectedVertical);
-    const resp = await axios.post(
-      `https://api.webflow.com/v2/collections/${createConfig.collectionId}/items`,
-      { fieldData },
-      {
-        headers: {
-          Authorization: `Bearer ${createConfig.token}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
+
+    console.log("[CREATE] detectedVertical     =", detectedVertical);
+    console.log("[CREATE] shopifyProductId     =", shopifyProductId);
+    console.log("[CREATE] name (title)         =", name);
+    console.log("[CREATE] slug (handle)        =", slug);
+    console.log("[CREATE] category            =", category);
+    console.log("[CREATE] product_type         =", product.product_type ?? "(null)");
+    console.log("[CREATE] createConfig.collectionId   =", createConfig.collectionId ?? "(null)");
+    console.log("[CREATE] createConfig.skuCollectionId=", createConfig.skuCollectionId ?? "(null)");
+    console.log("[CREATE] createConfig.siteId         =", createConfig.siteId ?? "(null)");
+    console.log("[CREATE] createConfig.token set?    =", !!createConfig.token);
+    console.log("[CREATE] request URL =", `https://api.webflow.com/v2/collections/${createConfig.collectionId}/items`);
+    console.log("[CREATE] fieldData (exact payload):");
+    console.log(JSON.stringify(fieldData, null, 2));
+    console.log("[CREATE] sending POST...");
+
+    let resp;
+    try {
+      resp = await axios.post(
+        `https://api.webflow.com/v2/collections/${createConfig.collectionId}/items`,
+        { fieldData },
+        {
+          headers: {
+            Authorization: `Bearer ${createConfig.token}`,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+    } catch (createErr) {
+      console.error("[CREATE] ❌ POST failed:", createErr.message);
+      console.error("[CREATE] status  =", createErr.response?.status);
+      console.error("[CREATE] headers =", JSON.stringify(createErr.response?.headers, null, 2));
+      console.error("[CREATE] body    =", JSON.stringify(createErr.response?.data, null, 2));
+      console.error("[CREATE] fieldData that was sent:", JSON.stringify(fieldData, null, 2));
+      throw createErr;
+    }
+
     const newId = resp.data.id;
-    console.log("✅ CREATED NEW WEBFLOW ITEM:", newId);
+    console.log("[CREATE] ✅ CREATED NEW WEBFLOW ITEM id =", newId);
+    console.log("=".repeat(60) + "\n");
     if (detectedVertical === "furniture" && createConfig.skuCollectionId) {
       await syncFurnitureSku(product, newId, createConfig);
     }
@@ -992,8 +1022,17 @@ app.post("/sync-all", async (req, res) => {
       sold,
     });
   } catch (err) {
-    console.error("❌ sync-all error:", err.toString());
-    res.status(500).json({ error: err.toString() });
+    const status = err.response?.status;
+    const body = err.response?.data;
+    console.error("❌ sync-all error:", err.message);
+    if (status) console.error("   status:", status);
+    if (body) console.error("   response:", JSON.stringify(body));
+    const detail = body?.message || body?.err || err.message;
+    res.status(status && status >= 400 ? status : 500).json({
+      error: err.message,
+      ...(detail && detail !== err.message && { detail: String(detail) }),
+      ...(body && typeof body === "object" && { webflowResponse: body }),
+    });
   }
 });
 
