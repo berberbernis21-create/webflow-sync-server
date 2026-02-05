@@ -790,6 +790,48 @@ const FURNITURE_CATEGORY_TO_SHOPIFY = {
   Lighting: "Lighting",
 };
 
+/** Normalize for comparison: trim, lowercase, collapse spaces/slashes to single space. */
+function normalizeProductTypeForCategory(s) {
+  if (s == null || typeof s !== "string") return "";
+  return s
+    .trim()
+    .toLowerCase()
+    .replace(/\s*\/\s*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Known furniture category display names (and common product_type variants) → canonical value for metafields. */
+const PRODUCT_TYPE_TO_FURNITURE_CATEGORY = {
+  "living room": "Living Room",
+  "dining room": "Dining Room",
+  "office den": "Office Den",
+  "office": "Office Den",
+  "den": "Office Den",
+  "rugs": "Rugs",
+  "rug": "Rugs",
+  "art mirrors": "Art / Mirrors",
+  "art / mirrors": "Art / Mirrors",
+  "art/mirrors": "Art / Mirrors",
+  "art": "Art / Mirrors",
+  "mirrors": "Art / Mirrors",
+  "bedroom": "Bedroom",
+  "accessories": "Accessories",
+  "outdoor patio": "Outdoor / Patio",
+  "outdoor / patio": "Outdoor / Patio",
+  "outdoor": "Outdoor / Patio",
+  "patio": "Outdoor / Patio",
+  "lighting": "Lighting",
+  "lamps": "Lighting",
+};
+
+/** If product_type matches a known furniture category, return that category; else null. */
+function furnitureCategoryFromProductType(productType) {
+  const normalized = normalizeProductTypeForCategory(productType);
+  if (!normalized) return null;
+  return PRODUCT_TYPE_TO_FURNITURE_CATEGORY[normalized] ?? null;
+}
+
 function mapFurnitureCategoryForShopify(category) {
   return FURNITURE_CATEGORY_TO_SHOPIFY[category] ?? "Accessories";
 }
@@ -1325,9 +1367,15 @@ async function syncSingleProduct(product, cache, options = {}) {
   let category;
   let shopifyCategoryValue;
   if (vertical === "furniture") {
-    const detFurn = detectCategoryFurniture(name, description);
-    category = mapFurnitureCategoryForShopify(detFurn);
-    shopifyCategoryValue = category;
+    const fromType = furnitureCategoryFromProductType(product.product_type);
+    if (fromType) {
+      category = fromType;
+      shopifyCategoryValue = fromType;
+    } else {
+      const detFurn = detectCategoryFurniture(name, description);
+      category = mapFurnitureCategoryForShopify(detFurn);
+      shopifyCategoryValue = category;
+    }
   } else {
     const detLux = detectCategory(name);
     category = soldNow ? "Recently Sold" : detLux;
