@@ -26,6 +26,11 @@ const FURNITURE_SIGNALS = [
   "art",
   "painting",
   "pottery",
+  "sculpture",
+  "carved",
+  "statue",
+  "antique",
+  "wood",
   "sofa",
   "chair",
   "table",
@@ -168,6 +173,6 @@ export function detectVertical(product) {
 
   if (hasLuxuryKeyword) return "luxury";
 
-  // 5) Default: luxury (existing behavior)
-  return "luxury";
+  // 5) Default: furniture when ambiguous (carved wood horse, antique decor, etc. should not land in luxury)
+  return "furniture";
 }

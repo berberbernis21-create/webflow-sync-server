@@ -54,7 +54,9 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
     "pottery", "potteries", "mirror", "mirrors", "wall mirror", "wall mirrors", "vanity mirror",
     "pier mirror", "convex mirror", "sunburst mirror", "gilt mirror",
     "floor mirror", "full length mirror", "cheval mirror", "trumeau",
-    "poster", "lithograph", "etching", "wall art", "gallery wall"
+    "poster", "lithograph", "etching", "wall art", "gallery wall",
+    "sculpture", "sculptures", "carved", "statue", "statues", "figurine", "figurines",
+    "horse", "wooden", "wood", "antique"
   ],
 
   Bedroom: [
