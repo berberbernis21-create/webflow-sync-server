@@ -633,7 +633,7 @@ function hasAnyDimensions(dims) {
   );
 }
 
-/** Format dimensions for appending to luxury item description (at the end). */
+/** Format dimensions for description (incl. weight). Furniture & handbags: at start; other luxury: at end. */
 function formatDimensionsForDescription(dims) {
   if (!dims || !hasAnyDimensions(dims)) return "";
   const parts = [];
@@ -969,7 +969,13 @@ async function syncSingleProduct(product, cache) {
   }
   if (hasAnyDimensions(dimensions)) {
     const dimStr = formatDimensionsForDescription(dimensions);
-    if (dimStr) description = ((description || "").trim() + "\n\n" + dimStr).trim();
+    if (dimStr) {
+      const body = (description || "").trim();
+      const dimensionsFirst = vertical === "furniture" || (vertical === "luxury" && category === "Handbags");
+      description = dimensionsFirst
+        ? (dimStr + "\n\n" + body).trim()
+        : (body + "\n\n" + dimStr).trim();
+    }
   }
 
   // Write back to Shopify: vertical, category, dimensions_status (furniture), vendor
