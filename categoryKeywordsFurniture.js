@@ -58,7 +58,7 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
   ],
 
   Bedroom: [
-    "bed", "beds", "headboard", "headboards", "nightstand", "nightstands",
+    "bed", "beds", "bedroom", "headboard", "headboards", "nightstand", "nightstands",
     "dresser", "dressers", "chest", "chest of drawers", "armoire", "armoires",
     "bunk bed", "bunk beds", "bed frame", "bedframe", "bed frames",
     "vanity", "vanity table", "vanity desk", "wardrobe", "wardrobes",

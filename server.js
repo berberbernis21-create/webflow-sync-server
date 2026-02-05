@@ -775,10 +775,11 @@ function matchFurnitureKeyword(normalized, keyword) {
   }
 }
 
-function detectCategoryFurniture(title, descriptionHtml) {
+function detectCategoryFurniture(title, descriptionHtml, tags) {
   const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
   const descText = stripHtml(descriptionHtml || "");
-  const combined = [title || "", descText].filter(Boolean).join(" ").toLowerCase();
+  const tagsStr = Array.isArray(tags) ? tags.join(" ") : typeof tags === "string" ? tags : "";
+  const combined = [title || "", descText, tagsStr].filter(Boolean).join(" ").toLowerCase();
   if (!combined) return "Accessories";
   for (const [category, keywords] of Object.entries(CATEGORY_KEYWORDS_FURNITURE)) {
     for (const kw of keywords) {
@@ -1527,7 +1528,7 @@ async function syncSingleProduct(product, cache, options = {}) {
   }
   const categoryForMetafield =
     department === "Furniture & Home"
-      ? mapFurnitureCategoryForShopify(detectCategoryFurniture(name, description))
+      ? mapFurnitureCategoryForShopify(detectCategoryFurniture(name, description, getProductTagsArray(product)))
       : getLuxuryCategoryFromType(productType, soldNow);
   const shopifyDepartment = department;
   const shopifyCategoryValue = categoryForMetafield;
@@ -1690,8 +1691,14 @@ async function syncSingleProduct(product, cache, options = {}) {
     return { operation: "skip", id: existing.id };
   }
 
-  if (!cacheEntry) {
-    webflowLog("info", { event: "sync_product.create_path", shopifyProductId, productTitle: name, message: "NO CACHE + NO MATCH → Creating new Webflow item" });
+  // Create when no existing item found — either no cache, or cache pointed to deleted Webflow item
+  if (!existing) {
+    webflowLog("info", {
+      event: "sync_product.create_path",
+      shopifyProductId,
+      productTitle: name,
+      message: cacheEntry ? "CACHE MISS (Webflow item deleted) → Creating new" : "NO CACHE + NO MATCH → Creating new Webflow item",
+    });
 
     // Sweep: if we're creating in Luxury, check if this product wrongly exists in Furniture (e.g. no cache / cache lost). Archive it so it doesn't stay in both places.
     if (detectedVertical === "luxury") {
@@ -1829,8 +1836,8 @@ async function syncSingleProduct(product, cache, options = {}) {
     return { operation: "create", id: newId };
   }
 
-  webflowLog("info", { event: "path.skipped", reason: "skip-missing-webflow", shopifyProductId, productTitle: name, message: "CACHE EXISTS BUT NO WEBFLOW MATCH FOUND → NOT CREATING" });
-  return { operation: "skip-missing-webflow", id: null };
+  // Should not reach: existing was non-null but we didn't update/skip/sold
+  return { operation: "skip", id: null };
 }
 
 /* ======================================================
