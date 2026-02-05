@@ -3,12 +3,84 @@ import axios from "axios";
 import cors from "cors";
 import dotenv from "dotenv";
 import fs from "fs";
+import nodemailer from "nodemailer";
 import { CATEGORY_KEYWORDS } from "./categoryKeywords.js";
 import { CATEGORY_KEYWORDS_FURNITURE } from "./categoryKeywordsFurniture.js";
 import { detectBrandFromProduct } from "./brand.js";
 import { detectVertical } from "./vertical.js";
 
 dotenv.config();
+
+/* ======================================================
+   DUPLICATE PLACEMENT — Email alert (Gmail SMTP)
+   Env: GMAIL_SMTP_USER, GMAIL_SMTP_PASSWORD, REPORT_EMAIL_TO (comma-separated)
+====================================================== */
+/** @param {Set<string>} [duplicateEmailSentFor] - Per-run dedupe: only one email per shopifyProductId per run. We also persist sent IDs so we never send again for the same item unless a significant change happens. */
+async function sendDuplicatePlacementEmail(conflictLog, duplicateEmailSentFor) {
+  const { productTitle, shopifyProductId, previousVertical, detectedVertical, webflowIdArchived, sweep } = conflictLog;
+  const id = String(shopifyProductId ?? "");
+  if (duplicateEmailSentFor && duplicateEmailSentFor.has(id)) {
+    webflowLog("info", { event: "duplicate_placement.email_skipped", reason: "already_sent_this_run", shopifyProductId: id });
+    return;
+  }
+  const sentPreviously = loadDuplicatePlacementSentIds();
+  if (sentPreviously.has(id)) {
+    webflowLog("info", { event: "duplicate_placement.email_skipped", reason: "already_sent_previous_run", shopifyProductId: id });
+    return;
+  }
+  const to = process.env.REPORT_EMAIL_TO;
+  if (!to || !process.env.GMAIL_SMTP_USER || !process.env.GMAIL_SMTP_PASSWORD) {
+    webflowLog("warn", { event: "duplicate_placement.email_skipped", reason: "missing_env", REPORT_EMAIL_TO: !!to });
+    return;
+  }
+  const recipients = to.split(",").map((e) => e.trim()).filter(Boolean);
+  const subject = `[Webflow Sync] Duplicate placement — item is archived`;
+  const intro = sweep
+    ? "This item was found in the Furniture collection but is classified as Luxury (e.g. bag, clutch, scarf). It is archived; we created it in Luxury."
+    : "This item was previously synced to one collection but is now detected as belonging to another. It is archived.";
+  const body = [
+    intro,
+    "",
+    "Details (from sync logs):",
+    `  Product title: ${productTitle || "(none)"}`,
+    `  Shopify product ID: ${shopifyProductId}`,
+    `  Was in: ${previousVertical}`,
+    `  Now detected as: ${detectedVertical}`,
+    `  Webflow item ID (archived): ${webflowIdArchived || "n/a"}`,
+    "",
+    "This item is archived. You should go into the backend and delete it (so it does not remain in the wrong collection).",
+    "If a significant change happens again for this item, we will send another email.",
+    "",
+    "Please:",
+    "  1. Go into the backend and delete the archived item if it still appears.",
+    "  2. Adjust the product (name, tags, or product type) in Shopify if needed so it classifies consistently in the future.",
+    "",
+    "— Lost & Found Webflow Sync",
+  ].join("\n");
+
+  try {
+    const transporter = nodemailer.createTransport({
+      host: "smtp.gmail.com",
+      port: 587,
+      secure: false,
+      auth: {
+        user: process.env.GMAIL_SMTP_USER,
+        pass: process.env.GMAIL_SMTP_PASSWORD,
+      },
+    });
+    await transporter.sendMail({
+      from: process.env.GMAIL_SMTP_USER,
+      to: recipients,
+      subject,
+      text: body,
+    });
+    webflowLog("info", { event: "duplicate_placement.email_sent", to: recipients, shopifyProductId });
+    if (duplicateEmailSentFor) duplicateEmailSentFor.add(id);
+    saveDuplicatePlacementSentId(id);
+  } catch (err) {
+    webflowLog("error", { event: "duplicate_placement.email_failed", shopifyProductId, message: err.message });
+  }
+}
 
 /* ======================================================
    [WEBFLOW] CENTRALIZED LOGGING — Render stdout, no external deps
@@ -91,10 +163,34 @@ app.use(express.json());
 ====================================================== */
 const DATA_DIR = "./data";
 const CACHE_FILE = `${DATA_DIR}/lastSync.json`;
+const DUPLICATE_EMAIL_SENT_FILE = `${DATA_DIR}/duplicate_placement_emails_sent.json`;
 
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
+}
+
+/** IDs we've already sent a duplicate-placement email for (across runs). If they don't fix it, we won't email again unless a significant change happens. */
+function loadDuplicatePlacementSentIds() {
+  try {
+    if (!fs.existsSync(DUPLICATE_EMAIL_SENT_FILE)) return new Set();
+    const raw = fs.readFileSync(DUPLICATE_EMAIL_SENT_FILE, "utf8");
+    const arr = JSON.parse(raw);
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch (err) {
+    return new Set();
+  }
+}
+
+function saveDuplicatePlacementSentId(id) {
+  try {
+    ensureDataDir();
+    const set = loadDuplicatePlacementSentIds();
+    set.add(String(id));
+    fs.writeFileSync(DUPLICATE_EMAIL_SENT_FILE, JSON.stringify([...set], null, 2), "utf8");
+  } catch (err) {
+    console.error("⚠️ Failed to save duplicate-placement-sent list:", err.toString());
   }
 }
 
@@ -495,8 +591,10 @@ async function updateShopifyVendor(productId, brandValue) {
 
 /* ======================================================
    HASH FOR CHANGE DETECTION
+   Includes dimensions (variant + metafields + tags) so dimension changes trigger an update.
 ====================================================== */
 function shopifyHash(product) {
+  const dimensions = getDimensionsFromProduct(product);
   return {
     title: product.title,
     vendor: product.vendor,
@@ -505,6 +603,7 @@ function shopifyHash(product) {
     qty: product.variants?.[0]?.inventory_quantity ?? null,
     images: (product.images || []).map((i) => i.src),
     slug: product.handle,
+    dimensions: { width: dimensions.width, height: dimensions.height, length: dimensions.length, weight: dimensions.weight },
   };
 }
 
@@ -606,21 +705,50 @@ function resolveFurnitureCategoryRef(displayCategory) {
    DIMENSIONS — extract from Shopify (Furniture)
    Native: weight, width, height, length on variant.
    Metafields: custom.width, custom.height, custom.length.
+   Tags: "Width: 48", "Height: 18", "Depth: 18", "Weight: 10" (ecommerce tags; used as fallback).
    If missing → dimensions_status = "missing".
 ====================================================== */
+function getProductTagsArray(product) {
+  const t = product.tags;
+  if (Array.isArray(t)) return t;
+  if (typeof t === "string") return t.split(",").map((s) => s.trim()).filter(Boolean);
+  return [];
+}
+
+/** Parse dimensions from Shopify product tags, e.g. "Width: 48", "Height: 18", "Depth: 18", "Weight: 10". */
+function parseDimensionsFromTags(product) {
+  const tags = getProductTagsArray(product);
+  let width = null, height = null, length = null, weight = null;
+  const num = "(\\d+(?:\\.\\d+)?)";
+  for (const tag of tags) {
+    const t = String(tag).trim();
+    const wMatch = t.match(new RegExp("^Width:\\s*" + num + "$", "i"));
+    if (wMatch) width = parseFloat(wMatch[1]);
+    const hMatch = t.match(new RegExp("^Height:\\s*" + num + "$", "i"));
+    if (hMatch) height = parseFloat(hMatch[1]);
+    const dMatch = t.match(new RegExp("^Depth:\\s*" + num + "$", "i"));
+    if (dMatch) length = parseFloat(dMatch[1]);
+    const wtMatch = t.match(new RegExp("^Weight:\\s*" + num + "$", "i"));
+    if (wtMatch) weight = parseFloat(wtMatch[1]);
+  }
+  return { width, height, length, weight };
+}
+
 function getDimensionsFromProduct(product) {
   const v = product.variants?.[0];
-  if (!v) return { weight: null, width: null, height: null, length: null };
-  const weight = v.weight != null && v.weight > 0 ? Number(v.weight) : null;
-  let width = null,
-    height = null,
-    length = null;
+  let weight = v?.weight != null && v.weight > 0 ? Number(v.weight) : null;
+  let width = null, height = null, length = null;
   const metafields = Array.isArray(product.metafields) ? product.metafields : [];
   for (const m of metafields) {
     if (m.namespace === "custom" && m.key === "width" && m.value) width = parseFloat(m.value);
     if (m.namespace === "custom" && m.key === "height" && m.value) height = parseFloat(m.value);
     if (m.namespace === "custom" && m.key === "length" && m.value) length = parseFloat(m.value);
   }
+  const fromTags = parseDimensionsFromTags(product);
+  if (width == null && fromTags.width != null && !Number.isNaN(fromTags.width)) width = fromTags.width;
+  if (height == null && fromTags.height != null && !Number.isNaN(fromTags.height)) height = fromTags.height;
+  if (length == null && fromTags.length != null && !Number.isNaN(fromTags.length)) length = fromTags.length;
+  if (weight == null && fromTags.weight != null && !Number.isNaN(fromTags.weight) && fromTags.weight > 0) weight = fromTags.weight;
   return { weight, width, height, length };
 }
 
@@ -890,9 +1018,10 @@ async function markAsSold(existing, vertical, config) {
 /* ======================================================
    ⭐ CORE SYNC LOGIC — DUAL PIPELINE, NO DUPLICATES ⭐
 ====================================================== */
-async function syncSingleProduct(product, cache) {
+async function syncSingleProduct(product, cache, options = {}) {
   const shopifyProductId = String(product.id);
   const cacheEntry = getCacheEntry(cache, shopifyProductId);
+  const duplicateEmailSentFor = options.duplicateEmailSentFor ?? null;
 
   // Vertical detection first (before any Webflow or category logic)
   const detectedVertical = detectVertical(product);
@@ -911,7 +1040,8 @@ async function syncSingleProduct(product, cache) {
     corrected: verticalCorrected,
   });
 
-  // When we correct furniture → luxury, remove the mistaken product from Webflow (archive) and clear cache so we create in luxury
+  // When we correct furniture → luxury, remove the mistaken product from Webflow (archive) and clear cache so we create in luxury.
+  // Then we re-sync to luxury, send a duplicate-placement email, and return a flag so sync-all throws (run fails but item is fixed).
   if (verticalCorrected && cacheEntry?.webflowId && vertical === "luxury") {
     const furnitureConfig = getWebflowConfig("furniture");
     if (furnitureConfig?.siteId && furnitureConfig?.token) {
@@ -922,8 +1052,16 @@ async function syncSingleProduct(product, cache) {
         webflowLog("error", { event: "vertical.corrected.archive_failed", shopifyProductId, webflowId: cacheEntry.webflowId, message: err.message });
       }
     }
+    const duplicateLog = {
+      productTitle: product.title || "",
+      shopifyProductId,
+      previousVertical: "furniture",
+      detectedVertical: "luxury",
+      webflowIdArchived: cacheEntry.webflowId,
+    };
     delete cache[shopifyProductId];
-    return syncSingleProduct(product, cache);
+    const result = await syncSingleProduct(product, cache, options);
+    return { ...result, duplicateCorrected: true, duplicateLog };
   }
 
   const config = getWebflowConfig(vertical);
@@ -1114,6 +1252,40 @@ async function syncSingleProduct(product, cache) {
     console.log("🆕 CREATE PATH — NO CACHE + NO MATCH → Creating new Webflow item.");
     console.log("=".repeat(60));
 
+    // Sweep: if we're creating in Luxury, check if this product wrongly exists in Furniture (e.g. no cache / cache lost). Archive it so it doesn't stay in both places.
+    if (detectedVertical === "luxury") {
+      const furnitureConfig = getWebflowConfig("furniture");
+      if (furnitureConfig?.siteId && furnitureConfig?.token) {
+        const existingInFurniture = await findExistingWebflowEcommerceProduct(shopifyProductId, slug, furnitureConfig);
+        if (existingInFurniture) {
+          webflowLog("info", {
+            event: "sweep.found_in_furniture",
+            shopifyProductId,
+            webflowId: existingInFurniture.id,
+            productTitle: name,
+            message: "Archiving from Furniture before creating in Luxury",
+          });
+          try {
+            await archiveWebflowEcommerceProduct(furnitureConfig.siteId, existingInFurniture.id, furnitureConfig.token);
+            webflowLog("info", { event: "sweep.archived", shopifyProductId, webflowId: existingInFurniture.id });
+            await sendDuplicatePlacementEmail(
+              {
+                productTitle: name,
+                shopifyProductId,
+                previousVertical: "furniture",
+                detectedVertical: "luxury",
+                webflowIdArchived: existingInFurniture.id,
+                sweep: true,
+              },
+              duplicateEmailSentFor
+            );
+          } catch (err) {
+            webflowLog("error", { event: "sweep.archive_failed", shopifyProductId, webflowId: existingInFurniture.id, message: err.message });
+          }
+        }
+      }
+    }
+
     const createConfig = getWebflowConfig(detectedVertical);
     const productFieldData = buildWebflowFieldData({
       vertical: detectedVertical,
@@ -1244,6 +1416,10 @@ function buildWebflowFieldData(opts) {
   if (vertical === "furniture") {
     // Ecommerce product category must be an ItemRef (collection item ID), never a display string.
     const categoryRef = resolveFurnitureCategoryRef(category);
+    if (categoryRef == null) {
+      const envKey = `FURNITURE_CATEGORY_${category.replace(/\s*\/\s*/g, "_").replace(/\s+/g, "_").toUpperCase().replace(/[^A-Z0-9_]/g, "")}`;
+      console.log("category not assigned (set " + envKey + " to Webflow category item ID for: " + category + ")");
+    }
     const out = {
       name,
       slug,
@@ -1351,8 +1527,20 @@ app.post("/sync-all", async (req, res) => {
       webflowLog("info", { event: "cache.mutated", shopifyProductId: goneId, op: "deleted", reason: "disappeared" });
     }
 
+    const duplicateEmailSentFor = new Set();
     for (const product of products) {
-      const result = await syncSingleProduct(product, cache);
+      const result = await syncSingleProduct(product, cache, { duplicateEmailSentFor });
+
+      if (result.duplicateCorrected && result.duplicateLog) {
+        webflowLog("error", {
+          event: "sync-all.duplicate_placement",
+          message: "Item was in multiple places; archived duplicate and re-synced. Throwing so run fails and email was sent.",
+          ...result.duplicateLog,
+        });
+        await sendDuplicatePlacementEmail(result.duplicateLog, duplicateEmailSentFor);
+        const errMsg = `Duplicate placement: "${result.duplicateLog.productTitle}" (Shopify ID ${result.duplicateLog.shopifyProductId}) is archived. We re-synced to Luxury. Please go into the backend and delete the archived item if it still appears.`;
+        throw new Error(errMsg);
+      }
 
       if (result.operation === "create") created++;
       else if (result.operation === "update") updated++;

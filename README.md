@@ -15,13 +15,30 @@ Dual-pipeline sync: **Luxury / Accessories** and **Furniture & Home**. Each vert
 **Furniture & Home (RESALE)**  
 `RESALE_TOKEN`, `RESALE_Products_Collection_ID`, `RESALE_SKUs_Collection_ID`, `RESALE_WEBFLOW_SITE_ID`
 
+**Furniture categories (required for “Pick Categories” to be set)**  
+Webflow ecommerce expects `category` to be an ItemRef (the 24-character hex ID of the category item from your Webflow Categories collection). Set one env var per category; the key is derived from the display name (spaces → `_`, `/` → `_`, uppercase, non‑alphanumeric removed):
+
+| Display name    | Env variable                     |
+|-----------------|-----------------------------------|
+| Living Room     | `FURNITURE_CATEGORY_LIVING_ROOM`  |
+| Dining Room     | `FURNITURE_CATEGORY_DINING_ROOM`  |
+| Office Den      | `FURNITURE_CATEGORY_OFFICE_DEN`   |
+| Rugs            | `FURNITURE_CATEGORY_RUGS`         |
+| Art / Mirrors   | `FURNITURE_CATEGORY_ART_MIRRORS`  |
+| Bedroom         | `FURNITURE_CATEGORY_BEDROOM`      |
+| Accessories     | `FURNITURE_CATEGORY_ACCESSORIES`  |
+| Outdoor / Patio | `FURNITURE_CATEGORY_OUTDOOR_PATIO`|
+| Lighting        | `FURNITURE_CATEGORY_LIGHTING`     |
+
+Example: `FURNITURE_CATEGORY_LIVING_ROOM=507f1f77bcf86cd799439011` (use the real ID from Webflow). If a variable is missing, that category is not sent and the product will show no category in Webflow.
+
 ## Behavior
 
-- **Vertical detection:** Product title, vendor, tags, product type → `luxury` or `furniture`.
+- **Vertical detection:** Product title, description (body), vendor, tags, product type → `luxury` or `furniture` (keyword/fuzzy matching so e.g. "silk scarf" in the description can classify as luxury).
 - **Luxury:** Syncs to Luxury Webflow collection. SOLD → "Recently Sold" + hidden. Category from luxury keywords.
 - **Furniture:** Syncs to Furniture Webflow collection. SOLD → `sold: true`, item stays visible. Category from furniture keywords (fallback: Accessories). Dimensions (weight + optional metafields) and `dimensions_status` (present | missing) written when applicable.
 - **Shopify write-back:** `custom.vertical`, `custom.category`, `custom.dimensions_status` (furniture), vendor.
-- **No duplicates:** Cache stores `webflowId` and `vertical` per Shopify product; lookup uses the correct collection.
+- **No duplicates:** Cache stores `webflowId` and `vertical` per Shopify product; lookup uses the correct collection. If the same item would appear in multiple places we archive the duplicate: (1) **Cache said Furniture, we now detect Luxury** → archive from Furniture, re-sync to Luxury, send email, **throw**. (2) **No cache but we're creating in Luxury** → we first check the Furniture collection for the same Shopify product ID; if found (e.g. item was added before or cache was lost), we archive it from Furniture, send email, then create in Luxury. So items like bags/clutches that were wrongly in Furniture get archived and removed when you run a full sync.
 - **Disappeared products:** Marked SOLD in the same collection (using cached vertical).
 
 ---

@@ -80,23 +80,31 @@ function getTagsArray(product) {
   return [];
 }
 
+/** Strip HTML tags for use in text-based matching. */
+function stripHtml(html) {
+  if (!html || typeof html !== "string") return "";
+  return html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
+
 function getCombinedProductText(product) {
   const tagsStr = getTagsArray(product).join(" ");
+  const descriptionText = stripHtml(product.body_html || "");
   const parts = [
     product.title || "",
     product.product_type || "",
     product.vendor || "",
     tagsStr,
+    descriptionText,
   ];
   return parts.join(" ").toLowerCase();
 }
 
 /** Strong bag/accessory words in title → luxury even if tags say furniture. */
-const TITLE_LUXURY_WORDS = ["backpack", "backpacks", "handbag", "handbags", "clutch", "tote", "totes", "crossbody", "wallet", "wallets", "luggage", "satchel", "briefcase", "messenger bag", "shoulder bag"];
+const TITLE_LUXURY_WORDS = ["backpack", "backpacks", "handbag", "handbags", "bag", "bags", "clutch", "tote", "totes", "crossbody", "wallet", "wallets", "luggage", "satchel", "briefcase", "messenger bag", "shoulder bag", "agenda", "agenda cover", "belt", "belts", "scarf", "scarves"];
 
 /**
  * Detect vertical from Shopify product.
- * @param {Object} product - Shopify product (title, vendor, tags, product_type)
+ * @param {Object} product - Shopify product (title, vendor, tags, product_type, body_html)
  * @returns {'luxury'|'furniture'}
  */
 export function detectVertical(product) {
