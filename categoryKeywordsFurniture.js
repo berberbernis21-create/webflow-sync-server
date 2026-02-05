@@ -78,7 +78,7 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
     "throw pillow", "pillow", "cushion", "blanket", "throw",
     "curtain", "curtains", "drapery", "draperies", "valance",
     "door knocker", "door hardware", "hardware", "knob", "pull",
-    "umbrella stand", "coat rack", "hat rack", "key holder",
+    "umbrella stand", "coat rack", "hat rack", "luggage rack", "magazine rack", "wine rack", "key holder",
     "trinket", "objet", "ornament", "decorative", "accent piece"
   ],
 

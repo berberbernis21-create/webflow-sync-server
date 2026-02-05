@@ -1703,6 +1703,17 @@ async function syncSingleProduct(product, cache, options = {}) {
 
   // Create when no existing item found — either no cache, or cache pointed to deleted Webflow item
   if (!existing) {
+    // Don't recreate sold items (qty 0). If you deleted them from Webflow, we won't push them back.
+    if (soldNow) {
+      webflowLog("info", {
+        event: "sync_product.skip_create_sold",
+        shopifyProductId,
+        productTitle: name,
+        reason: "qty 0 — not recreating deleted sold items",
+      });
+      return { operation: "skip", id: null };
+    }
+
     webflowLog("info", {
       event: "sync_product.create_path",
       shopifyProductId,

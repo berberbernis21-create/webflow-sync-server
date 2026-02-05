@@ -2,11 +2,19 @@
  * Vertical detection: Luxury / Accessories vs Furniture & Home
  * Uses Shopify product data (title, vendor, tags, product_type) to classify
  * before Webflow matching, SOLD logic, or CMS routing.
+ * Name-first: prioritize title (+ type, tags); use description only when needed.
+ * Default to furniture when uncertain.
  */
 
 import { detectBrandFromProduct } from "./brand.js";
 import { CATEGORY_KEYWORDS } from "./categoryKeywords.js";
 import { CATEGORY_KEYWORDS_FURNITURE } from "./categoryKeywordsFurniture.js";
+
+/** Furniture items that contain words like "luggage" or "rack" — check these FIRST so they don't match luxury. */
+const FURNITURE_TRAP_PHRASES = [
+  "luggage rack", "coat rack", "hat rack", "umbrella stand", "hall tree",
+  "towel rack", "magazine rack", "wine rack", "plant stand", "lamp stand",
+];
 
 const FURNITURE_SIGNALS = [
   "furniture",
@@ -31,6 +39,8 @@ const FURNITURE_SIGNALS = [
   "statue",
   "antique",
   "wood",
+  "rack",
+  "stands",
   "sofa",
   "chair",
   "table",
@@ -93,21 +103,26 @@ function stripHtml(html) {
   return html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
 }
 
-/** Name + description (and type, vendor, tags) from Shopify — used to decide vertical (luxury vs furniture). */
-function getCombinedProductText(product) {
+/** Name + type + tags (no description) — use first for furniture so we don't rely on description. */
+function getNameAndTags(product) {
   const tagsStr = getTagsArray(product).join(" ");
-  const descriptionText = stripHtml(product.body_html || "");
   const parts = [
     product.title || "",
     product.product_type || "",
     product.vendor || "",
     tagsStr,
-    descriptionText,
   ];
   return parts.join(" ").toLowerCase();
 }
 
-/** Strong bag/accessory/footwear words in title → luxury first (so any bag/shoe in name never gets furniture). */
+/** Full combined: name + type + tags + description — used when name-only is unclear. */
+function getCombinedProductText(product) {
+  const nameAndTags = getNameAndTags(product);
+  const descriptionText = stripHtml(product.body_html || "");
+  return [nameAndTags, descriptionText].filter(Boolean).join(" ").toLowerCase();
+}
+
+/** Strong bag/accessory/footwear words in title → luxury (handbag, belt, shoe, etc. are very easy to detect). */
 const TITLE_LUXURY_WORDS = [
   "backpack", "backpacks", "handbag", "handbags", "bag", "bags",
   "tote bag", "tote bags", "sling bag", "sling bags", "envelope bag",
@@ -115,51 +130,53 @@ const TITLE_LUXURY_WORDS = [
   "messenger bag", "messenger bags", "hobo bag", "hobo bags",
   "clutch", "tote", "totes", "crossbody", "wallet", "wallets", "luggage", "satchel", "briefcase",
   "agenda", "agenda cover", "belt", "belts", "scarf", "scarves",
+  "purse", "purses", "card holder", "key pouch", "woc", "wallet on chain",
   "ballet flats", "flats", "heels", "pumps", "sneakers", "loafers", "boots", "sandals", "mules", "slides", "shoes",
 ];
 
-/**
- * Detect vertical from Shopify product.
- * @param {Object} product - Shopify product (title, vendor, tags, product_type, body_html)
- * @returns {'luxury'|'furniture'}
- */
-/** Simple substring signals: if title or type/tags contain these, always luxury (no regex). */
+/** Substring signals for luxury — avoid phrases that are furniture (e.g. luggage rack). */
 const BAG_SUBSTRINGS = [
   " bag", "bag ", "handbag", "handbags", " tote", "tote ", "tote with", "shopping tote",
   " clutch", " wallet", " wallet on chain", "wallets", " hobo", "hobo bag",
   " shoulder bag", " sling bag", "backpack", "backpacks", "satchel", "crossbody", "briefcase",
-  "drawstring", "double flap", "flap bag",
+  "drawstring", "double flap", "flap bag", " purse", "purse ",
 ];
 
 export function detectVertical(product) {
+  const nameAndTags = getNameAndTags(product);
   const combined = getCombinedProductText(product);
   const title = (product.title || "").toLowerCase();
   const typeAndTags = [product.product_type || "", getTagsArray(product).join(" ")].join(" ").toLowerCase();
 
-  // 0) Blunt check: title or type/tags contain " bag", handbag, tote, hobo, etc. → luxury (no regex)
+  // 0) Furniture trap: luggage rack, coat rack, umbrella stand, etc. — these contain "luggage" but are furniture
+  const textForTrap = `${title} ${typeAndTags}`;
+  for (const phrase of FURNITURE_TRAP_PHRASES) {
+    if (textForTrap.includes(phrase.toLowerCase())) return "furniture";
+  }
+
+  // 1) Strong luxury signals in title/type/tags — handbag, belt, wallet, shoe, etc. are very easy to detect
   for (const s of BAG_SUBSTRINGS) {
     if (title.includes(s) || typeAndTags.includes(s)) return "luxury";
   }
-  // 0b) Word-boundary check for full list (handbag, tote bag, shoes, etc.)
-  if (TITLE_LUXURY_WORDS.some((w) => matchWordBoundary(title, w))) {
-    return "luxury";
-  }
-  if (TITLE_LUXURY_WORDS.some((w) => matchWordBoundary(typeAndTags, w))) {
-    return "luxury";
-  }
+  if (TITLE_LUXURY_WORDS.some((w) => matchWordBoundary(title, w))) return "luxury";
+  if (TITLE_LUXURY_WORDS.some((w) => matchWordBoundary(typeAndTags, w))) return "luxury";
 
-  // 1) Strong furniture keyword in name/description (word-boundary) → furniture (so "McCarty Pottery", "canvas art" never go to luxury)
+  // 2) Furniture keywords — name first (title + type + tags), then description if needed
   const furnitureCategories = Object.values(CATEGORY_KEYWORDS_FURNITURE).flat();
-  const hasFurnitureKeyword = furnitureCategories.some((kw) => matchWordBoundary(combined, kw));
-  if (hasFurnitureKeyword) return "furniture";
-
-  // 2) Known luxury brand in vendor or title → luxury (so Gucci/Hermes etc. never go to furniture)
-  if (detectBrandFromProduct(product.title, product.vendor)) {
-    return "luxury";
+  const hasFurnitureInName = furnitureCategories.some((kw) => matchWordBoundary(nameAndTags, kw));
+  if (hasFurnitureInName) return "furniture";
+  // If name didn't match, use description when it exists
+  const descriptionText = stripHtml(product.body_html || "");
+  if (descriptionText) {
+    const hasFurnitureInCombined = furnitureCategories.some((kw) => matchWordBoundary(combined, kw));
+    if (hasFurnitureInCombined) return "furniture";
   }
+
+  // 3) Known luxury brand in vendor or title → luxury
+  if (detectBrandFromProduct(product.title, product.vendor)) return "luxury";
 
   const tagsStr = getTagsArray(product).join(" ");
-  // 3) Explicit type/tag: furniture wins
+  // 4) Type/tag signals: furniture vs luxury
   if (textMatchesAny(product.product_type, FURNITURE_SIGNALS) || textMatchesAny(tagsStr, FURNITURE_SIGNALS)) {
     return "furniture";
   }
@@ -167,12 +184,11 @@ export function detectVertical(product) {
     return "luxury";
   }
 
-  // 4) Luxury categories (word-boundary so "bag" doesn't match inside other words)
+  // 5) Luxury categories in full combined (word-boundary)
   const luxuryCategories = Object.values(CATEGORY_KEYWORDS).flat();
   const hasLuxuryKeyword = luxuryCategories.some((kw) => matchWordBoundary(combined, kw));
-
   if (hasLuxuryKeyword) return "luxury";
 
-  // 5) Default: furniture when ambiguous (carved wood horse, antique decor, etc. should not land in luxury)
+  // 6) Default: furniture when uncertain (decor, antiques, vague items should not land in luxury)
   return "furniture";
 }
