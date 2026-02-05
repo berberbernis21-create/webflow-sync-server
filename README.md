@@ -6,6 +6,9 @@ Dual-pipeline sync: **Luxury / Accessories** and **Furniture & Home**. Each vert
 
 ## Environment variables
 
+**Logging (optional)**  
+`LOG_LEVEL` — `info` (default) | `warn` | `error`. Use `error` for production cron jobs to cut most I/O and speed up frequent syncs; use `info` for debugging.
+
 **Shopify (shared)**  
 `SHOPIFY_STORE`, `SHOPIFY_ACCESS_TOKEN`
 

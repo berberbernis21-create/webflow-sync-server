@@ -85,11 +85,21 @@ async function sendDuplicatePlacementEmail(conflictLog, duplicateEmailSentFor) {
 
 /* ======================================================
    [WEBFLOW] CENTRALIZED LOGGING — Single-line JSON, timestamp, optional requestId/elapsedMs
+   LOG_LEVEL: "error" | "warn" | "info" — defaults to "info". "error" cuts most I/O to speed up frequent syncs.
 ====================================================== */
+const LOG_LEVEL = (process.env.LOG_LEVEL || "info").toLowerCase();
+const LOG_ERROR = LOG_LEVEL === "error" || LOG_LEVEL === "warn" || LOG_LEVEL === "info";
+const LOG_WARN = LOG_LEVEL === "warn" || LOG_LEVEL === "info";
+const LOG_INFO = LOG_LEVEL === "info";
+const LOG_REQUESTS = LOG_INFO; // skip per-request logs unless info
+
 let syncRequestId = null;
 let syncStartTime = null;
 
 function webflowLog(level, payload) {
+  if (level === "error" && !LOG_ERROR) return;
+  if (level === "warn" && !LOG_WARN) return;
+  if (level === "info" && !LOG_INFO) return;
   const base = {
     ts: new Date().toISOString(),
     level,
@@ -104,24 +114,32 @@ function webflowLog(level, payload) {
 }
 
 function webflowRequestLog(method, url, body) {
-  webflowLog("info", { event: "request", method, url, body: body ?? null });
+  if (!LOG_REQUESTS) return;
+  // avoid logging full request body — it can be huge and slows down sync
+  webflowLog("info", { event: "request", method, url });
 }
 
 function webflowFailureLog(method, url, status, responseBody, requestBody) {
+  if (!LOG_ERROR) return;
+  const truncate = (o, max = 500) => {
+    if (o == null) return null;
+    const s = typeof o === "string" ? o : JSON.stringify(o);
+    return s.length <= max ? s : s.slice(0, max) + "...";
+  };
   webflowLog("error", {
     event: "failure",
     method,
     url,
     status,
-    responseBody: responseBody ?? null,
-    requestBody: requestBody ?? null,
+    responseBody: truncate(responseBody),
+    requestBody: truncate(requestBody),
   });
 }
 
 // Axios interceptors: only for api.webflow.com
 const WEBFLOW_ORIGIN = "https://api.webflow.com";
 axios.interceptors.request.use((config) => {
-  if (config.url && String(config.url).startsWith(WEBFLOW_ORIGIN)) {
+  if (LOG_REQUESTS && config.url && String(config.url).startsWith(WEBFLOW_ORIGIN)) {
     webflowRequestLog(config.method?.toUpperCase() ?? "GET", config.url, config.data);
   }
   return config;
@@ -552,14 +570,15 @@ async function updateShopifyMetafields(productId, { department, category, vertic
   const cat = category ?? "";
   const vert = vertical ?? "luxury";
   const isFurniture = dept === "Furniture & Home";
+  // "category" metafield only accepts luxury options (Handbags, Totes, etc.). Furniture uses furniture_and_home only.
   const metafields = [
     { ownerId, key: "department", namespace: "custom", type: "single_line_text_field", value: dept },
-    { ownerId, key: "category", namespace: "custom", type: "single_line_text_field", value: cat },
+    ...(!isFurniture ? [{ ownerId, key: "category", namespace: "custom", type: "single_line_text_field", value: cat || "Other " }] : []),
     { ownerId, key: "vertical", namespace: "custom", type: "single_line_text_field", value: vert },
     { ownerId, key: "product_type_group", namespace: "custom", type: "single_line_text_field", value: dept },
-    // furniture_and_home: always for furniture (fallback: Accessories)
+    // furniture_and_home: Living Room, Accessories, Art / Mirrors, etc. (Furniture & Home dropdown)
     ...(isFurniture ? [{ ownerId, key: "furniture_and_home", namespace: "custom", type: "single_line_text_field", value: cat || "Accessories" }] : []),
-    // luxury_goods: always for luxury (fallback: Other)
+    // luxury_goods: Handbags, Other , etc. (Luxury Goods dropdown)
     ...(!isFurniture ? [{ ownerId, key: "luxury_goods", namespace: "custom", type: "single_line_text_field", value: cat || "Other " }] : []),
   ].filter((m) => m.value != null && String(m.value).trim() !== "");
   if (dimensionsStatus != null && String(dimensionsStatus).trim() !== "") {
