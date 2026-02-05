@@ -1373,7 +1373,7 @@ async function syncSingleProduct(product, cache, options = {}) {
     vertical,
     cacheWebflowId: cacheEntry?.webflowId ?? null,
     previousQty,
-    currentQty,
+    currentQty: qty,
     department: shopifyDepartment,
     category,
     categoryChild: shopifyCategoryValue,
