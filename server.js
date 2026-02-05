@@ -465,6 +465,18 @@ function mapFurnitureCategoryForShopify(category) {
   return FURNITURE_CATEGORY_TO_SHOPIFY[category] ?? "Accessories";
 }
 
+/** Ecommerce category must be an ItemRef (Webflow collection item ID). Return ID only if configured via env and looks like an ID. */
+function resolveFurnitureCategoryRef(displayCategory) {
+  if (!displayCategory || typeof displayCategory !== "string") return null;
+  const key = displayCategory.replace(/\s*\/\s*/g, "_").replace(/\s+/g, "_").toUpperCase().replace(/[^A-Z0-9_]/g, "");
+  const envKey = `FURNITURE_CATEGORY_${key}`;
+  const id = process.env[envKey];
+  const trimmed = id && String(id).trim();
+  if (!trimmed) return null;
+  if (!/^[a-f0-9]{24}$/i.test(trimmed)) return null;
+  return trimmed;
+}
+
 /* ======================================================
    DIMENSIONS — extract from Shopify (Furniture)
    Native: weight, width, height, length on variant.
@@ -1059,11 +1071,14 @@ function buildWebflowFieldData(opts) {
   const slug = existingSlug ?? newSlug ?? "";
 
   if (vertical === "furniture") {
+    // Ecommerce product category must be an ItemRef (collection item ID), not a display string.
+    // Optional: map category name → ID via env (e.g. FURNITURE_CATEGORY_ART_MIRRORS=id) and set category when present.
+    const categoryRef = resolveFurnitureCategoryRef(category);
     return {
       name,
       slug,
       description: description ?? "",
-      category,
+      ...(categoryRef != null && { category: categoryRef }),
       sold: !!soldNow,
       "shopify-product-id": shopifyProductId,
       "shopify-slug-2": shopifySlug ?? newSlug ?? "",
