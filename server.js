@@ -417,6 +417,26 @@ async function archiveWebflowEcommerceProduct(siteId, productId, token) {
   });
 }
 
+/** Try to delete an ecommerce product; if the API doesn't support delete (404/405), archive instead. */
+async function deleteOrArchiveWebflowEcommerceProduct(siteId, productId, token) {
+  if (!siteId || !productId || !token) return;
+  const url = `https://api.webflow.com/v2/sites/${siteId}/products/${productId}`;
+  try {
+    await axios.delete(url, {
+      headers: { Authorization: `Bearer ${token}`, accept: "application/json" },
+    });
+    webflowLog("info", { event: "delete.ecommerce_product", productId, message: "Duplicate deleted from Furniture" });
+  } catch (err) {
+    const status = err.response?.status;
+    if (status === 404 || status === 405 || status === 501) {
+      webflowLog("info", { event: "delete.ecommerce_not_supported", productId, status, message: "Falling back to archive" });
+      await archiveWebflowEcommerceProduct(siteId, productId, token);
+    } else {
+      throw err;
+    }
+  }
+}
+
 /** Delete a CMS collection item (e.g. remove from Luxury when product is actually furniture). */
 async function deleteWebflowCollectionItem(collectionId, itemId, token) {
   if (!collectionId || !itemId || !token) return;
@@ -1122,9 +1142,9 @@ async function syncSingleProduct(product, cache, options = {}) {
   if (verticalCorrected && cacheEntry?.webflowId && vertical === "luxury") {
     const furnitureConfig = getWebflowConfig("furniture");
     if (furnitureConfig?.siteId && furnitureConfig?.token) {
-      try {
-        await archiveWebflowEcommerceProduct(furnitureConfig.siteId, cacheEntry.webflowId, furnitureConfig.token);
-        webflowLog("info", { event: "vertical.corrected.archived", shopifyProductId, webflowId: cacheEntry.webflowId });
+        try {
+          await deleteOrArchiveWebflowEcommerceProduct(furnitureConfig.siteId, cacheEntry.webflowId, furnitureConfig.token);
+        webflowLog("info", { event: "vertical.corrected.removed", shopifyProductId, webflowId: cacheEntry.webflowId });
       } catch (err) {
         webflowLog("error", { event: "vertical.corrected.archive_failed", shopifyProductId, webflowId: cacheEntry.webflowId, message: err.message });
       }
@@ -1159,8 +1179,8 @@ async function syncSingleProduct(product, cache, options = {}) {
           productTitle: product.title,
         });
         try {
-          await archiveWebflowEcommerceProduct(furnitureConfig.siteId, existingInFurniture.id, furnitureConfig.token);
-          webflowLog("info", { event: "cleanup.archived_from_furniture", shopifyProductId, webflowId: existingInFurniture.id });
+          await deleteOrArchiveWebflowEcommerceProduct(furnitureConfig.siteId, existingInFurniture.id, furnitureConfig.token);
+          webflowLog("info", { event: "cleanup.removed_from_furniture", shopifyProductId, webflowId: existingInFurniture.id });
           await sendDuplicatePlacementEmail(
             {
               productTitle: product.title || "",
@@ -1173,7 +1193,7 @@ async function syncSingleProduct(product, cache, options = {}) {
             duplicateEmailSentFor
           );
         } catch (err) {
-          webflowLog("error", { event: "cleanup.archive_furniture_failed", shopifyProductId, webflowId: existingInFurniture.id, message: err.message });
+          webflowLog("error", { event: "cleanup.remove_furniture_failed", shopifyProductId, webflowId: existingInFurniture.id, message: err.message });
         }
       }
     }
@@ -1418,8 +1438,8 @@ async function syncSingleProduct(product, cache, options = {}) {
             message: "Archiving from Furniture before creating in Luxury",
           });
           try {
-            await archiveWebflowEcommerceProduct(furnitureConfig.siteId, existingInFurniture.id, furnitureConfig.token);
-            webflowLog("info", { event: "sweep.archived", shopifyProductId, webflowId: existingInFurniture.id });
+            await deleteOrArchiveWebflowEcommerceProduct(furnitureConfig.siteId, existingInFurniture.id, furnitureConfig.token);
+            webflowLog("info", { event: "sweep.removed_from_furniture", shopifyProductId, webflowId: existingInFurniture.id });
             await sendDuplicatePlacementEmail(
               {
                 productTitle: name,
@@ -1432,7 +1452,7 @@ async function syncSingleProduct(product, cache, options = {}) {
               duplicateEmailSentFor
             );
           } catch (err) {
-            webflowLog("error", { event: "sweep.archive_failed", shopifyProductId, webflowId: existingInFurniture.id, message: err.message });
+            webflowLog("error", { event: "sweep.remove_furniture_failed", shopifyProductId, webflowId: existingInFurniture.id, message: err.message });
           }
         }
       }
