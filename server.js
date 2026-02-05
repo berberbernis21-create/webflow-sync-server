@@ -534,30 +534,51 @@ async function publishToSalesChannels(productId) {
 /* ======================================================
    SHOPIFY — WRITE METAFIELDS (department, category, vertical, dimensions_status)
    Department = parent (Furniture & Home | Luxury Goods). Category = child (Living Room, Handbags, etc.).
+   Also writes product_type_group (same as department) and luxury_goods (category when luxury, empty when furniture)
+   so admin displays "Furniture & Home", "Product Type Group", and "Luxury Goods" show correctly.
 ====================================================== */
 async function updateShopifyMetafields(productId, { department, category, vertical, dimensionsStatus }) {
   const ownerId = `gid://shopify/Product/${productId}`;
+  const dept = department ?? "";
+  const cat = category ?? "";
+  const vert = vertical ?? "luxury";
   const metafields = [
     {
       ownerId,
       key: "department",
       namespace: "custom",
       type: "single_line_text_field",
-      value: department ?? "",
+      value: dept,
     },
     {
       ownerId,
       key: "category",
       namespace: "custom",
       type: "single_line_text_field",
-      value: category ?? "",
+      value: cat,
     },
     {
       ownerId,
       key: "vertical",
       namespace: "custom",
       type: "single_line_text_field",
-      value: vertical ?? "luxury",
+      value: vert,
+    },
+    // So "Furniture & Home" / "Product Type Group" in admin show the parent department
+    {
+      ownerId,
+      key: "product_type_group",
+      namespace: "custom",
+      type: "single_line_text_field",
+      value: dept,
+    },
+    // So "Luxury Goods" in admin shows category for luxury items and is empty for furniture
+    {
+      ownerId,
+      key: "luxury_goods",
+      namespace: "custom",
+      type: "single_line_text_field",
+      value: vert === "luxury" ? cat : "",
     },
   ];
   if (dimensionsStatus != null) {
@@ -700,12 +721,14 @@ function matchFurnitureKeyword(normalized, keyword) {
   }
 }
 
-function detectCategoryFurniture(title) {
-  if (!title) return "Accessories";
-  const normalized = title.toLowerCase();
+function detectCategoryFurniture(title, descriptionHtml) {
+  const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const descText = stripHtml(descriptionHtml || "");
+  const combined = [title || "", descText].filter(Boolean).join(" ").toLowerCase();
+  if (!combined) return "Accessories";
   for (const [category, keywords] of Object.entries(CATEGORY_KEYWORDS_FURNITURE)) {
     for (const kw of keywords) {
-      if (matchFurnitureKeyword(normalized, kw)) return category;
+      if (matchFurnitureKeyword(combined, kw)) return category;
     }
   }
   return "Accessories";
@@ -1256,7 +1279,7 @@ async function syncSingleProduct(product, cache, options = {}) {
   let category;
   let shopifyCategoryValue;
   if (vertical === "furniture") {
-    const detFurn = detectCategoryFurniture(name);
+    const detFurn = detectCategoryFurniture(name, description);
     category = mapFurnitureCategoryForShopify(detFurn);
     shopifyCategoryValue = category;
   } else {

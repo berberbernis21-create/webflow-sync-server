@@ -4,6 +4,7 @@
  * before Webflow matching, SOLD logic, or CMS routing.
  */
 
+import { detectBrandFromProduct } from "./brand.js";
 import { CATEGORY_KEYWORDS } from "./categoryKeywords.js";
 import { CATEGORY_KEYWORDS_FURNITURE } from "./categoryKeywordsFurniture.js";
 
@@ -111,7 +112,12 @@ export function detectVertical(product) {
   const combined = getCombinedProductText(product);
   const title = (product.title || "").toLowerCase();
 
-  // 0) Title clearly indicates bag/accessory → luxury (overrides furniture tags like "art")
+  // 0) Known luxury brand in vendor or title → luxury (so Gucci/Hermes etc. never go to furniture)
+  if (detectBrandFromProduct(product.title, product.vendor)) {
+    return "luxury";
+  }
+
+  // 1) Title clearly indicates bag/accessory → luxury (overrides furniture tags like "art")
   if (TITLE_LUXURY_WORDS.some((w) => matchWordBoundary(title, w))) {
     return "luxury";
   }
@@ -125,7 +131,7 @@ export function detectVertical(product) {
     return "luxury";
   }
 
-  // 2) Title/keyword: check furniture categories first (word-boundary so "art" doesn't match "smart")
+  // 2) Name + description (and tags/type/vendor in combined): check furniture keywords first (word-boundary so "art" doesn't match "smart")
   const furnitureCategories = Object.values(CATEGORY_KEYWORDS_FURNITURE).flat();
   const hasFurnitureKeyword = furnitureCategories.some((kw) => matchWordBoundary(combined, kw));
 
