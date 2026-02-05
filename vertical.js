@@ -117,7 +117,12 @@ const TITLE_LUXURY_WORDS = [
  * @returns {'luxury'|'furniture'}
  */
 /** Simple substring signals: if title or type/tags contain these, always luxury (no regex). */
-const BAG_SUBSTRINGS = [" bag", "bag ", "handbag", " tote", "tote ", " clutch", " wallet", " hobo", "hobo bag", " shoulder bag", " sling bag", "backpack", "satchel", "crossbody", "briefcase"];
+const BAG_SUBSTRINGS = [
+  " bag", "bag ", "handbag", "handbags", " tote", "tote ", "tote with", "shopping tote",
+  " clutch", " wallet", " wallet on chain", "wallets", " hobo", "hobo bag",
+  " shoulder bag", " sling bag", "backpack", "backpacks", "satchel", "crossbody", "briefcase",
+  "drawstring", "double flap", "flap bag",
+];
 
 export function detectVertical(product) {
   const combined = getCombinedProductText(product);

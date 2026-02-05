@@ -622,27 +622,7 @@ async function updateShopifyMetafields(productId, { department, category, vertic
    SHOPIFY — WRITE VENDOR AND PRODUCT TYPE (Type field in admin)
    productType = assigned category so collection rules and Type display match (e.g. Rugs, Handbags, Art / Mirrors).
 ====================================================== */
-/** Tags we set for department/category — strip before re-adding. Same for Luxury and Furniture. */
-const SYNC_DEPARTMENT_TAGS = ["Furniture & Home", "Luxury Goods"];
-const SYNC_CATEGORY_TAGS = [
-  "Living Room", "Dining Room", "Office Den", "Rugs", "Art / Mirrors", "Bedroom", "Accessories", "Outdoor / Patio", "Lighting",
-  "Handbags", "Totes", "Crossbody", "Wallets", "Backpacks", "Luggage", "Scarves", "Belts", "Small Bags", "Other ", "Other",
-  "Recently Sold",
-];
-function mergeProductTagsForSync(existingTags, department, category) {
-  const existing = Array.isArray(existingTags) ? existingTags : (typeof existingTags === "string" ? existingTags.split(",").map((s) => s.trim()).filter(Boolean) : []);
-  const toRemove = new Set([...SYNC_DEPARTMENT_TAGS, ...SYNC_CATEGORY_TAGS].map((t) => t.trim()).filter(Boolean));
-  const kept = existing.filter((t) => !toRemove.has(String(t).trim()));
-  const toAdd = [department, category].filter((v) => v != null && String(v).trim() !== "");
-  const combined = [...kept];
-  for (const tag of toAdd) {
-    const t = String(tag).trim();
-    if (t && !combined.includes(t)) combined.push(t);
-  }
-  return combined;
-}
-
-async function updateShopifyVendorAndType(productId, brandValue, productType, existingTags, department, category) {
+async function updateShopifyVendorAndType(productId, brandValue, productType) {
   const mutation = `
     mutation UpdateProduct($input: ProductInput!) {
       productUpdate(input: $input) {
@@ -650,7 +630,6 @@ async function updateShopifyVendorAndType(productId, brandValue, productType, ex
           id
           vendor
           productType
-          tags
         }
         userErrors {
           field
@@ -667,10 +646,6 @@ async function updateShopifyVendorAndType(productId, brandValue, productType, ex
   if (productType != null && String(productType).trim() !== "") {
     input.productType = String(productType).trim();
   }
-  if (department != null && category != null) {
-    input.tags = mergeProductTagsForSync(existingTags ?? [], department, category);
-  }
-
   const variables = { input };
 
   await axios.post(
@@ -1368,7 +1343,7 @@ async function syncSingleProduct(product, cache, options = {}) {
     vertical: detectedVertical,
     dimensionsStatus: vertical === "furniture" ? dimensionsStatus : undefined,
   });
-  await updateShopifyVendorAndType(shopifyProductId, brand, shopifyCategoryValue, getProductTagsArray(product), shopifyDepartment, shopifyCategoryValue);
+  await updateShopifyVendorAndType(shopifyProductId, brand, shopifyCategoryValue);
 
   const currentHash = shopifyHash(product);
 
