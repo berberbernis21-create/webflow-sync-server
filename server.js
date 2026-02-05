@@ -462,13 +462,26 @@ function mapCategoryForShopify(category) {
 /* ======================================================
    FURNITURE CATEGORY — detect + map to Shopify display
    Fallback: Accessories when no keyword matches.
+   Uses word-boundary matching so "art" doesn't match "smart", "print" doesn't match "blueprint", "desk" doesn't match "desktop".
 ====================================================== */
+function matchFurnitureKeyword(normalized, keyword) {
+  const k = keyword.trim().toLowerCase();
+  if (!k) return false;
+  const escaped = k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = "\\b" + escaped + "\\b";
+  try {
+    return new RegExp(pattern, "i").test(normalized);
+  } catch {
+    return normalized.includes(k);
+  }
+}
+
 function detectCategoryFurniture(title) {
   if (!title) return "Accessories";
   const normalized = title.toLowerCase();
   for (const [category, keywords] of Object.entries(CATEGORY_KEYWORDS_FURNITURE)) {
     for (const kw of keywords) {
-      if (normalized.includes(kw.toLowerCase())) return category;
+      if (matchFurnitureKeyword(normalized, kw)) return category;
     }
   }
   return "Accessories";
@@ -760,16 +773,8 @@ async function markAsSold(existing, vertical, config) {
       : { ...base, category: "Recently Sold", "show-on-webflow": false };
 
   if (vertical === "furniture" && config.siteId) {
-    await axios.patch(
-      `https://api.webflow.com/v2/sites/${config.siteId}/products/${existing.id}`,
-      { fieldData },
-      {
-        headers: {
-          Authorization: `Bearer ${config.token}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
+    // Ecommerce PATCH requires { product: { fieldData }, sku: { fieldData } }; reuse shared updater
+    await updateWebflowEcommerceProduct(config.siteId, existing.id, fieldData, config.token, existing);
     return;
   }
   await axios.patch(

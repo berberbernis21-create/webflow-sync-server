@@ -49,7 +49,7 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
   ],
 
   ArtMirrors: [
-    "art", "canvas", "painting", "paintings", "framed art", "print", "prints",
+    "wall art", "canvas painting", "canvas print", "stretched canvas", "painting", "paintings", "framed art", "art print", "art prints",
     "mirror", "mirrors", "wall mirror", "wall mirrors", "vanity mirror",
     "pier mirror", "convex mirror", "sunburst mirror", "gilt mirror",
     "floor mirror", "full length mirror", "cheval mirror", "trumeau",
