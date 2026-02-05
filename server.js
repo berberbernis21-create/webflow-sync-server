@@ -1740,6 +1740,8 @@ function buildWebflowFieldData(opts) {
     return out;
   }
 
+  // Webflow rejects "Other " (trailing space); use "Other" for Luxury CMS
+  const webflowCategory = (category && category.trimEnd() === "Other") ? "Other" : (category ?? "");
   const base = {
     name,
     brand,
@@ -1747,7 +1749,7 @@ function buildWebflowFieldData(opts) {
     description,
     "shopify-product-id": shopifyProductId,
     "shopify-url": shopifyUrl,
-    category,
+    category: webflowCategory,
     slug,
   };
   return {
