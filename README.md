@@ -9,6 +9,9 @@ Dual-pipeline sync: **Luxury / Accessories** and **Furniture & Home**. Each vert
 **Logging (optional)**  
 `LOG_LEVEL` — `info` (default) | `warn` | `error`. Use `error` for production cron jobs to cut most I/O and speed up frequent syncs; use `info` for debugging.
 
+**Performance (optional)**  
+`SYNC_CONCURRENCY` — Number of products to process in parallel (default `5`, max `15`). Increase for faster syncs if APIs allow.
+
 **Shopify (shared)**  
 `SHOPIFY_STORE`, `SHOPIFY_ACCESS_TOKEN`
 

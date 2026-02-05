@@ -305,11 +305,26 @@ async function getWebflowEcommerceProductById(siteId, productId, token) {
   }
 }
 
+/** Run-scoped index: Furniture ecommerce products. Populated at sync start for O(1) lookup. */
+let furnitureProductIndex = null;
+
 async function findExistingWebflowEcommerceProduct(shopifyProductId, slug, config) {
   if (!config?.siteId || !config?.token) return null;
+  const slugNorm = slug ? String(slug).trim() : null;
+
+  // Use pre-loaded index when available
+  if (furnitureProductIndex) {
+    const byId = furnitureProductIndex.byShopifyId?.get(String(shopifyProductId));
+    if (byId) return byId;
+    if (slugNorm) {
+      const bySlug = furnitureProductIndex.bySlug?.get(slugNorm);
+      if (bySlug) return bySlug;
+    }
+    return null;
+  }
+
   let offset = 0;
   const limit = 100;
-  const slugNorm = slug ? String(slug).trim() : null;
   while (true) {
     const url = `https://api.webflow.com/v2/sites/${config.siteId}/products?limit=${limit}&offset=${offset}`;
     let response;
@@ -911,6 +926,93 @@ async function loadFurnitureCategoryMap() {
   }
 }
 
+/** Pre-load Luxury CMS items once per sync → O(1) lookup instead of N×page scans. */
+async function loadLuxuryItemIndex() {
+  const config = getWebflowConfig("luxury");
+  if (!config?.collectionId || !config?.token) return;
+  const byShopifyId = new Map();
+  const bySlug = new Map();
+  const byUrl = new Map();
+  let offset = 0;
+  const limit = 100;
+  while (true) {
+    const url = `https://api.webflow.com/v2/collections/${config.collectionId}/items?limit=${limit}&offset=${offset}`;
+    const resp = await axios.get(url, {
+      headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
+    });
+    const items = resp.data?.items ?? [];
+    for (const item of items) {
+      const fd = item.fieldData || {};
+      const wfId = fd["shopify-product-id"] ? String(fd["shopify-product-id"]) : null;
+      const wfUrl = fd["shopify-url"] ? String(fd["shopify-url"]).trim() : null;
+      const wfSlug = (fd["slug"] || fd["shopify-slug-2"]) ? String(fd["slug"] || fd["shopify-slug-2"]).trim() : null;
+      if (wfId) byShopifyId.set(wfId, item);
+      if (wfUrl) byUrl.set(wfUrl, item);
+      if (wfSlug) bySlug.set(wfSlug, item);
+    }
+    if (items.length < limit) break;
+    offset += limit;
+  }
+  luxuryItemIndex = { byShopifyId, bySlug, byUrl };
+  webflowLog("info", { event: "luxury_item_index.loaded", count: byShopifyId.size });
+}
+
+/** Pre-load Furniture ecommerce products once per sync → O(1) lookup. */
+async function loadFurnitureProductIndex() {
+  const config = getWebflowConfig("furniture");
+  if (!config?.siteId || !config?.token) return;
+  const byShopifyId = new Map();
+  const bySlug = new Map();
+  let offset = 0;
+  const limit = 100;
+  while (true) {
+    const url = `https://api.webflow.com/v2/sites/${config.siteId}/products?limit=${limit}&offset=${offset}`;
+    const resp = await axios.get(url, {
+      headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
+    });
+    const raw = resp.data?.products ?? resp.data?.items ?? [];
+    const list = Array.isArray(raw) ? raw : [];
+    for (const listItem of list) {
+      const product = listItem.product ?? listItem;
+      const skus = listItem.skus ?? product.skus ?? [];
+      const fd = product.fieldData || {};
+      const wfId = fd["shopify-product-id"] ? String(fd["shopify-product-id"]) : null;
+      const wfSlug = (fd["slug"] || fd["shopify-slug-2"]) ? String(fd["slug"] || fd["shopify-slug-2"]).trim() : null;
+      const entry = { ...product, skus };
+      if (wfId) byShopifyId.set(wfId, entry);
+      if (wfSlug) bySlug.set(wfSlug, entry);
+    }
+    if (list.length < limit) break;
+    offset += limit;
+  }
+  furnitureProductIndex = { byShopifyId, bySlug };
+  webflowLog("info", { event: "furniture_product_index.loaded", count: byShopifyId.size });
+}
+
+/** Pre-load Furniture SKUs by product ID once per sync → O(1) lookup. */
+async function loadFurnitureSkuIndex() {
+  const config = getWebflowConfig("furniture");
+  if (!config?.skuCollectionId || !config?.token) return;
+  const byProductId = new Map();
+  let offset = 0;
+  const limit = 100;
+  while (true) {
+    const url = `https://api.webflow.com/v2/collections/${config.skuCollectionId}/items?limit=${limit}&offset=${offset}`;
+    const resp = await axios.get(url, {
+      headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
+    });
+    const items = resp.data?.items ?? [];
+    for (const item of items) {
+      const productRef = item.fieldData?.product;
+      if (productRef) byProductId.set(String(productRef), item);
+    }
+    if (items.length < limit) break;
+    offset += limit;
+  }
+  furnitureSkuIndex = byProductId;
+  webflowLog("info", { event: "furniture_sku_index.loaded", count: byProductId.size });
+}
+
 /** Ecommerce category must be an ItemRef (Webflow collection item ID). Uses Webflow Categories if loaded; else env vars. */
 function resolveFurnitureCategoryRef(displayCategory) {
   if (!displayCategory || typeof displayCategory !== "string") return null;
@@ -1050,6 +1152,9 @@ async function fetchAllShopifyProducts() {
    WEBFLOW — STRONG MATCHER (ID / URL / SLUG)
    Uses config (collectionId + token) for target collection.
 ====================================================== */
+/** Run-scoped index: Luxury CMS items. Populated at sync start for O(1) lookup. */
+let luxuryItemIndex = null;
+
 async function findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, config) {
   if (!config?.collectionId || !config?.token) return null;
   const shopifyUrlNorm = shopifyUrl ? String(shopifyUrl).trim() : null;
@@ -1057,28 +1162,46 @@ async function findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, confi
 
   webflowLog("info", { event: "match_scan.start", shopifyProductId, shopifyUrl: shopifyUrlNorm, slug: slugNorm });
 
+  // Use pre-loaded index when available (avoids N×page API calls per product)
+  if (luxuryItemIndex) {
+    const byId = luxuryItemIndex.byShopifyId?.get(String(shopifyProductId));
+    if (byId) {
+      webflowLog("info", { event: "match_scan.found", shopifyProductId, webflowItemId: byId.id, source: "index" });
+      return byId;
+    }
+    if (shopifyUrlNorm) {
+      const byUrl = luxuryItemIndex.byUrl?.get(shopifyUrlNorm);
+      if (byUrl) {
+        webflowLog("info", { event: "match_scan.found", shopifyProductId, webflowItemId: byUrl.id, source: "index" });
+        return byUrl;
+      }
+    }
+    if (slugNorm) {
+      const bySlug = luxuryItemIndex.bySlug?.get(slugNorm);
+      if (bySlug) {
+        webflowLog("info", { event: "match_scan.found", shopifyProductId, webflowItemId: bySlug.id, source: "index" });
+        return bySlug;
+      }
+    }
+    webflowLog("info", { event: "match_scan.not_found", shopifyProductId, source: "index" });
+    return null;
+  }
+
   let offset = 0;
   const limit = 100;
-
   while (true) {
     const url = `https://api.webflow.com/v2/collections/${config.collectionId}/items?limit=${limit}&offset=${offset}`;
-
     let response;
     try {
       response = await axios.get(url, {
-        headers: {
-          Authorization: `Bearer ${config.token}`,
-          accept: "application/json",
-        },
+        headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
       });
     } catch (err) {
       webflowLog("error", { event: "match_scan.error", shopifyProductId, offset, message: err.message, responseData: err.response?.data });
       return null;
     }
-
     const items = response.data.items || [];
     webflowLog("info", { event: "match_scan.page", shopifyProductId, offset, itemCount: items.length });
-
     for (const item of items) {
       const fd = item.fieldData || {};
       const wfIdRaw = fd["shopify-product-id"] || null;
@@ -1091,17 +1214,14 @@ async function findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, confi
       const idMatch = wfId && String(wfId) === String(shopifyProductId);
       const urlMatch = wfUrl && shopifyUrlNorm && wfUrl === shopifyUrlNorm;
       const slugMatch = wfSlug && slugNorm && wfSlug === slugNorm;
-
       if (idMatch || urlMatch || slugMatch) {
         webflowLog("info", { event: "match_scan.found", shopifyProductId, webflowItemId: item.id });
         return item;
       }
     }
-
     if (items.length < limit) break;
     offset += limit;
   }
-
   webflowLog("info", { event: "match_scan.not_found", shopifyProductId });
   return null;
 }
@@ -1109,8 +1229,17 @@ async function findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, confi
 /* ======================================================
    FURNITURE SKU — find by product reference (required for PATCH)
 ====================================================== */
+/** Run-scoped index: Furniture SKUs by product ID. Populated at sync start for O(1) lookup. */
+let furnitureSkuIndex = null;
+
 async function findExistingSkuByProductId(skuCollectionId, webflowProductId, token) {
   if (!skuCollectionId || !token || !webflowProductId) return null;
+
+  // Use pre-loaded index when available
+  if (furnitureSkuIndex) {
+    return furnitureSkuIndex.get(String(webflowProductId)) ?? null;
+  }
+
   let offset = 0;
   const limit = 100;
   while (true) {
@@ -1127,9 +1256,7 @@ async function findExistingSkuByProductId(skuCollectionId, webflowProductId, tok
     const items = response.data.items || [];
     for (const item of items) {
       const productRef = item.fieldData?.product;
-      if (productRef && String(productRef) === String(webflowProductId)) {
-        return item;
-      }
+      if (productRef && String(productRef) === String(webflowProductId)) return item;
     }
     if (items.length < limit) break;
     offset += limit;
@@ -1400,7 +1527,7 @@ async function syncSingleProduct(product, cache, options = {}) {
   }
   const categoryForMetafield =
     department === "Furniture & Home"
-      ? getFurnitureCategoryFromType(productType)
+      ? mapFurnitureCategoryForShopify(detectCategoryFurniture(name, description))
       : getLuxuryCategoryFromType(productType, soldNow);
   const shopifyDepartment = department;
   const shopifyCategoryValue = categoryForMetafield;
@@ -1804,6 +1931,16 @@ app.post("/sync-all", async (req, res) => {
 
     await loadFurnitureCategoryMap();
 
+    // Pre-load Webflow indexes once → O(1) lookups instead of N×page API scans per product
+    luxuryItemIndex = null;
+    furnitureProductIndex = null;
+    furnitureSkuIndex = null;
+    await Promise.all([
+      loadLuxuryItemIndex(),
+      loadFurnitureProductIndex(),
+      loadFurnitureSkuIndex(),
+    ]);
+
     let created = 0,
       updated = 0,
       skipped = 0,
@@ -1862,24 +1999,28 @@ app.post("/sync-all", async (req, res) => {
     }
 
     const duplicateEmailSentFor = new Set();
-    for (const product of products) {
-      const result = await syncSingleProduct(product, cache, { duplicateEmailSentFor });
+    const concurrency = Math.min(Math.max(1, parseInt(process.env.SYNC_CONCURRENCY || "5", 10) || 1), 15);
 
-      if (result.duplicateCorrected && result.duplicateLog) {
-        webflowLog("error", {
-          event: "sync-all.duplicate_placement",
-          message: "Item was in multiple places; archived duplicate and re-synced. Throwing so run fails and email was sent.",
-          ...result.duplicateLog,
-        });
-        await sendDuplicatePlacementEmail(result.duplicateLog, duplicateEmailSentFor);
-        const errMsg = `Duplicate placement: "${result.duplicateLog.productTitle}" (Shopify ID ${result.duplicateLog.shopifyProductId}) is archived. We re-synced to Luxury. Please go into the backend and delete the archived item if it still appears.`;
-        throw new Error(errMsg);
+    for (let i = 0; i < products.length; i += concurrency) {
+      const chunk = products.slice(i, i + concurrency);
+      const results = await Promise.all(chunk.map((p) => syncSingleProduct(p, cache, { duplicateEmailSentFor })));
+
+      for (const result of results) {
+        if (result.duplicateCorrected && result.duplicateLog) {
+          webflowLog("error", {
+            event: "sync-all.duplicate_placement",
+            message: "Item was in multiple places; archived duplicate and re-synced. Throwing so run fails and email was sent.",
+            ...result.duplicateLog,
+          });
+          await sendDuplicatePlacementEmail(result.duplicateLog, duplicateEmailSentFor);
+          const errMsg = `Duplicate placement: "${result.duplicateLog.productTitle}" (Shopify ID ${result.duplicateLog.shopifyProductId}) is archived. We re-synced to Luxury. Please go into the backend and delete the archived item if it still appears.`;
+          throw new Error(errMsg);
+        }
+        if (result.operation === "create") created++;
+        else if (result.operation === "update") updated++;
+        else if (result.operation === "sold") sold++;
+        else skipped++;
       }
-
-      if (result.operation === "create") created++;
-      else if (result.operation === "update") updated++;
-      else if (result.operation === "sold") sold++;
-      else skipped++;
     }
 
     saveCache(cache);
@@ -1922,6 +2063,9 @@ app.post("/sync-all", async (req, res) => {
     });
   } finally {
     syncRequestId = null;
+    luxuryItemIndex = null;
+    furnitureProductIndex = null;
+    furnitureSkuIndex = null;
     syncStartTime = null;
   }
 });
