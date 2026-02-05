@@ -1,6 +1,7 @@
 import express from "express";
 import axios from "axios";
 import cors from "cors";
+import crypto from "crypto";
 import dotenv from "dotenv";
 import fs from "fs";
 import nodemailer from "nodemailer";
@@ -83,11 +84,20 @@ async function sendDuplicatePlacementEmail(conflictLog, duplicateEmailSentFor) {
 }
 
 /* ======================================================
-   [WEBFLOW] CENTRALIZED LOGGING — Render stdout, no external deps
+   [WEBFLOW] CENTRALIZED LOGGING — Single-line JSON, timestamp, optional requestId/elapsedMs
 ====================================================== */
-const WEBFLOW_LOG_PREFIX = "[WEBFLOW]";
+let syncRequestId = null;
+let syncStartTime = null;
+
 function webflowLog(level, payload) {
-  const msg = typeof payload === "object" ? `${WEBFLOW_LOG_PREFIX} ${JSON.stringify(payload)}` : `${WEBFLOW_LOG_PREFIX} ${payload}`;
+  const base = {
+    ts: new Date().toISOString(),
+    level,
+    ...(syncRequestId != null && { requestId: syncRequestId }),
+    ...(syncStartTime != null && { elapsedMs: Date.now() - syncStartTime }),
+    ...(typeof payload === "object" && payload !== null ? payload : { message: String(payload) }),
+  };
+  const msg = JSON.stringify(base);
   if (level === "warn") console.warn(msg);
   else if (level === "error") console.error(msg);
   else console.log(msg);
@@ -190,7 +200,7 @@ function saveDuplicatePlacementSentId(id) {
     set.add(String(id));
     fs.writeFileSync(DUPLICATE_EMAIL_SENT_FILE, JSON.stringify([...set], null, 2), "utf8");
   } catch (err) {
-    console.error("⚠️ Failed to save duplicate-placement-sent list:", err.toString());
+    webflowLog("error", { event: "duplicate_placement_sent.save_failed", message: err.message });
   }
 }
 
@@ -201,7 +211,7 @@ function loadCache() {
     const raw = fs.readFileSync(CACHE_FILE, "utf8");
     return JSON.parse(raw);
   } catch (err) {
-    console.error("⚠️ Failed to load cache:", err.toString());
+    webflowLog("error", { event: "cache.load_failed", message: err.message });
     return {};
   }
 }
@@ -211,7 +221,7 @@ function saveCache(cache) {
     ensureDataDir();
     fs.writeFileSync(CACHE_FILE, JSON.stringify(cache, null, 2), "utf8");
   } catch (err) {
-    console.error("⚠️ Failed to save cache:", err.toString());
+    webflowLog("error", { event: "cache.save_failed", message: err.message });
   }
 }
 
@@ -272,7 +282,7 @@ async function getWebflowEcommerceProductById(siteId, productId, token) {
     return { ...product, id: product.id ?? productId, skus };
   } catch (err) {
     if (err.response?.status === 404) return null;
-    console.error("⚠️ getWebflowEcommerceProductById error:", err.message, err.response?.data);
+    webflowLog("error", { event: "getWebflowEcommerceProductById.error", siteId, productId, message: err.message, responseData: err.response?.data });
     return null;
   }
 }
@@ -290,7 +300,7 @@ async function findExistingWebflowEcommerceProduct(shopifyProductId, slug, confi
         headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
       });
     } catch (err) {
-      console.error("❌ Webflow ecommerce list error:", err.response?.data || err.message);
+      webflowLog("error", { event: "ecommerce_list.error", siteId: config.siteId, message: err.message, responseData: err.response?.data });
       return null;
     }
     const raw = response.data.products ?? response.data.items ?? [];
@@ -380,7 +390,6 @@ async function syncFurnitureEcommerceSku(product, webflowProductId, config) {
   const defaultSku = skus[0];
   if (!defaultSku?.id) {
     webflowLog("warn", { event: "syncFurnitureEcommerceSku.skipped", reason: "no_default_sku", webflowProductId, skusCount: skus.length });
-    console.warn("[Furniture] No default SKU found on product", webflowProductId);
     return;
   }
   const price = product.variants?.[0]?.price;
@@ -526,7 +535,7 @@ async function publishToSalesChannels(productId) {
         }
       );
     } catch (err) {
-      console.error("⚠️ Publishing error:", err.response?.data || err.toString());
+      webflowLog("error", { event: "publishing.error", message: err.message, responseData: err.response?.data });
     }
   }
 }
@@ -619,10 +628,29 @@ async function updateShopifyMetafields(productId, { department, category, vertic
   );
 }
 /* ======================================================
-   SHOPIFY — WRITE VENDOR AND PRODUCT TYPE (Type field in admin)
-   productType = assigned category so collection rules and Type display match (e.g. Rugs, Handbags, Art / Mirrors).
+   SHOPIFY — WRITE our logic TO Shopify (vendor, productType, tags)
+   We decide vertical/category; we WRITE that to Shopify so Shopify matches Webflow. Tags = department + category.
 ====================================================== */
-async function updateShopifyVendorAndType(productId, brandValue, productType) {
+const SYNC_DEPARTMENT_TAGS = ["Furniture & Home", "Luxury Goods"];
+const SYNC_CATEGORY_TAGS = [
+  "Living Room", "Dining Room", "Office Den", "Rugs", "Art / Mirrors", "Bedroom", "Accessories", "Outdoor / Patio", "Lighting",
+  "Handbags", "Totes", "Crossbody", "Wallets", "Backpacks", "Luggage", "Scarves", "Belts", "Small Bags", "Other ", "Other",
+  "Recently Sold",
+];
+function mergeProductTagsForSync(existingTags, department, category) {
+  const existing = Array.isArray(existingTags) ? existingTags : (typeof existingTags === "string" ? existingTags.split(",").map((s) => s.trim()).filter(Boolean) : []);
+  const toRemove = new Set([...SYNC_DEPARTMENT_TAGS, ...SYNC_CATEGORY_TAGS].map((t) => t.trim()).filter(Boolean));
+  const kept = existing.filter((t) => !toRemove.has(String(t).trim()));
+  const toAdd = [department, category].filter((v) => v != null && String(v).trim() !== "");
+  const combined = [...kept];
+  for (const tag of toAdd) {
+    const t = String(tag).trim();
+    if (t && !combined.includes(t)) combined.push(t);
+  }
+  return combined;
+}
+
+async function updateShopifyVendorAndType(productId, brandValue, productType, existingTags, department, category) {
   const mutation = `
     mutation UpdateProduct($input: ProductInput!) {
       productUpdate(input: $input) {
@@ -630,6 +658,7 @@ async function updateShopifyVendorAndType(productId, brandValue, productType) {
           id
           vendor
           productType
+          tags
         }
         userErrors {
           field
@@ -645,6 +674,9 @@ async function updateShopifyVendorAndType(productId, brandValue, productType) {
   };
   if (productType != null && String(productType).trim() !== "") {
     input.productType = String(productType).trim();
+  }
+  if (department != null && category != null) {
+    input.tags = mergeProductTagsForSync(existingTags ?? [], department, category);
   }
   const variables = { input };
 
@@ -959,12 +991,7 @@ async function findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, confi
   const shopifyUrlNorm = shopifyUrl ? String(shopifyUrl).trim() : null;
   const slugNorm = slug ? String(slug).trim() : null;
 
-  console.log("\n=======================================");
-  console.log("🔍 START MATCH SCAN FOR SHOPIFY PRODUCT");
-  console.log("shopifyProductId =", shopifyProductId);
-  console.log("shopifyUrl       =", shopifyUrlNorm);
-  console.log("slug             =", slugNorm);
-  console.log("=======================================\n");
+  webflowLog("info", { event: "match_scan.start", shopifyProductId, shopifyUrl: shopifyUrlNorm, slug: slugNorm });
 
   let offset = 0;
   const limit = 100;
@@ -981,17 +1008,12 @@ async function findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, confi
         },
       });
     } catch (err) {
-      console.error(
-        "❌ Webflow scan error (offset",
-        offset,
-        ")",
-        err.response?.data || err.toString()
-      );
+      webflowLog("error", { event: "match_scan.error", shopifyProductId, offset, message: err.message, responseData: err.response?.data });
       return null;
     }
 
     const items = response.data.items || [];
-    console.log(`📄 Scanning Webflow offset ${offset} (${items.length} items)`);
+    webflowLog("info", { event: "match_scan.page", shopifyProductId, offset, itemCount: items.length });
 
     for (const item of items) {
       const fd = item.fieldData || {};
@@ -1006,12 +1028,8 @@ async function findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, confi
       const urlMatch = wfUrl && shopifyUrlNorm && wfUrl === shopifyUrlNorm;
       const slugMatch = wfSlug && slugNorm && wfSlug === slugNorm;
 
-      console.log(
-        `🔎 CHECK: shopifyProductId=${shopifyProductId}, webflowShopifyId=${wfId || "null"}, webflowItemId=${item.id}, idMatch=${idMatch}, urlMatch=${urlMatch}, slugMatch=${slugMatch}`
-      );
-
       if (idMatch || urlMatch || slugMatch) {
-        console.log(`🎯 MATCH FOUND → Webflow itemId=${item.id}`);
+        webflowLog("info", { event: "match_scan.found", shopifyProductId, webflowItemId: item.id });
         return item;
       }
     }
@@ -1020,7 +1038,7 @@ async function findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, confi
     offset += limit;
   }
 
-  console.log("❌ NO MATCH FOUND IN WEBFLOW FOR shopifyProductId =", shopifyProductId);
+  webflowLog("info", { event: "match_scan.not_found", shopifyProductId });
   return null;
 }
 
@@ -1094,7 +1112,7 @@ async function syncFurnitureSku(product, webflowProductId, config) {
   };
 
   if (existingSku) {
-    console.log("✏️ PATCH Furniture SKU:", existingSku.id);
+    webflowLog("info", { event: "furniture_sku.patch", shopifyProductId: product.id, webflowProductId, skuId: existingSku.id });
     const fd = existingSku.fieldData || {};
     await axios.patch(
       `https://api.webflow.com/v2/collections/${config.skuCollectionId}/items/${existingSku.id}`,
@@ -1109,7 +1127,7 @@ async function syncFurnitureSku(product, webflowProductId, config) {
   } else {
     const name = product.title ? `${product.title} - Default` : "Default SKU";
     const slug = product.handle ? `${product.handle}-default-sku` : `sku-${webflowProductId}`;
-    console.log("🆕 CREATE Furniture SKU for product:", webflowProductId);
+    webflowLog("info", { event: "furniture_sku.create", shopifyProductId: product.id, webflowProductId });
     await axios.post(
       `https://api.webflow.com/v2/collections/${config.skuCollectionId}/items`,
       { fieldData: { ...skuFieldData, name, slug } },
@@ -1285,6 +1303,7 @@ async function syncSingleProduct(product, cache, options = {}) {
 
   const config = getWebflowConfig(vertical);
 
+  // Use name + description FROM Shopify to decide; then write our decision back to Shopify and update the correct Webflow collection (Luxury or Furniture).
   const previousQty = cacheEntry?.lastQty ?? null;
   let name = product.title;
   let description = product.body_html;
@@ -1343,41 +1362,43 @@ async function syncSingleProduct(product, cache, options = {}) {
     vertical: detectedVertical,
     dimensionsStatus: vertical === "furniture" ? dimensionsStatus : undefined,
   });
-  await updateShopifyVendorAndType(shopifyProductId, brand, shopifyCategoryValue);
+  await updateShopifyVendorAndType(shopifyProductId, brand, shopifyCategoryValue, getProductTagsArray(product), shopifyDepartment, shopifyCategoryValue);
 
   const currentHash = shopifyHash(product);
 
-  console.log("\n=======================================");
-  console.log("🧾 SYNC PRODUCT");
-  console.log("shopifyProductId          =", shopifyProductId);
-  console.log("vertical                  =", vertical);
-  console.log("cache.webflowId           =", cacheEntry?.webflowId || "null");
-  console.log("previousQty               =", previousQty);
-  console.log("currentQty                =", qty);
-  console.log("department                =", shopifyDepartment);
-  console.log("category                  =", category, "(child:", shopifyCategoryValue + ")");
-  console.log("soldNow                   =", soldNow);
-  console.log("shopifyUrl                =", shopifyUrl);
-  console.log("slug                      =", slug);
-  if (vertical === "furniture") console.log("dimensions_status          =", dimensionsStatus);
-  console.log("=======================================\n");
+  webflowLog("info", {
+    event: "sync_product.entry",
+    shopifyProductId,
+    productTitle: name,
+    vertical,
+    cacheWebflowId: cacheEntry?.webflowId ?? null,
+    previousQty,
+    currentQty,
+    department: shopifyDepartment,
+    category,
+    categoryChild: shopifyCategoryValue,
+    soldNow,
+    shopifyUrl,
+    slug,
+    ...(vertical === "furniture" && { dimensionsStatus }),
+  });
 
   // Find existing: ecommerce API for Furniture (siteId), CMS for Luxury (collectionId)
   let existing = null;
   if (vertical === "furniture" && config.siteId) {
     if (cacheEntry?.webflowId) {
-      console.log("⚡ Trying cache.webflowId (ecommerce) =", cacheEntry.webflowId);
+      webflowLog("info", { event: "sync_product.try_cache", shopifyProductId, cacheWebflowId: cacheEntry.webflowId, target: "ecommerce" });
       existing = await getWebflowEcommerceProductById(config.siteId, cacheEntry.webflowId, config.token);
-      if (!existing) console.log("⚠️ Cached Webflow product not found, falling back to scan.");
+      if (!existing) webflowLog("info", { event: "sync_product.cache_miss", shopifyProductId, reason: "ecommerce_not_found" });
     }
     if (!existing) {
       existing = await findExistingWebflowEcommerceProduct(shopifyProductId, slug, config);
     }
   } else {
     if (cacheEntry?.webflowId) {
-      console.log("⚡ Trying cache.webflowId =", cacheEntry.webflowId);
+      webflowLog("info", { event: "sync_product.try_cache", shopifyProductId, cacheWebflowId: cacheEntry.webflowId, target: "cms" });
       existing = await getWebflowItemById(cacheEntry.webflowId, config);
-      if (!existing) console.log("⚠️ Cached Webflow ID not found, falling back to scan.");
+      if (!existing) webflowLog("info", { event: "sync_product.cache_miss", shopifyProductId, reason: "cms_not_found" });
     }
     if (!existing) {
       existing = await findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, config);
@@ -1385,13 +1406,13 @@ async function syncSingleProduct(product, cache, options = {}) {
   }
 
   if (existing) {
-    console.log("✅ EXISTING WEBFLOW ITEM LINKED:", existing.id);
+    webflowLog("info", { event: "sync_product.linked", shopifyProductId, productTitle: name, webflowId: existing.id });
 
     const newlySold =
       (previousQty === null || previousQty > 0) && qty !== null && qty <= 0;
 
     if (newlySold) {
-      console.log("🟠 Newly sold, marking per vertical in Webflow.");
+      webflowLog("info", { event: "sync_product.newly_sold", shopifyProductId, productTitle: name, webflowId: existing.id, vertical });
       await markAsSold(existing, vertical, config);
       if (vertical === "furniture" && config.siteId) {
         await syncFurnitureEcommerceSku(product, existing.id, config);
@@ -1412,7 +1433,7 @@ async function syncSingleProduct(product, cache, options = {}) {
       JSON.stringify(currentHash) !== JSON.stringify(previousHash);
 
     if (changed) {
-      console.log("✏️ Changes detected, updating Webflow item:", existing.id);
+      webflowLog("info", { event: "sync_product.updating", shopifyProductId, productTitle: name, webflowId: existing.id });
       const fieldData = buildWebflowFieldData({
         vertical,
         name,
@@ -1458,7 +1479,7 @@ async function syncSingleProduct(product, cache, options = {}) {
       return { operation: "update", id: existing.id };
     }
 
-    console.log("⏭️ No changes detected, skipping update for Webflow item:", existing.id);
+    webflowLog("info", { event: "sync_product.skip_no_changes", shopifyProductId, productTitle: name, webflowId: existing.id });
     cache[shopifyProductId] = {
       hash: currentHash,
       webflowId: existing.id,
@@ -1470,9 +1491,7 @@ async function syncSingleProduct(product, cache, options = {}) {
   }
 
   if (!cacheEntry) {
-    console.log("\n" + "=".repeat(60));
-    console.log("🆕 CREATE PATH — NO CACHE + NO MATCH → Creating new Webflow item.");
-    console.log("=".repeat(60));
+    webflowLog("info", { event: "sync_product.create_path", shopifyProductId, productTitle: name, message: "NO CACHE + NO MATCH → Creating new Webflow item" });
 
     // Sweep: if we're creating in Luxury, check if this product wrongly exists in Furniture (e.g. no cache / cache lost). Archive it so it doesn't stay in both places.
     if (detectedVertical === "luxury") {
@@ -1550,9 +1569,7 @@ async function syncSingleProduct(product, cache, options = {}) {
         "main-image": featuredImage ? { url: featuredImage } : null,
         "more-images": (gallery || []).slice(0, 10).map((url) => (url ? { url } : null)).filter(Boolean),
       };
-      console.log("[CREATE] ecommerce: POST /v2/sites/" + createConfig.siteId + "/products");
-      console.log("[CREATE] productFieldData:", JSON.stringify(productFieldData, null, 2));
-      console.log("[CREATE] skuFieldData:", JSON.stringify(skuFieldData, null, 2));
+      webflowLog("info", { event: "create.ecommerce.start", shopifyProductId, productTitle: name, siteId: createConfig.siteId });
       try {
         const createResp = await createWebflowEcommerceProduct(
           createConfig.siteId,
@@ -1562,16 +1579,20 @@ async function syncSingleProduct(product, cache, options = {}) {
         );
         newId = createResp.product?.id;
         if (!newId) throw new Error("No product.id in ecommerce create response");
-        console.log("[CREATE] ✅ CREATED NEW ECOMMERCE PRODUCT id =", newId);
+        webflowLog("info", { event: "create.ecommerce.ok", shopifyProductId, productTitle: name, webflowId: newId });
       } catch (createErr) {
-        console.error("[CREATE] ❌ Ecommerce create failed:", createErr.message);
-        console.error("[CREATE] status =", createErr.response?.status);
-        console.error("[CREATE] body   =", JSON.stringify(createErr.response?.data, null, 2));
+        webflowLog("error", {
+          event: "create.ecommerce.failed",
+          shopifyProductId,
+          productTitle: name,
+          message: createErr.message,
+          status: createErr.response?.status,
+          responseBody: createErr.response?.data,
+        });
         throw createErr;
       }
     } else {
-      console.log("[CREATE] CMS: POST /v2/collections/" + createConfig.collectionId + "/items");
-      console.log("[CREATE] fieldData:", JSON.stringify(productFieldData, null, 2));
+      webflowLog("info", { event: "create.cms.start", shopifyProductId, productTitle: name, collectionId: createConfig.collectionId });
       let resp;
       try {
         resp = await axios.post(
@@ -1585,15 +1606,19 @@ async function syncSingleProduct(product, cache, options = {}) {
           }
         );
       } catch (createErr) {
-        console.error("[CREATE] ❌ POST failed:", createErr.message);
-        console.error("[CREATE] status  =", createErr.response?.status);
-        console.error("[CREATE] body    =", JSON.stringify(createErr.response?.data, null, 2));
+        webflowLog("error", {
+          event: "create.cms.failed",
+          shopifyProductId,
+          productTitle: name,
+          message: createErr.message,
+          status: createErr.response?.status,
+          responseBody: createErr.response?.data,
+        });
         throw createErr;
       }
       newId = resp.data.id;
-      console.log("[CREATE] ✅ CREATED NEW WEBFLOW ITEM id =", newId);
+      webflowLog("info", { event: "create.cms.ok", shopifyProductId, productTitle: name, webflowId: newId });
     }
-    console.log("=".repeat(60) + "\n");
     cache[shopifyProductId] = {
       hash: currentHash,
       webflowId: newId,
@@ -1604,10 +1629,7 @@ async function syncSingleProduct(product, cache, options = {}) {
     return { operation: "create", id: newId };
   }
 
-  webflowLog("info", { event: "path.skipped", reason: "skip-missing-webflow", shopifyProductId, message: "CACHE EXISTS BUT NO WEBFLOW MATCH FOUND → NOT CREATING" });
-  console.log(
-    "🚫 CACHE EXISTS BUT NO WEBFLOW MATCH FOUND → NOT CREATING (skip-missing-webflow)"
-  );
+  webflowLog("info", { event: "path.skipped", reason: "skip-missing-webflow", shopifyProductId, productTitle: name, message: "CACHE EXISTS BUT NO WEBFLOW MATCH FOUND → NOT CREATING" });
   return { operation: "skip-missing-webflow", id: null };
 }
 
@@ -1647,7 +1669,7 @@ function buildWebflowFieldData(opts) {
     const categoryRef = resolveFurnitureCategoryRef(category);
     if (categoryRef == null) {
       const envKey = `FURNITURE_CATEGORY_${category.replace(/\s*\/\s*/g, "_").replace(/\s+/g, "_").toUpperCase().replace(/[^A-Z0-9_]/g, "")}`;
-      console.log("category not assigned (set " + envKey + " to Webflow category item ID for: " + category + ")");
+      webflowLog("warn", { event: "build_field_data.category_unassigned", category, envKey, message: `Set ${envKey} to Webflow category item ID` });
     }
     const out = {
       name,
@@ -1696,9 +1718,12 @@ app.get("/", (req, res) => {
 });
 
 app.post("/sync-all", async (req, res) => {
+  syncRequestId = crypto.randomUUID().slice(0, 8);
+  syncStartTime = Date.now();
   webflowLog("info", { event: "sync-all.entry", message: "sync-all started" });
   try {
     const products = await fetchAllShopifyProducts();
+    webflowLog("info", { event: "sync-all.fetched_shopify", productCount: products?.length ?? 0 });
     const cache = loadCache();
     webflowLog("info", { event: "sync-all.loaded", productCount: products?.length ?? 0, cacheKeys: Object.keys(cache).length });
 
@@ -1714,12 +1739,12 @@ app.post("/sync-all", async (req, res) => {
     const currentIds = products.map((p) => String(p.id));
     const disappeared = previousIds.filter((id) => !currentIds.includes(id));
 
-    console.log("\n=======================================");
-    console.log("🧹 CHECKING DISAPPEARED SHOPIFY PRODUCTS");
-    console.log("previousIds:", previousIds.length);
-    console.log("currentIds :", currentIds.length);
-    console.log("disappeared:", disappeared.length);
-    console.log("=======================================\n");
+    webflowLog("info", {
+      event: "sync-all.disappeared_check",
+      previousIds: previousIds.length,
+      currentIds: currentIds.length,
+      disappeared: disappeared.length,
+    });
 
     for (const goneId of disappeared) {
       const entry = getCacheEntry(cache, goneId);
@@ -1727,9 +1752,12 @@ app.post("/sync-all", async (req, res) => {
       const config = getWebflowConfig(vertical);
       let existing = null;
 
-      console.log(
-        `🕳️ DISAPPEARED: shopifyProductId=${goneId}, cache.webflowId=${entry?.webflowId || "null"}, vertical=${vertical}`
-      );
+      webflowLog("info", {
+        event: "sync-all.disappeared_item",
+        shopifyProductId: goneId,
+        cacheWebflowId: entry?.webflowId ?? null,
+        vertical,
+      });
 
       if (entry?.webflowId) {
         if (vertical === "furniture" && config.siteId) {
@@ -1747,11 +1775,11 @@ app.post("/sync-all", async (req, res) => {
       }
 
       if (existing) {
-        console.log("🟠 Marking disappeared product as SOLD in Webflow:", existing.id, "vertical:", vertical);
+        webflowLog("info", { event: "sync-all.disappeared_mark_sold", shopifyProductId: goneId, webflowId: existing.id, vertical });
         await markAsSold(existing, vertical, config);
         sold++;
       } else {
-        console.log("⚪ No Webflow item found for disappeared product", goneId);
+        webflowLog("info", { event: "sync-all.disappeared_no_webflow", shopifyProductId: goneId });
       }
 
       delete cache[goneId];
@@ -1781,7 +1809,16 @@ app.post("/sync-all", async (req, res) => {
 
     saveCache(cache);
 
-    webflowLog("info", { event: "sync-all.exit", created, updated, skipped, sold, total: products.length });
+    const durationMs = Date.now() - syncStartTime;
+    webflowLog("info", {
+      event: "sync-all.exit",
+      created,
+      updated,
+      skipped,
+      sold,
+      total: products.length,
+      durationMs,
+    });
     res.json({
       status: "ok",
       total: products.length,
@@ -1789,15 +1826,13 @@ app.post("/sync-all", async (req, res) => {
       updated,
       skipped,
       sold,
+      durationMs,
     });
   } catch (err) {
     const status = err.response?.status;
     const body = err.response?.data;
-    console.error("❌ sync-all error:", err.message);
-    if (status) console.error("   status:", status);
-    if (body) console.error("   response:", JSON.stringify(body));
     webflowLog("error", {
-      event: "sync-all.failure",
+      event: "sync-all.error",
       message: err.message,
       status: status ?? null,
       responseBody: body ?? null,
@@ -1810,6 +1845,9 @@ app.post("/sync-all", async (req, res) => {
       ...(detail && detail !== err.message && { detail: String(detail) }),
       ...(body && typeof body === "object" && { webflowResponse: body }),
     });
+  } finally {
+    syncRequestId = null;
+    syncStartTime = null;
   }
 });
 
