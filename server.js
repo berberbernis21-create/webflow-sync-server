@@ -534,14 +534,15 @@ async function publishToSalesChannels(productId) {
 /* ======================================================
    SHOPIFY — WRITE METAFIELDS (department, category, vertical, dimensions_status)
    Department = parent (Furniture & Home | Luxury Goods). Category = child (Living Room, Handbags, etc.).
-   Also writes product_type_group (same as department) and luxury_goods (category when luxury, empty when furniture)
-   so admin displays "Furniture & Home", "Product Type Group", and "Luxury Goods" show correctly.
+   Furniture & Home and Luxury Goods are mutually exclusive: furniture gets furniture_and_home = category, luxury_goods = "";
+   luxury gets furniture_and_home = "", luxury_goods = category. Collection rules use these.
 ====================================================== */
 async function updateShopifyMetafields(productId, { department, category, vertical, dimensionsStatus }) {
   const ownerId = `gid://shopify/Product/${productId}`;
   const dept = department ?? "";
   const cat = category ?? "";
   const vert = vertical ?? "luxury";
+  const isFurniture = dept === "Furniture & Home";
   const metafields = [
     {
       ownerId,
@@ -564,7 +565,6 @@ async function updateShopifyMetafields(productId, { department, category, vertic
       type: "single_line_text_field",
       value: vert,
     },
-    // So "Furniture & Home" / "Product Type Group" in admin show the parent department
     {
       ownerId,
       key: "product_type_group",
@@ -572,13 +572,21 @@ async function updateShopifyMetafields(productId, { department, category, vertic
       type: "single_line_text_field",
       value: dept,
     },
-    // So "Luxury Goods" in admin shows category for luxury items and is empty for furniture
+    // Only for furniture: "Furniture & Home is equal to Rugs/Living Room/..." — empty for luxury
+    {
+      ownerId,
+      key: "furniture_and_home",
+      namespace: "custom",
+      type: "single_line_text_field",
+      value: isFurniture ? cat : "",
+    },
+    // Only for luxury: "Luxury Goods is equal to Handbags/..." — empty for furniture (mutual exclusivity)
     {
       ownerId,
       key: "luxury_goods",
       namespace: "custom",
       type: "single_line_text_field",
-      value: vert === "luxury" ? cat : "",
+      value: isFurniture ? "" : cat,
     },
   ];
   if (dimensionsStatus != null) {
@@ -611,15 +619,38 @@ async function updateShopifyMetafields(productId, { department, category, vertic
   );
 }
 /* ======================================================
-   SHOPIFY — WRITE BRAND INTO VENDOR FIELD
+   SHOPIFY — WRITE VENDOR AND PRODUCT TYPE (Type field in admin)
+   productType = assigned category so collection rules and Type display match (e.g. Rugs, Handbags, Art / Mirrors).
 ====================================================== */
-async function updateShopifyVendor(productId, brandValue) {
+/** Tags we set for department/category — strip before re-adding. Same for Luxury and Furniture. */
+const SYNC_DEPARTMENT_TAGS = ["Furniture & Home", "Luxury Goods"];
+const SYNC_CATEGORY_TAGS = [
+  "Living Room", "Dining Room", "Office Den", "Rugs", "Art / Mirrors", "Bedroom", "Accessories", "Outdoor / Patio", "Lighting",
+  "Handbags", "Totes", "Crossbody", "Wallets", "Backpacks", "Luggage", "Scarves", "Belts", "Small Bags", "Other ", "Other",
+  "Recently Sold",
+];
+function mergeProductTagsForSync(existingTags, department, category) {
+  const existing = Array.isArray(existingTags) ? existingTags : (typeof existingTags === "string" ? existingTags.split(",").map((s) => s.trim()).filter(Boolean) : []);
+  const toRemove = new Set([...SYNC_DEPARTMENT_TAGS, ...SYNC_CATEGORY_TAGS].map((t) => t.trim()).filter(Boolean));
+  const kept = existing.filter((t) => !toRemove.has(String(t).trim()));
+  const toAdd = [department, category].filter((v) => v != null && String(v).trim() !== "");
+  const combined = [...kept];
+  for (const tag of toAdd) {
+    const t = String(tag).trim();
+    if (t && !combined.includes(t)) combined.push(t);
+  }
+  return combined;
+}
+
+async function updateShopifyVendorAndType(productId, brandValue, productType, existingTags, department, category) {
   const mutation = `
-    mutation UpdateProductVendor($input: ProductInput!) {
+    mutation UpdateProduct($input: ProductInput!) {
       productUpdate(input: $input) {
         product {
           id
           vendor
+          productType
+          tags
         }
         userErrors {
           field
@@ -629,12 +660,18 @@ async function updateShopifyVendor(productId, brandValue) {
     }
   `;
 
-  const variables = {
-    input: {
-      id: `gid://shopify/Product/${productId}`,
-      vendor: brandValue || "Unknown",
-    },
+  const input = {
+    id: `gid://shopify/Product/${productId}`,
+    vendor: brandValue || "Unknown",
   };
+  if (productType != null && String(productType).trim() !== "") {
+    input.productType = String(productType).trim();
+  }
+  if (department != null && category != null) {
+    input.tags = mergeProductTagsForSync(existingTags ?? [], department, category);
+  }
+
+  const variables = { input };
 
   await axios.post(
     SHOPIFY_GRAPHQL_URL,
@@ -1161,15 +1198,23 @@ async function syncSingleProduct(product, cache, options = {}) {
   });
 
   // When we correct furniture → luxury, remove the mistaken product from Webflow (archive) and clear cache so we create in luxury.
-  // Then we re-sync to luxury, send a duplicate-placement email, and return a flag so sync-all throws (run fails but item is fixed).
+  // If it's already archived, don't re-archive and don't send duplicate email.
   if (verticalCorrected && cacheEntry?.webflowId && vertical === "luxury") {
     const furnitureConfig = getWebflowConfig("furniture");
+    let alreadyArchived = false;
     if (furnitureConfig?.siteId && furnitureConfig?.token) {
+      const full = await getWebflowEcommerceProductById(furnitureConfig.siteId, cacheEntry.webflowId, furnitureConfig.token);
+      alreadyArchived = full?.isArchived === true;
+      if (alreadyArchived) {
+        webflowLog("info", { event: "vertical.corrected.skipped_already_archived", shopifyProductId, webflowId: cacheEntry.webflowId });
+        saveDuplicatePlacementSentId(shopifyProductId);
+      } else {
         try {
           await deleteOrArchiveWebflowEcommerceProduct(furnitureConfig.siteId, cacheEntry.webflowId, furnitureConfig.token);
-        webflowLog("info", { event: "vertical.corrected.removed", shopifyProductId, webflowId: cacheEntry.webflowId });
-      } catch (err) {
-        webflowLog("error", { event: "vertical.corrected.archive_failed", shopifyProductId, webflowId: cacheEntry.webflowId, message: err.message });
+          webflowLog("info", { event: "vertical.corrected.removed", shopifyProductId, webflowId: cacheEntry.webflowId });
+        } catch (err) {
+          webflowLog("error", { event: "vertical.corrected.archive_failed", shopifyProductId, webflowId: cacheEntry.webflowId, message: err.message });
+        }
       }
     }
     const duplicateLog = {
@@ -1181,7 +1226,7 @@ async function syncSingleProduct(product, cache, options = {}) {
     };
     delete cache[shopifyProductId];
     const result = await syncSingleProduct(product, cache, options);
-    return { ...result, duplicateCorrected: true, duplicateLog };
+    return { ...result, duplicateCorrected: !alreadyArchived, duplicateLog };
   }
 
   // Cleanup: ensure this product exists only in the current vertical. Remove from the other vertical if found.
@@ -1193,30 +1238,37 @@ async function syncSingleProduct(product, cache, options = {}) {
     if (furnitureConfig?.siteId && furnitureConfig?.token) {
       const existingInFurniture = await findExistingWebflowEcommerceProduct(shopifyProductId, slugForCleanup, furnitureConfig);
       if (existingInFurniture) {
-        webflowLog("info", {
-          event: "cleanup.found_in_other_vertical",
-          shopifyProductId,
-          currentVertical: "luxury",
-          otherVertical: "furniture",
-          webflowId: existingInFurniture.id,
-          productTitle: product.title,
-        });
-        try {
-          await deleteOrArchiveWebflowEcommerceProduct(furnitureConfig.siteId, existingInFurniture.id, furnitureConfig.token);
-          webflowLog("info", { event: "cleanup.removed_from_furniture", shopifyProductId, webflowId: existingInFurniture.id });
-          await sendDuplicatePlacementEmail(
-            {
-              productTitle: product.title || "",
-              shopifyProductId,
-              previousVertical: "furniture",
-              detectedVertical: "luxury",
-              webflowIdArchived: existingInFurniture.id,
-              sweep: true,
-            },
-            duplicateEmailSentFor
-          );
-        } catch (err) {
-          webflowLog("error", { event: "cleanup.remove_furniture_failed", shopifyProductId, webflowId: existingInFurniture.id, message: err.message });
+        const full = await getWebflowEcommerceProductById(furnitureConfig.siteId, existingInFurniture.id, furnitureConfig.token);
+        const alreadyArchived = full?.isArchived === true;
+        if (alreadyArchived) {
+          webflowLog("info", { event: "cleanup.skipped_already_archived", shopifyProductId, webflowId: existingInFurniture.id });
+          saveDuplicatePlacementSentId(shopifyProductId);
+        } else {
+          webflowLog("info", {
+            event: "cleanup.found_in_other_vertical",
+            shopifyProductId,
+            currentVertical: "luxury",
+            otherVertical: "furniture",
+            webflowId: existingInFurniture.id,
+            productTitle: product.title,
+          });
+          try {
+            await deleteOrArchiveWebflowEcommerceProduct(furnitureConfig.siteId, existingInFurniture.id, furnitureConfig.token);
+            webflowLog("info", { event: "cleanup.removed_from_furniture", shopifyProductId, webflowId: existingInFurniture.id });
+            await sendDuplicatePlacementEmail(
+              {
+                productTitle: product.title || "",
+                shopifyProductId,
+                previousVertical: "furniture",
+                detectedVertical: "luxury",
+                webflowIdArchived: existingInFurniture.id,
+                sweep: true,
+              },
+              duplicateEmailSentFor
+            );
+          } catch (err) {
+            webflowLog("error", { event: "cleanup.remove_furniture_failed", shopifyProductId, webflowId: existingInFurniture.id, message: err.message });
+          }
         }
       }
     }
@@ -1316,7 +1368,7 @@ async function syncSingleProduct(product, cache, options = {}) {
     vertical: detectedVertical,
     dimensionsStatus: vertical === "furniture" ? dimensionsStatus : undefined,
   });
-  await updateShopifyVendor(shopifyProductId, brand);
+  await updateShopifyVendorAndType(shopifyProductId, brand, shopifyCategoryValue, getProductTagsArray(product), shopifyDepartment, shopifyCategoryValue);
 
   const currentHash = shopifyHash(product);
 
@@ -1453,29 +1505,36 @@ async function syncSingleProduct(product, cache, options = {}) {
       if (furnitureConfig?.siteId && furnitureConfig?.token) {
         const existingInFurniture = await findExistingWebflowEcommerceProduct(shopifyProductId, slug, furnitureConfig);
         if (existingInFurniture) {
-          webflowLog("info", {
-            event: "sweep.found_in_furniture",
-            shopifyProductId,
-            webflowId: existingInFurniture.id,
-            productTitle: name,
-            message: "Archiving from Furniture before creating in Luxury",
-          });
-          try {
-            await deleteOrArchiveWebflowEcommerceProduct(furnitureConfig.siteId, existingInFurniture.id, furnitureConfig.token);
-            webflowLog("info", { event: "sweep.removed_from_furniture", shopifyProductId, webflowId: existingInFurniture.id });
-            await sendDuplicatePlacementEmail(
-              {
-                productTitle: name,
-                shopifyProductId,
-                previousVertical: "furniture",
-                detectedVertical: "luxury",
-                webflowIdArchived: existingInFurniture.id,
-                sweep: true,
-              },
-              duplicateEmailSentFor
-            );
-          } catch (err) {
-            webflowLog("error", { event: "sweep.remove_furniture_failed", shopifyProductId, webflowId: existingInFurniture.id, message: err.message });
+          const full = await getWebflowEcommerceProductById(furnitureConfig.siteId, existingInFurniture.id, furnitureConfig.token);
+          const alreadyArchived = full?.isArchived === true;
+          if (alreadyArchived) {
+            webflowLog("info", { event: "sweep.skipped_already_archived", shopifyProductId, webflowId: existingInFurniture.id });
+            saveDuplicatePlacementSentId(shopifyProductId);
+          } else {
+            webflowLog("info", {
+              event: "sweep.found_in_furniture",
+              shopifyProductId,
+              webflowId: existingInFurniture.id,
+              productTitle: name,
+              message: "Archiving from Furniture before creating in Luxury",
+            });
+            try {
+              await deleteOrArchiveWebflowEcommerceProduct(furnitureConfig.siteId, existingInFurniture.id, furnitureConfig.token);
+              webflowLog("info", { event: "sweep.removed_from_furniture", shopifyProductId, webflowId: existingInFurniture.id });
+              await sendDuplicatePlacementEmail(
+                {
+                  productTitle: name,
+                  shopifyProductId,
+                  previousVertical: "furniture",
+                  detectedVertical: "luxury",
+                  webflowIdArchived: existingInFurniture.id,
+                  sweep: true,
+                },
+                duplicateEmailSentFor
+              );
+            } catch (err) {
+              webflowLog("error", { event: "sweep.remove_furniture_failed", shopifyProductId, webflowId: existingInFurniture.id, message: err.message });
+            }
           }
         }
       }

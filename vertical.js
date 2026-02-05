@@ -112,18 +112,23 @@ export function detectVertical(product) {
   const combined = getCombinedProductText(product);
   const title = (product.title || "").toLowerCase();
 
-  // 0) Known luxury brand in vendor or title → luxury (so Gucci/Hermes etc. never go to furniture)
+  // 0) Strong furniture keyword in name/description (word-boundary) → furniture first (so "McCarty Pottery", "canvas art" never go to luxury)
+  const furnitureCategories = Object.values(CATEGORY_KEYWORDS_FURNITURE).flat();
+  const hasFurnitureKeyword = furnitureCategories.some((kw) => matchWordBoundary(combined, kw));
+  if (hasFurnitureKeyword) return "furniture";
+
+  // 1) Known luxury brand in vendor or title → luxury (so Gucci/Hermes etc. never go to furniture)
   if (detectBrandFromProduct(product.title, product.vendor)) {
     return "luxury";
   }
 
-  // 1) Title clearly indicates bag/accessory → luxury (overrides furniture tags like "art")
+  // 2) Title clearly indicates bag/accessory → luxury (overrides furniture tags like "art")
   if (TITLE_LUXURY_WORDS.some((w) => matchWordBoundary(title, w))) {
     return "luxury";
   }
 
   const tagsStr = getTagsArray(product).join(" ");
-  // 1) Explicit type/tag: furniture wins
+  // 3) Explicit type/tag: furniture wins
   if (textMatchesAny(product.product_type, FURNITURE_SIGNALS) || textMatchesAny(tagsStr, FURNITURE_SIGNALS)) {
     return "furniture";
   }
@@ -131,18 +136,12 @@ export function detectVertical(product) {
     return "luxury";
   }
 
-  // 2) Name + description (and tags/type/vendor in combined): check furniture keywords first (word-boundary so "art" doesn't match "smart")
-  const furnitureCategories = Object.values(CATEGORY_KEYWORDS_FURNITURE).flat();
-  const hasFurnitureKeyword = furnitureCategories.some((kw) => matchWordBoundary(combined, kw));
-
-  if (hasFurnitureKeyword) return "furniture";
-
-  // 3) Luxury categories (word-boundary so "bag" doesn't match inside other words)
+  // 4) Luxury categories (word-boundary so "bag" doesn't match inside other words)
   const luxuryCategories = Object.values(CATEGORY_KEYWORDS).flat();
   const hasLuxuryKeyword = luxuryCategories.some((kw) => matchWordBoundary(combined, kw));
 
   if (hasLuxuryKeyword) return "luxury";
 
-  // 4) Default: luxury (existing behavior)
+  // 5) Default: luxury (existing behavior)
   return "luxury";
 }
