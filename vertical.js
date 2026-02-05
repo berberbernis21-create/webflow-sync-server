@@ -24,6 +24,7 @@ const FURNITURE_SIGNALS = [
   "lighting",
   "mirror",
   "art",
+  "painting",
   "pottery",
   "sofa",
   "chair",
