@@ -417,6 +417,16 @@ async function archiveWebflowEcommerceProduct(siteId, productId, token) {
   });
 }
 
+/** Delete a CMS collection item (e.g. remove from Luxury when product is actually furniture). */
+async function deleteWebflowCollectionItem(collectionId, itemId, token) {
+  if (!collectionId || !itemId || !token) return;
+  const url = `https://api.webflow.com/v2/collections/${collectionId}/items/${itemId}`;
+  webflowLog("info", { event: "delete.cms_item", collectionId, itemId, message: "Removing duplicate from other vertical" });
+  await axios.delete(url, {
+    headers: { Authorization: `Bearer ${token}`, accept: "application/json" },
+  });
+}
+
 /* ======================================================
    SHOPIFY — AUTO PUBLISH TO CHANNELS
 ====================================================== */
@@ -502,11 +512,19 @@ async function publishToSalesChannels(productId) {
 }
 
 /* ======================================================
-   SHOPIFY — WRITE METAFIELDS (category, vertical, dimensions_status)
+   SHOPIFY — WRITE METAFIELDS (department, category, vertical, dimensions_status)
+   Department = parent (Furniture & Home | Luxury Goods). Category = child (Living Room, Handbags, etc.).
 ====================================================== */
-async function updateShopifyMetafields(productId, { category, vertical, dimensionsStatus }) {
+async function updateShopifyMetafields(productId, { department, category, vertical, dimensionsStatus }) {
   const ownerId = `gid://shopify/Product/${productId}`;
   const metafields = [
+    {
+      ownerId,
+      key: "department",
+      namespace: "custom",
+      type: "single_line_text_field",
+      value: department ?? "",
+    },
     {
       ownerId,
       key: "category",
@@ -817,15 +835,18 @@ function hasAnyDimensions(dims) {
   );
 }
 
-/** Format dimensions for description (incl. weight). Furniture & handbags: at start; other luxury: at end. */
+/** Format dimensions for description. Size (W×D×H) on one line; weight on the next line (no × before weight). */
 function formatDimensionsForDescription(dims) {
   if (!dims || !hasAnyDimensions(dims)) return "";
-  const parts = [];
-  if (dims.width != null && !Number.isNaN(dims.width)) parts.push(`Width: ${dims.width}"`);
-  if (dims.length != null && !Number.isNaN(dims.length)) parts.push(`Depth: ${dims.length}"`);
-  if (dims.height != null && !Number.isNaN(dims.height)) parts.push(`Height: ${dims.height}"`);
-  if (dims.weight != null && !Number.isNaN(dims.weight) && dims.weight > 0) parts.push(`Weight: ${dims.weight} lb`);
-  return parts.length ? `Dimensions: ${parts.join(" × ")}.` : "";
+  const sizeParts = [];
+  if (dims.width != null && !Number.isNaN(dims.width)) sizeParts.push(`Width: ${dims.width}"`);
+  if (dims.length != null && !Number.isNaN(dims.length)) sizeParts.push(`Depth: ${dims.length}"`);
+  if (dims.height != null && !Number.isNaN(dims.height)) sizeParts.push(`Height: ${dims.height}"`);
+  const hasWeight = dims.weight != null && !Number.isNaN(dims.weight) && dims.weight > 0;
+  const sizeLine = sizeParts.length ? `Dimensions: ${sizeParts.join(" × ")}.` : "";
+  const weightLine = hasWeight ? `Weight: ${dims.weight} lb.` : "";
+  if (sizeLine && weightLine) return `${sizeLine}\n${weightLine}`;
+  return sizeLine || weightLine || "";
 }
 
 /** Webflow SKU dimension fields must be numbers; omit keys when value is null/NaN. */
@@ -1120,6 +1141,78 @@ async function syncSingleProduct(product, cache, options = {}) {
     return { ...result, duplicateCorrected: true, duplicateLog };
   }
 
+  // Cleanup: ensure this product exists only in the current vertical. Remove from the other vertical if found.
+  const slugForCleanup = product.handle || "";
+  const shopifyUrlForCleanup = `https://${process.env.SHOPIFY_STORE || ""}.myshopify.com/products/${slugForCleanup}`;
+
+  if (vertical === "luxury") {
+    const furnitureConfig = getWebflowConfig("furniture");
+    if (furnitureConfig?.siteId && furnitureConfig?.token) {
+      const existingInFurniture = await findExistingWebflowEcommerceProduct(shopifyProductId, slugForCleanup, furnitureConfig);
+      if (existingInFurniture) {
+        webflowLog("info", {
+          event: "cleanup.found_in_other_vertical",
+          shopifyProductId,
+          currentVertical: "luxury",
+          otherVertical: "furniture",
+          webflowId: existingInFurniture.id,
+          productTitle: product.title,
+        });
+        try {
+          await archiveWebflowEcommerceProduct(furnitureConfig.siteId, existingInFurniture.id, furnitureConfig.token);
+          webflowLog("info", { event: "cleanup.archived_from_furniture", shopifyProductId, webflowId: existingInFurniture.id });
+          await sendDuplicatePlacementEmail(
+            {
+              productTitle: product.title || "",
+              shopifyProductId,
+              previousVertical: "furniture",
+              detectedVertical: "luxury",
+              webflowIdArchived: existingInFurniture.id,
+              sweep: true,
+            },
+            duplicateEmailSentFor
+          );
+        } catch (err) {
+          webflowLog("error", { event: "cleanup.archive_furniture_failed", shopifyProductId, webflowId: existingInFurniture.id, message: err.message });
+        }
+      }
+    }
+  }
+
+  if (vertical === "furniture") {
+    const luxuryConfig = getWebflowConfig("luxury");
+    if (luxuryConfig?.collectionId && luxuryConfig?.token) {
+      const existingInLuxury = await findExistingWebflowItem(shopifyProductId, shopifyUrlForCleanup, slugForCleanup, luxuryConfig);
+      if (existingInLuxury) {
+        webflowLog("info", {
+          event: "cleanup.found_in_other_vertical",
+          shopifyProductId,
+          currentVertical: "furniture",
+          otherVertical: "luxury",
+          webflowId: existingInLuxury.id,
+          productTitle: product.title,
+        });
+        try {
+          await deleteWebflowCollectionItem(luxuryConfig.collectionId, existingInLuxury.id, luxuryConfig.token);
+          webflowLog("info", { event: "cleanup.deleted_from_luxury", shopifyProductId, webflowId: existingInLuxury.id });
+          await sendDuplicatePlacementEmail(
+            {
+              productTitle: product.title || "",
+              shopifyProductId,
+              previousVertical: "luxury",
+              detectedVertical: "furniture",
+              webflowIdArchived: existingInLuxury.id,
+              sweep: true,
+            },
+            duplicateEmailSentFor
+          );
+        } catch (err) {
+          webflowLog("error", { event: "cleanup.delete_luxury_failed", shopifyProductId, webflowId: existingInLuxury.id, message: err.message });
+        }
+      }
+    }
+  }
+
   const config = getWebflowConfig(vertical);
 
   const previousQty = cacheEntry?.lastQty ?? null;
@@ -1172,8 +1265,10 @@ async function syncSingleProduct(product, cache, options = {}) {
     }
   }
 
-  // Write back to Shopify: vertical, category, dimensions_status (furniture), vendor
+  // Write back to Shopify: department (parent), category (child), vertical, dimensions_status (furniture), vendor
+  const shopifyDepartment = vertical === "furniture" ? "Furniture & Home" : "Luxury Goods";
   await updateShopifyMetafields(shopifyProductId, {
+    department: shopifyDepartment,
     category: shopifyCategoryValue,
     vertical: detectedVertical,
     dimensionsStatus: vertical === "furniture" ? dimensionsStatus : undefined,
@@ -1189,7 +1284,8 @@ async function syncSingleProduct(product, cache, options = {}) {
   console.log("cache.webflowId           =", cacheEntry?.webflowId || "null");
   console.log("previousQty               =", previousQty);
   console.log("currentQty                =", qty);
-  console.log("category                  =", category);
+  console.log("department                =", shopifyDepartment);
+  console.log("category                  =", category, "(child:", shopifyCategoryValue + ")");
   console.log("soldNow                   =", soldNow);
   console.log("shopifyUrl                =", shopifyUrl);
   console.log("slug                      =", slug);
