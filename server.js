@@ -176,15 +176,19 @@ async function createWebflowEcommerceProduct(siteId, productFieldData, skuFieldD
   return response.data;
 }
 
-async function updateWebflowEcommerceProduct(siteId, productId, fieldData, token) {
+async function updateWebflowEcommerceProduct(siteId, productId, fieldData, token, existingProduct = null) {
   const url = `https://api.webflow.com/v2/sites/${siteId}/products/${productId}`;
   const data = { ...fieldData };
   if ("category" in data && (typeof data.category !== "string" || !WEBFLOW_ITEM_REF_REGEX.test(data.category))) {
     delete data.category;
   }
-  await axios.patch(url, { product: { fieldData: data } }, {
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-  });
+  const defaultSku = existingProduct?.skus?.[0];
+  const skuFieldData = defaultSku?.fieldData ?? {};
+  await axios.patch(
+    url,
+    { product: { fieldData: data }, sku: { fieldData: skuFieldData } },
+    { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } }
+  );
 }
 
 async function updateWebflowEcommerceSku(siteId, productId, skuId, fieldData, token) {
@@ -917,7 +921,7 @@ async function syncSingleProduct(product, cache) {
         newSlug: slug,
       });
       if (vertical === "furniture" && config.siteId) {
-        await updateWebflowEcommerceProduct(config.siteId, existing.id, fieldData, config.token);
+        await updateWebflowEcommerceProduct(config.siteId, existing.id, fieldData, config.token, existing);
         await syncFurnitureEcommerceSku(product, existing.id, config);
       } else {
         await axios.patch(
