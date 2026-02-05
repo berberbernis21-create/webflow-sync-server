@@ -116,12 +116,19 @@ const TITLE_LUXURY_WORDS = [
  * @param {Object} product - Shopify product (title, vendor, tags, product_type, body_html)
  * @returns {'luxury'|'furniture'}
  */
+/** Simple substring signals: if title or type/tags contain these, always luxury (no regex). */
+const BAG_SUBSTRINGS = [" bag", "bag ", "handbag", " tote", "tote ", " clutch", " wallet", " hobo", "hobo bag", " shoulder bag", " sling bag", "backpack", "satchel", "crossbody", "briefcase"];
+
 export function detectVertical(product) {
   const combined = getCombinedProductText(product);
   const title = (product.title || "").toLowerCase();
   const typeAndTags = [product.product_type || "", getTagsArray(product).join(" ")].join(" ").toLowerCase();
 
-  // 0) Title OR product type/tags clearly indicate bag/accessory → luxury first (bags/shoes never furniture)
+  // 0) Blunt check: title or type/tags contain " bag", handbag, tote, hobo, etc. → luxury (no regex)
+  for (const s of BAG_SUBSTRINGS) {
+    if (title.includes(s) || typeAndTags.includes(s)) return "luxury";
+  }
+  // 0b) Word-boundary check for full list (handbag, tote bag, shoes, etc.)
   if (TITLE_LUXURY_WORDS.some((w) => matchWordBoundary(title, w))) {
     return "luxury";
   }
