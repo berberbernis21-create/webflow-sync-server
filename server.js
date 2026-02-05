@@ -806,6 +806,75 @@ function mapFurnitureCategoryForShopify(category) {
   return FURNITURE_CATEGORY_TO_SHOPIFY[category] ?? "Accessories";
 }
 
+/* ======================================================
+   DEPARTMENT & METAFIELDS FROM TYPE (authoritative)
+   Do NOT invent categorization. Type is correct; derive Department and metafield from Type only.
+   Priority: Department → department-specific metafield → tags. Never populate both metafields.
+====================================================== */
+function normalizeTypeForMatch(s) {
+  if (s == null || typeof s !== "string") return "";
+  return s.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+// Type signals: if Type contains these → Furniture & Home
+const FURNITURE_TYPE_SIGNALS = [
+  "furniture", "table", "tables", "seating", "case goods", "lighting", "decor", "mirrors", "mirror",
+  "rugs", "rug", "home accessories", "living room", "dining room", "office", "bedroom",
+  "art", "painting", "paintings", "outdoor", "patio", "lamps", "lamp",
+];
+
+// Type signals: if Type contains these → Luxury Goods
+const LUXURY_TYPE_SIGNALS = [
+  "handbag", "handbags", "bag", "bags", "wallet", "wallets", "belt", "belts",
+  "scarf", "scarves", "fashion accessories", "wearable", "tote", "totes",
+  "crossbody", "backpack", "backpacks", "luggage", "clutch", "small bag",
+];
+
+/** Returns "Furniture & Home" | "Luxury Goods" | null. null = use fallback (detectVertical). */
+function getDepartmentFromType(productType) {
+  const n = normalizeTypeForMatch(productType);
+  if (!n) return null;
+  for (const s of FURNITURE_TYPE_SIGNALS) {
+    if (n.includes(s)) return "Furniture & Home";
+  }
+  for (const s of LUXURY_TYPE_SIGNALS) {
+    if (n.includes(s)) return "Luxury Goods";
+  }
+  return null;
+}
+
+// Existing taxonomy: Furniture & Home metafield values (exact)
+const FURNITURE_TAXONOMY = ["Living Room", "Dining Room", "Office Den", "Rugs", "Art / Mirrors", "Bedroom", "Accessories", "Outdoor / Patio", "Lighting"];
+// Type → Furniture & Home metafield value (normalized type key → taxonomy value)
+const TYPE_TO_FURNITURE_CATEGORY = {
+  "living room": "Living Room", "dining room": "Dining Room", "office den": "Office Den", "office": "Office Den",
+  "rugs": "Rugs", "rug": "Rugs", "art / mirrors": "Art / Mirrors", "art mirrors": "Art / Mirrors", "art": "Art / Mirrors", "mirrors": "Art / Mirrors", "mirror": "Art / Mirrors", "painting": "Art / Mirrors", "paintings": "Art / Mirrors",
+  "bedroom": "Bedroom", "accessories": "Accessories", "outdoor / patio": "Outdoor / Patio", "outdoor": "Outdoor / Patio", "patio": "Outdoor / Patio",
+  "lighting": "Lighting", "lamps": "Lighting", "lamp": "Lighting", "table": "Living Room", "tables": "Living Room", "seating": "Living Room", "decor": "Accessories", "case goods": "Living Room", "home accessories": "Accessories",
+};
+
+// Existing taxonomy: Luxury Goods metafield values (exact)
+const LUXURY_TAXONOMY = ["Handbags", "Totes", "Crossbody", "Small Bags", "Backpacks", "Wallets", "Luggage", "Scarves", "Belts", "Accessories", "Recently Sold"];
+const TYPE_TO_LUXURY_CATEGORY = {
+  "handbag": "Handbags", "handbags": "Handbags", "tote": "Totes", "totes": "Totes", "crossbody": "Crossbody",
+  "small bag": "Small Bags", "backpack": "Backpacks", "backpacks": "Backpacks", "wallet": "Wallets", "wallets": "Wallets",
+  "luggage": "Luggage", "scarf": "Scarves", "scarves": "Scarves", "belt": "Belts", "belts": "Belts",
+  "clutch": "Small Bags", "bag": "Handbags", "bags": "Handbags", "fashion accessories": "Accessories", "wearable": "Accessories", "accessories": "Accessories",
+};
+
+function getFurnitureCategoryFromType(productType) {
+  const n = normalizeTypeForMatch(productType);
+  if (!n) return "Accessories";
+  return TYPE_TO_FURNITURE_CATEGORY[n] ?? "Accessories";
+}
+
+function getLuxuryCategoryFromType(productType, soldNow) {
+  if (soldNow) return "Recently Sold";
+  const n = normalizeTypeForMatch(productType);
+  if (!n) return "Accessories";
+  return TYPE_TO_LUXURY_CATEGORY[n] ?? "Accessories";
+}
+
 /** In-memory map: display name (and slug) -> Webflow category item ID. Filled by loadFurnitureCategoryMap(). */
 let furnitureCategoryMapCache = null;
 
@@ -1185,17 +1254,24 @@ async function syncSingleProduct(product, cache, options = {}) {
   const cacheEntry = getCacheEntry(cache, shopifyProductId);
   const duplicateEmailSentFor = options.duplicateEmailSentFor ?? null;
 
-  // Vertical detection first (before any Webflow or category logic)
+  // Department/vertical from Type first (authoritative). Fallback to detectVertical when Type empty/unmatched.
+  const productTypeForVertical = (product.product_type ?? "").trim();
+  const departmentFromType = getDepartmentFromType(productTypeForVertical);
   const detectedVertical = detectVertical(product);
-  // Prefer cache, but allow correction: if cache says furniture and we now detect luxury (e.g. backpack), use luxury
-  const vertical =
-    cacheEntry?.vertical === "furniture" && detectedVertical === "luxury"
-      ? "luxury"
-      : (cacheEntry?.vertical ?? detectedVertical);
+  let vertical;
+  if (departmentFromType != null) {
+    vertical = departmentFromType === "Furniture & Home" ? "furniture" : "luxury";
+  } else {
+    vertical =
+      cacheEntry?.vertical === "furniture" && detectedVertical === "luxury"
+        ? "luxury"
+        : (cacheEntry?.vertical ?? detectedVertical);
+  }
   const verticalCorrected = cacheEntry?.vertical === "furniture" && detectedVertical === "luxury";
   webflowLog("info", {
     event: "vertical.resolved",
     shopifyProductId,
+    fromType: departmentFromType != null,
     detectedVertical,
     cacheVertical: cacheEntry?.vertical ?? null,
     vertical,
@@ -1333,18 +1409,19 @@ async function syncSingleProduct(product, cache, options = {}) {
 
   const soldNow = qty !== null && qty <= 0;
 
-  // Category and Shopify value by vertical — ALWAYS from keyword JS (title + description), never from product_type
-  let category;
-  let shopifyCategoryValue;
-  if (vertical === "furniture") {
-    const detFurn = detectCategoryFurniture(name, description);
-    category = mapFurnitureCategoryForShopify(detFurn);
-    shopifyCategoryValue = category;
-  } else {
-    const detLux = detectCategory(name);
-    category = soldNow ? "Recently Sold" : detLux;
-    shopifyCategoryValue = mapCategoryForShopify(detLux);
+  // Department and metafield from Type only (authoritative). Fallback to current vertical when Type empty/unmatched.
+  const productType = (product.product_type ?? "").trim();
+  let department = getDepartmentFromType(productType);
+  if (department == null) {
+    department = vertical === "furniture" ? "Furniture & Home" : "Luxury Goods";
   }
+  const categoryForMetafield =
+    department === "Furniture & Home"
+      ? getFurnitureCategoryFromType(productType)
+      : getLuxuryCategoryFromType(productType, soldNow);
+  const shopifyDepartment = department;
+  const shopifyCategoryValue = categoryForMetafield;
+  const category = shopifyCategoryValue;
 
   const showOnWebflow = vertical === "luxury" ? !soldNow : true;
   const shopifyUrl = `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${slug}`;
@@ -1366,12 +1443,11 @@ async function syncSingleProduct(product, cache, options = {}) {
     }
   }
 
-  // Write back to Shopify: department (parent), category (child), vertical, dimensions_status (furniture), vendor
-  const shopifyDepartment = vertical === "furniture" ? "Furniture & Home" : "Luxury Goods";
+  // Write metafields: Department + one department-specific metafield only (never both). Type is not overwritten.
   await updateShopifyMetafields(shopifyProductId, {
     department: shopifyDepartment,
     category: shopifyCategoryValue,
-    vertical: detectedVertical,
+    vertical: department === "Furniture & Home" ? "furniture" : "luxury",
     dimensionsStatus: vertical === "furniture" ? dimensionsStatus : undefined,
   });
   await updateShopifyVendorAndType(shopifyProductId, brand, shopifyCategoryValue, getProductTagsArray(product), shopifyDepartment, shopifyCategoryValue);
