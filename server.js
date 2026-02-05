@@ -578,7 +578,11 @@ async function publishToSalesChannels(productId) {
    Department = parent (Furniture & Home | Luxury Goods). Category = child (Living Room, Handbags, etc.).
    Furniture & Home and Luxury Goods are mutually exclusive: furniture gets furniture_and_home = category, luxury_goods = "";
    luxury gets furniture_and_home = "", luxury_goods = category. Collection rules use these.
+   Override Furniture & Home metafield: FURNITURE_AND_HOME_METAFIELD_NAMESPACE, FURNITURE_AND_HOME_METAFIELD_KEY
 ====================================================== */
+const FURNITURE_AND_HOME_NAMESPACE = (process.env.FURNITURE_AND_HOME_METAFIELD_NAMESPACE || "custom").trim() || "custom";
+const FURNITURE_AND_HOME_KEY = (process.env.FURNITURE_AND_HOME_METAFIELD_KEY || "furniture_category").trim() || "furniture_category";
+
 async function updateShopifyMetafields(productId, { department, category, vertical, dimensionsStatus }) {
   const ownerId = `gid://shopify/Product/${productId}`;
   const dept = department ?? "";
@@ -591,8 +595,8 @@ async function updateShopifyMetafields(productId, { department, category, vertic
     ...(!isFurniture ? [{ ownerId, key: "category", namespace: "custom", type: "single_line_text_field", value: cat || "Other " }] : []),
     { ownerId, key: "vertical", namespace: "custom", type: "single_line_text_field", value: vert },
     { ownerId, key: "product_type_group", namespace: "custom", type: "single_line_text_field", value: dept },
-    // furniture_and_home: Living Room, Accessories, Art / Mirrors, etc. (Furniture & Home dropdown)
-    ...(isFurniture ? [{ ownerId, key: "furniture_and_home", namespace: "custom", type: "single_line_text_field", value: cat || "Accessories" }] : []),
+    // Furniture & Home: Living Room, Bedroom, Accessories, etc. (use env vars if your store's definition differs)
+    ...(isFurniture ? [{ ownerId, key: FURNITURE_AND_HOME_KEY, namespace: FURNITURE_AND_HOME_NAMESPACE, type: "single_line_text_field", value: cat || "Accessories" }] : []),
     // luxury_goods: Handbags, Other , etc. (Luxury Goods dropdown)
     ...(!isFurniture ? [{ ownerId, key: "luxury_goods", namespace: "custom", type: "single_line_text_field", value: cat || "Other " }] : []),
   ].filter((m) => m.value != null && String(m.value).trim() !== "");
@@ -627,7 +631,13 @@ async function updateShopifyMetafields(productId, { department, category, vertic
   const errors = res.data?.data?.metafieldsSet?.userErrors ?? [];
   if (errors.length > 0) {
     const msg = errors.map((e) => `${e.field}: ${e.message}`).join("; ");
-    webflowLog("error", { event: "metafields_set.user_errors", productId, userErrors: errors });
+    webflowLog("error", {
+      event: "metafields_set.user_errors",
+      productId,
+      userErrors: errors,
+      furnitureMetafield: isFurniture ? { namespace: FURNITURE_AND_HOME_NAMESPACE, key: FURNITURE_AND_HOME_KEY, value: cat || "Accessories" } : null,
+      hint: "If Furniture & Home fails: check Shopify Settings → Custom data → Products for the metafield's exact namespace and key, then set FURNITURE_AND_HOME_METAFIELD_NAMESPACE and FURNITURE_AND_HOME_METAFIELD_KEY.",
+    });
     throw new Error(`Shopify metafieldsSet failed: ${msg}`);
   }
 }
