@@ -560,7 +560,7 @@ async function updateShopifyMetafields(productId, { department, category, vertic
     // furniture_and_home: always for furniture (fallback: Accessories)
     ...(isFurniture ? [{ ownerId, key: "furniture_and_home", namespace: "custom", type: "single_line_text_field", value: cat || "Accessories" }] : []),
     // luxury_goods: always for luxury (fallback: Other)
-    ...(!isFurniture ? [{ ownerId, key: "luxury_goods", namespace: "custom", type: "single_line_text_field", value: cat || "Other" }] : []),
+    ...(!isFurniture ? [{ ownerId, key: "luxury_goods", namespace: "custom", type: "single_line_text_field", value: cat || "Other " }] : []),
   ].filter((m) => m.value != null && String(m.value).trim() !== "");
   if (dimensionsStatus != null && String(dimensionsStatus).trim() !== "") {
     metafields.push({
@@ -690,14 +690,14 @@ function shopifyHash(product) {
    CATEGORY DETECTOR
 ====================================================== */
 function detectCategory(title) {
-  if (!title) return "Other";
+  if (!title) return "Other ";
   const normalized = title.toLowerCase();
   for (const [category, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
     for (const kw of keywords) {
       if (normalized.includes(kw.toLowerCase())) return category;
     }
   }
-  return "Other";
+  return "Other ";
 }
 
 /* ======================================================
@@ -818,7 +818,7 @@ const TYPE_TO_FURNITURE_CATEGORY = {
 };
 
 // Existing taxonomy: Luxury Goods metafield values (exact)
-const LUXURY_TAXONOMY = ["Handbags", "Totes", "Crossbody", "Small Bags", "Backpacks", "Wallets", "Luggage", "Scarves", "Belts", "Accessories", "Other", "Recently Sold"];
+const LUXURY_TAXONOMY = ["Handbags", "Totes", "Crossbody", "Small Bags", "Backpacks", "Wallets", "Luggage", "Scarves", "Belts", "Accessories", "Other ", "Recently Sold"];
 const TYPE_TO_LUXURY_CATEGORY = {
   "handbag": "Handbags", "handbags": "Handbags", "tote": "Totes", "totes": "Totes", "crossbody": "Crossbody",
   "small bag": "Small Bags", "backpack": "Backpacks", "backpacks": "Backpacks", "wallet": "Wallets", "wallets": "Wallets",
@@ -835,8 +835,8 @@ function getFurnitureCategoryFromType(productType) {
 function getLuxuryCategoryFromType(productType, soldNow) {
   if (soldNow) return "Recently Sold";
   const n = normalizeTypeForMatch(productType);
-  if (!n) return "Other";
-  return TYPE_TO_LUXURY_CATEGORY[n] ?? "Other";
+  if (!n) return "Other ";
+  return TYPE_TO_LUXURY_CATEGORY[n] ?? "Other ";
 }
 
 /** In-memory map: display name (and slug) -> Webflow category item ID. Filled by loadFurnitureCategoryMap(). */
@@ -1407,14 +1407,16 @@ async function syncSingleProduct(product, cache, options = {}) {
     }
   }
 
-  // Write metafields: Department + one department-specific metafield only (never both). Type is not overwritten.
-  await updateShopifyMetafields(shopifyProductId, {
-    department: shopifyDepartment,
-    category: shopifyCategoryValue,
-    vertical: department === "Furniture & Home" ? "furniture" : "luxury",
-    dimensionsStatus: vertical === "furniture" ? dimensionsStatus : undefined,
-  });
-  await updateShopifyVendorAndType(shopifyProductId, brand, shopifyCategoryValue, getProductTagsArray(product), shopifyDepartment, shopifyCategoryValue);
+  // Write metafields + vendor/type/tags to Shopify. Skip when category is "Recently Sold" — leave existing values as is.
+  if (shopifyCategoryValue !== "Recently Sold") {
+    await updateShopifyMetafields(shopifyProductId, {
+      department: shopifyDepartment,
+      category: shopifyCategoryValue,
+      vertical: department === "Furniture & Home" ? "furniture" : "luxury",
+      dimensionsStatus: vertical === "furniture" ? dimensionsStatus : undefined,
+    });
+    await updateShopifyVendorAndType(shopifyProductId, brand, shopifyCategoryValue, getProductTagsArray(product), shopifyDepartment, shopifyCategoryValue);
+  }
 
   const currentHash = shopifyHash(product);
 
