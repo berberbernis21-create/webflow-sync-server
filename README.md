@@ -32,6 +32,8 @@ Webflow ecommerce expects `category` to be an ItemRef (the 24-character hex ID o
 
 Example: `FURNITURE_CATEGORY_LIVING_ROOM=507f1f77bcf86cd799439011` (use the real ID from Webflow). If a variable is missing, that category is not sent and the product will show no category in Webflow.
 
+**Automatic category lookup:** The script now loads category IDs from Webflow at the start of each sync: it fetches your site's Collections, finds the **Categories** collection, and builds a map from category name to item ID. So if your Webflow Categories have items named exactly **Living Room**, **Dining Room**, **Office Den**, **Rugs**, **Art / Mirrors**, **Bedroom**, **Accessories**, **Outdoor / Patio**, and **Lighting**, you don't need to set any of the env vars above—categories will be assigned automatically. Env vars are only a fallback if the API fails or a name doesn't match.
+
 ## Behavior
 
 - **Vertical detection:** Product title, description (body), vendor, tags, product type → `luxury` or `furniture` (keyword/fuzzy matching so e.g. "silk scarf" in the description can classify as luxury).

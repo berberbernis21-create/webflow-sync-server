@@ -689,9 +689,65 @@ function mapFurnitureCategoryForShopify(category) {
   return FURNITURE_CATEGORY_TO_SHOPIFY[category] ?? "Accessories";
 }
 
-/** Ecommerce category must be an ItemRef (Webflow collection item ID). Return ID only if configured via env and looks like an ID. */
+/** In-memory map: display name (and slug) -> Webflow category item ID. Filled by loadFurnitureCategoryMap(). */
+let furnitureCategoryMapCache = null;
+
+/** Fetch Categories collection from Webflow and build name/slug -> item ID map so we don't need env vars. */
+async function loadFurnitureCategoryMap() {
+  if (furnitureCategoryMapCache) return furnitureCategoryMapCache;
+  const siteId = process.env.RESALE_WEBFLOW_SITE_ID;
+  const token = process.env.RESALE_TOKEN;
+  if (!siteId || !token) {
+    webflowLog("info", { event: "furniture_categories.skip", reason: "missing RESALE_WEBFLOW_SITE_ID or RESALE_TOKEN" });
+    return {};
+  }
+  try {
+    const collResp = await axios.get(`https://api.webflow.com/v2/sites/${siteId}/collections`, {
+      headers: { Authorization: `Bearer ${token}`, accept: "application/json" },
+    });
+    const collections = collResp.data?.collections ?? [];
+    const categoriesColl = collections.find(
+      (c) => (c.displayName && c.displayName.toLowerCase() === "categories") || (c.slug && c.slug.toLowerCase() === "category")
+    );
+    if (!categoriesColl?.id) {
+      webflowLog("info", { event: "furniture_categories.skip", reason: "no Categories collection found" });
+      return {};
+    }
+    const map = {};
+    let offset = 0;
+    const limit = 100;
+    while (true) {
+      const itemsResp = await axios.get(
+        `https://api.webflow.com/v2/collections/${categoriesColl.id}/items`,
+        { params: { limit, offset }, headers: { Authorization: `Bearer ${token}`, accept: "application/json" } }
+      );
+      const items = itemsResp.data?.items ?? [];
+      for (const item of items) {
+        const id = item.id;
+        if (!id || !/^[a-f0-9]{24}$/i.test(id)) continue;
+        const name = item.fieldData?.name ?? item.name;
+        if (name && typeof name === "string") map[name.trim()] = id;
+        const slug = item.fieldData?.slug ?? item.slug;
+        if (slug && typeof slug === "string") map[slug.trim()] = id;
+      }
+      if (items.length < limit) break;
+      offset += limit;
+    }
+    furnitureCategoryMapCache = map;
+    webflowLog("info", { event: "furniture_categories.loaded", count: Object.keys(map).length });
+    return map;
+  } catch (err) {
+    webflowLog("warn", { event: "furniture_categories.load_failed", message: err.message });
+    return {};
+  }
+}
+
+/** Ecommerce category must be an ItemRef (Webflow collection item ID). Uses Webflow Categories if loaded; else env vars. */
 function resolveFurnitureCategoryRef(displayCategory) {
   if (!displayCategory || typeof displayCategory !== "string") return null;
+  if (furnitureCategoryMapCache && furnitureCategoryMapCache[displayCategory]) {
+    return furnitureCategoryMapCache[displayCategory];
+  }
   const key = displayCategory.replace(/\s*\/\s*/g, "_").replace(/\s+/g, "_").toUpperCase().replace(/[^A-Z0-9_]/g, "");
   const envKey = `FURNITURE_CATEGORY_${key}`;
   const id = process.env[envKey];
@@ -1472,6 +1528,8 @@ app.post("/sync-all", async (req, res) => {
     const products = await fetchAllShopifyProducts();
     const cache = loadCache();
     webflowLog("info", { event: "sync-all.loaded", productCount: products?.length ?? 0, cacheKeys: Object.keys(cache).length });
+
+    await loadFurnitureCategoryMap();
 
     let created = 0,
       updated = 0,
