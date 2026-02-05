@@ -553,52 +553,16 @@ async function updateShopifyMetafields(productId, { department, category, vertic
   const vert = vertical ?? "luxury";
   const isFurniture = dept === "Furniture & Home";
   const metafields = [
-    {
-      ownerId,
-      key: "department",
-      namespace: "custom",
-      type: "single_line_text_field",
-      value: dept,
-    },
-    {
-      ownerId,
-      key: "category",
-      namespace: "custom",
-      type: "single_line_text_field",
-      value: cat,
-    },
-    {
-      ownerId,
-      key: "vertical",
-      namespace: "custom",
-      type: "single_line_text_field",
-      value: vert,
-    },
-    {
-      ownerId,
-      key: "product_type_group",
-      namespace: "custom",
-      type: "single_line_text_field",
-      value: dept,
-    },
-    // Only for furniture: "Furniture & Home is equal to Rugs/Living Room/..." — empty for luxury
-    {
-      ownerId,
-      key: "furniture_and_home",
-      namespace: "custom",
-      type: "single_line_text_field",
-      value: isFurniture ? cat : "",
-    },
-    // Only for luxury: "Luxury Goods is equal to Handbags/..." — empty for furniture (mutual exclusivity)
-    {
-      ownerId,
-      key: "luxury_goods",
-      namespace: "custom",
-      type: "single_line_text_field",
-      value: isFurniture ? "" : cat,
-    },
-  ];
-  if (dimensionsStatus != null) {
+    { ownerId, key: "department", namespace: "custom", type: "single_line_text_field", value: dept },
+    { ownerId, key: "category", namespace: "custom", type: "single_line_text_field", value: cat },
+    { ownerId, key: "vertical", namespace: "custom", type: "single_line_text_field", value: vert },
+    { ownerId, key: "product_type_group", namespace: "custom", type: "single_line_text_field", value: dept },
+    // furniture_and_home: always for furniture (fallback: Accessories)
+    ...(isFurniture ? [{ ownerId, key: "furniture_and_home", namespace: "custom", type: "single_line_text_field", value: cat || "Accessories" }] : []),
+    // luxury_goods: always for luxury (fallback: Other)
+    ...(!isFurniture ? [{ ownerId, key: "luxury_goods", namespace: "custom", type: "single_line_text_field", value: cat || "Other" }] : []),
+  ].filter((m) => m.value != null && String(m.value).trim() !== "");
+  if (dimensionsStatus != null && String(dimensionsStatus).trim() !== "") {
     metafields.push({
       ownerId,
       key: "dimensions_status",
@@ -854,7 +818,7 @@ const TYPE_TO_FURNITURE_CATEGORY = {
 };
 
 // Existing taxonomy: Luxury Goods metafield values (exact)
-const LUXURY_TAXONOMY = ["Handbags", "Totes", "Crossbody", "Small Bags", "Backpacks", "Wallets", "Luggage", "Scarves", "Belts", "Accessories", "Recently Sold"];
+const LUXURY_TAXONOMY = ["Handbags", "Totes", "Crossbody", "Small Bags", "Backpacks", "Wallets", "Luggage", "Scarves", "Belts", "Accessories", "Other", "Recently Sold"];
 const TYPE_TO_LUXURY_CATEGORY = {
   "handbag": "Handbags", "handbags": "Handbags", "tote": "Totes", "totes": "Totes", "crossbody": "Crossbody",
   "small bag": "Small Bags", "backpack": "Backpacks", "backpacks": "Backpacks", "wallet": "Wallets", "wallets": "Wallets",
@@ -871,8 +835,8 @@ function getFurnitureCategoryFromType(productType) {
 function getLuxuryCategoryFromType(productType, soldNow) {
   if (soldNow) return "Recently Sold";
   const n = normalizeTypeForMatch(productType);
-  if (!n) return "Accessories";
-  return TYPE_TO_LUXURY_CATEGORY[n] ?? "Accessories";
+  if (!n) return "Other";
+  return TYPE_TO_LUXURY_CATEGORY[n] ?? "Other";
 }
 
 /** In-memory map: display name (and slug) -> Webflow category item ID. Filled by loadFurnitureCategoryMap(). */
