@@ -182,7 +182,7 @@ async function updateWebflowEcommerceProduct(siteId, productId, fieldData, token
   if ("category" in data && (typeof data.category !== "string" || !WEBFLOW_ITEM_REF_REGEX.test(data.category))) {
     delete data.category;
   }
-  await axios.patch(url, { fieldData: data }, {
+  await axios.patch(url, { product: { fieldData: data } }, {
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
   });
 }
