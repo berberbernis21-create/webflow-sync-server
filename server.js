@@ -157,10 +157,16 @@ async function findExistingWebflowEcommerceProduct(shopifyProductId, slug, confi
   return null;
 }
 
+const WEBFLOW_ITEM_REF_REGEX = /^[a-f0-9]{24}$/i;
+
 async function createWebflowEcommerceProduct(siteId, productFieldData, skuFieldData, token) {
   const url = `https://api.webflow.com/v2/sites/${siteId}/products`;
+  const productData = { ...productFieldData };
+  if ("category" in productData && (typeof productData.category !== "string" || !WEBFLOW_ITEM_REF_REGEX.test(productData.category))) {
+    delete productData.category;
+  }
   const payload = {
-    product: { fieldData: productFieldData },
+    product: { fieldData: productData },
     sku: { fieldData: skuFieldData },
     publishStatus: "staging",
   };
@@ -172,7 +178,11 @@ async function createWebflowEcommerceProduct(siteId, productFieldData, skuFieldD
 
 async function updateWebflowEcommerceProduct(siteId, productId, fieldData, token) {
   const url = `https://api.webflow.com/v2/sites/${siteId}/products/${productId}`;
-  await axios.patch(url, { fieldData }, {
+  const data = { ...fieldData };
+  if ("category" in data && (typeof data.category !== "string" || !WEBFLOW_ITEM_REF_REGEX.test(data.category))) {
+    delete data.category;
+  }
+  await axios.patch(url, { fieldData: data }, {
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
   });
 }
@@ -1071,14 +1081,12 @@ function buildWebflowFieldData(opts) {
   const slug = existingSlug ?? newSlug ?? "";
 
   if (vertical === "furniture") {
-    // Ecommerce product category must be an ItemRef (collection item ID), not a display string.
-    // Optional: map category name → ID via env (e.g. FURNITURE_CATEGORY_ART_MIRRORS=id) and set category when present.
+    // Ecommerce product category must be an ItemRef (collection item ID), never a display string.
     const categoryRef = resolveFurnitureCategoryRef(category);
-    return {
+    const out = {
       name,
       slug,
       description: description ?? "",
-      ...(categoryRef != null && { category: categoryRef }),
       sold: !!soldNow,
       "shopify-product-id": shopifyProductId,
       "shopify-slug-2": shopifySlug ?? newSlug ?? "",
@@ -1086,6 +1094,8 @@ function buildWebflowFieldData(opts) {
       "ec-product-type": productType ?? null,
       shippable: true,
     };
+    if (categoryRef != null) out.category = categoryRef;
+    return out;
   }
 
   const base = {
