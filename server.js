@@ -143,15 +143,17 @@ async function findExistingWebflowEcommerceProduct(shopifyProductId, slug, confi
       return null;
     }
     const raw = response.data.products ?? response.data.items ?? [];
-    const products = Array.isArray(raw) ? raw.map((i) => i.product || i) : [];
-    for (const item of products) {
-      const fd = item.fieldData || {};
+    const listItems = Array.isArray(raw) ? raw : [];
+    for (const listItem of listItems) {
+      const product = listItem.product ?? listItem;
+      const skus = listItem.skus ?? product.skus ?? [];
+      const fd = product.fieldData || {};
       const wfId = fd["shopify-product-id"] ? String(fd["shopify-product-id"]) : null;
       const wfSlug = (fd["slug"] || fd["shopify-slug-2"]) ? String(fd.slug || fd["shopify-slug-2"]).trim() : null;
-      if (wfId && String(wfId) === String(shopifyProductId)) return item;
-      if (slugNorm && wfSlug && wfSlug === slugNorm) return item;
+      if (wfId && String(wfId) === String(shopifyProductId)) return { ...product, skus };
+      if (slugNorm && wfSlug && wfSlug === slugNorm) return { ...product, skus };
     }
-    if (products.length < limit) break;
+    if (listItems.length < limit) break;
     offset += limit;
   }
   return null;
@@ -182,13 +184,18 @@ async function updateWebflowEcommerceProduct(siteId, productId, fieldData, token
   if ("category" in data && (typeof data.category !== "string" || !WEBFLOW_ITEM_REF_REGEX.test(data.category))) {
     delete data.category;
   }
-  const defaultSku = existingProduct?.skus?.[0];
-  const skuFieldData = defaultSku?.fieldData ?? {};
-  await axios.patch(
-    url,
-    { product: { fieldData: data }, sku: { fieldData: skuFieldData } },
-    { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } }
-  );
+  let skuFieldData = existingProduct?.skus?.[0]?.fieldData;
+  if (skuFieldData == null || typeof skuFieldData !== "object") {
+    const full = await getWebflowEcommerceProductById(siteId, productId, token);
+    skuFieldData = full?.skus?.[0]?.fieldData ?? {};
+  }
+  const body = {
+    product: { fieldData: data },
+    sku: { fieldData: skuFieldData },
+  };
+  await axios.patch(url, body, {
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+  });
 }
 
 async function updateWebflowEcommerceSku(siteId, productId, skuId, fieldData, token) {
