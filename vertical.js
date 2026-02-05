@@ -23,6 +23,7 @@ const FURNITURE_SIGNALS = [
   "lighting",
   "mirror",
   "art",
+  "pottery",
   "sofa",
   "chair",
   "table",
@@ -60,6 +61,18 @@ function textMatchesAny(text, list) {
   return list.some((signal) => n.includes(normalize(signal)));
 }
 
+/** Match keyword as whole word so "art" doesn't match "smart", "desk" doesn't match "desktop". */
+function matchWordBoundary(text, keyword) {
+  const k = keyword.trim().toLowerCase();
+  if (!k) return false;
+  const escaped = k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  try {
+    return new RegExp("\\b" + escaped + "\\b", "i").test(text);
+  } catch {
+    return text.includes(k);
+  }
+}
+
 function getTagsArray(product) {
   const t = product.tags;
   if (Array.isArray(t)) return t;
@@ -78,6 +91,9 @@ function getCombinedProductText(product) {
   return parts.join(" ").toLowerCase();
 }
 
+/** Strong bag/accessory words in title → luxury even if tags say furniture. */
+const TITLE_LUXURY_WORDS = ["backpack", "backpacks", "handbag", "handbags", "clutch", "tote", "totes", "crossbody", "wallet", "wallets", "luggage", "satchel", "briefcase", "messenger bag", "shoulder bag"];
+
 /**
  * Detect vertical from Shopify product.
  * @param {Object} product - Shopify product (title, vendor, tags, product_type)
@@ -85,7 +101,12 @@ function getCombinedProductText(product) {
  */
 export function detectVertical(product) {
   const combined = getCombinedProductText(product);
-  const title = product.title || "";
+  const title = (product.title || "").toLowerCase();
+
+  // 0) Title clearly indicates bag/accessory → luxury (overrides furniture tags like "art")
+  if (TITLE_LUXURY_WORDS.some((w) => matchWordBoundary(title, w))) {
+    return "luxury";
+  }
 
   const tagsStr = getTagsArray(product).join(" ");
   // 1) Explicit type/tag: furniture wins
@@ -96,15 +117,15 @@ export function detectVertical(product) {
     return "luxury";
   }
 
-  // 2) Title/keyword: check furniture categories first
+  // 2) Title/keyword: check furniture categories first (word-boundary so "art" doesn't match "smart")
   const furnitureCategories = Object.values(CATEGORY_KEYWORDS_FURNITURE).flat();
-  const hasFurnitureKeyword = furnitureCategories.some((kw) => combined.includes(normalize(kw)));
+  const hasFurnitureKeyword = furnitureCategories.some((kw) => matchWordBoundary(combined, kw));
 
   if (hasFurnitureKeyword) return "furniture";
 
-  // 3) Luxury categories
+  // 3) Luxury categories (word-boundary so "bag" doesn't match inside other words)
   const luxuryCategories = Object.values(CATEGORY_KEYWORDS).flat();
-  const hasLuxuryKeyword = luxuryCategories.some((kw) => combined.includes(normalize(kw)));
+  const hasLuxuryKeyword = luxuryCategories.some((kw) => matchWordBoundary(combined, kw));
 
   if (hasLuxuryKeyword) return "luxury";
 

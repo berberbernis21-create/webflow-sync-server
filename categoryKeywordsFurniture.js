@@ -10,7 +10,7 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
     "sofa", "sofas", "loveseat", "loveseats", "sectional", "sectionals",
     "couch", "couches", "armchair", "armchairs", "accent chair",
     "slipper chair", "chaise", "chaises", "recliner", "recliners",
-    "coffee table", "coffee tables", "side table", "side tables",
+    "table", "tables", "coffee table", "coffee tables", "side table", "side tables",
     "end table", "end tables", "console table", "console tables",
     "media console", "media consoles", "tv stand", "tv stands",
     "bookshelf", "bookshelves", "bookcase", "bookcases",
@@ -50,7 +50,7 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
 
   ArtMirrors: [
     "wall art", "canvas painting", "canvas print", "stretched canvas", "painting", "paintings", "framed art", "art print", "art prints",
-    "mirror", "mirrors", "wall mirror", "wall mirrors", "vanity mirror",
+    "pottery", "potteries", "mirror", "mirrors", "wall mirror", "wall mirrors", "vanity mirror",
     "pier mirror", "convex mirror", "sunburst mirror", "gilt mirror",
     "floor mirror", "full length mirror", "cheval mirror", "trumeau",
     "poster", "lithograph", "etching", "wall art", "gallery wall"

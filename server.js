@@ -303,6 +303,24 @@ async function syncFurnitureEcommerceSku(product, webflowProductId, config) {
   webflowLog("info", { event: "syncFurnitureEcommerceSku.exit", webflowProductId, skuId: defaultSku.id });
 }
 
+/** Archive an ecommerce product (soft-delete) so it no longer appears in the furniture store. */
+async function archiveWebflowEcommerceProduct(siteId, productId, token) {
+  if (!siteId || !productId || !token) return;
+  const full = await getWebflowEcommerceProductById(siteId, productId, token);
+  if (!full) return;
+  const productFieldData = full.fieldData || {};
+  const skuFieldData = full?.skus?.[0]?.fieldData ?? {};
+  const url = `https://api.webflow.com/v2/sites/${siteId}/products/${productId}`;
+  const body = {
+    product: { fieldData: productFieldData, isArchived: true },
+    sku: { fieldData: skuFieldData },
+  };
+  webflowLog("info", { event: "archive.ecommerce", productId, message: "Archiving mistaken furniture product" });
+  await axios.patch(url, body, {
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+  });
+}
+
 /* ======================================================
    SHOPIFY — AUTO PUBLISH TO CHANNELS
 ====================================================== */
@@ -615,6 +633,17 @@ function hasAnyDimensions(dims) {
   );
 }
 
+/** Format dimensions for appending to luxury item description (at the end). */
+function formatDimensionsForDescription(dims) {
+  if (!dims || !hasAnyDimensions(dims)) return "";
+  const parts = [];
+  if (dims.width != null && !Number.isNaN(dims.width)) parts.push(`Width: ${dims.width}"`);
+  if (dims.length != null && !Number.isNaN(dims.length)) parts.push(`Depth: ${dims.length}"`);
+  if (dims.height != null && !Number.isNaN(dims.height)) parts.push(`Height: ${dims.height}"`);
+  if (dims.weight != null && !Number.isNaN(dims.weight) && dims.weight > 0) parts.push(`Weight: ${dims.weight} lb`);
+  return parts.length ? `Dimensions: ${parts.join(" × ")}.` : "";
+}
+
 /** Webflow SKU dimension fields must be numbers; omit keys when value is null/NaN. */
 function skuDimensionFields(dimensions) {
   const d = dimensions || {};
@@ -881,6 +910,22 @@ async function syncSingleProduct(product, cache) {
     vertical,
     corrected: verticalCorrected,
   });
+
+  // When we correct furniture → luxury, remove the mistaken product from Webflow (archive) and clear cache so we create in luxury
+  if (verticalCorrected && cacheEntry?.webflowId && vertical === "luxury") {
+    const furnitureConfig = getWebflowConfig("furniture");
+    if (furnitureConfig?.siteId && furnitureConfig?.token) {
+      try {
+        await archiveWebflowEcommerceProduct(furnitureConfig.siteId, cacheEntry.webflowId, furnitureConfig.token);
+        webflowLog("info", { event: "vertical.corrected.archived", shopifyProductId, webflowId: cacheEntry.webflowId });
+      } catch (err) {
+        webflowLog("error", { event: "vertical.corrected.archive_failed", shopifyProductId, webflowId: cacheEntry.webflowId, message: err.message });
+      }
+    }
+    delete cache[shopifyProductId];
+    return syncSingleProduct(product, cache);
+  }
+
   const config = getWebflowConfig(vertical);
 
   const previousQty = cacheEntry?.lastQty ?? null;
@@ -916,12 +961,15 @@ async function syncSingleProduct(product, cache) {
   const showOnWebflow = vertical === "luxury" ? !soldNow : true;
   const shopifyUrl = `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${slug}`;
 
-  // Dimensions (Furniture only): do not guess; mark missing when absent
+  // Dimensions: furniture uses for status + SKU; luxury uses for description when present
   let dimensionsStatus = null;
-  let dimensions = null;
+  let dimensions = getDimensionsFromProduct(product);
   if (vertical === "furniture") {
-    dimensions = getDimensionsFromProduct(product);
     dimensionsStatus = hasAnyDimensions(dimensions) ? "present" : "missing";
+  }
+  if (hasAnyDimensions(dimensions)) {
+    const dimStr = formatDimensionsForDescription(dimensions);
+    if (dimStr) description = ((description || "").trim() + "\n\n" + dimStr).trim();
   }
 
   // Write back to Shopify: vertical, category, dimensions_status (furniture), vendor
