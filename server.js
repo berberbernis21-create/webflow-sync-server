@@ -118,7 +118,11 @@ async function getWebflowEcommerceProductById(siteId, productId, token) {
     const response = await axios.get(url, {
       headers: { Authorization: `Bearer ${token}`, accept: "application/json" },
     });
-    return response.data;
+    const data = response.data;
+    // API returns { product, skus }; normalize so caller always has .id and .skus
+    const product = data.product ?? data;
+    const skus = data.skus ?? product.skus ?? [];
+    return { ...product, id: product.id ?? productId, skus };
   } catch (err) {
     if (err.response?.status === 404) return null;
     console.error("⚠️ getWebflowEcommerceProductById error:", err.message, err.response?.data);
