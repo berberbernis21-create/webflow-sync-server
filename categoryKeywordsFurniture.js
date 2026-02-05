@@ -45,7 +45,8 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
     "rug", "rugs", "runner", "runners", "area rug", "area rugs",
     "oriental rug", "persian rug", "kilim", "braided rug",
     "dhurrie", "sisal", "jute rug", "wool rug", "wool carpet",
-    "doormat", "door mat", "hall runner", "stair runner"
+    "doormat", "door mat", "hall runner", "stair runner",
+    "tapestry", "tapestries"
   ],
 
   ArtMirrors: [

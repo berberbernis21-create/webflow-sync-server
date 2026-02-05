@@ -87,6 +87,7 @@ function stripHtml(html) {
   return html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
 }
 
+/** Name + description (and type, vendor, tags) from Shopify — used to decide vertical (luxury vs furniture). */
 function getCombinedProductText(product) {
   const tagsStr = getTagsArray(product).join(" ");
   const descriptionText = stripHtml(product.body_html || "");
