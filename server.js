@@ -1099,7 +1099,7 @@ function hasAnyDimensions(dims) {
   );
 }
 
-/** Format dimensions for description. Size (W×D×H) on one line; weight on the next line (no × before weight). */
+/** Format dimensions for description. Dimensions on one line, weight on the next. Uses <br> for HTML line breaks. Only called when hasAnyDimensions. */
 function formatDimensionsForDescription(dims) {
   if (!dims || !hasAnyDimensions(dims)) return "";
   const sizeParts = [];
@@ -1109,7 +1109,7 @@ function formatDimensionsForDescription(dims) {
   const hasWeight = dims.weight != null && !Number.isNaN(dims.weight) && dims.weight > 0;
   const sizeLine = sizeParts.length ? `Dimensions: ${sizeParts.join(" × ")}.` : "";
   const weightLine = hasWeight ? `Weight: ${dims.weight} lb.` : "";
-  if (sizeLine && weightLine) return `${sizeLine}\n${weightLine}`;
+  if (sizeLine && weightLine) return `${sizeLine}<br>${weightLine}`;
   return sizeLine || weightLine || "";
 }
 
@@ -1557,10 +1557,8 @@ async function syncSingleProduct(product, cache, options = {}) {
     const dimStr = formatDimensionsForDescription(dimensions);
     if (dimStr) {
       const body = (description || "").trim();
-      const dimensionsFirst = vertical === "furniture" || (vertical === "luxury" && category === "Handbags");
-      description = dimensionsFirst
-        ? (dimStr + "\n\n" + body).trim()
-        : (body + "\n\n" + dimStr).trim();
+      // Both luxury and furniture: dimensions at end, on own line(s), weight underneath
+      description = (body + "<br><br>" + dimStr).trim();
     }
   }
 
