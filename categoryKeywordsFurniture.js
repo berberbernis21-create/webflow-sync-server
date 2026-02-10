@@ -2,9 +2,10 @@
 // FURNITURE CATEGORY KEYWORDS
 // Maps item names → normalized furniture categories
 // (These map to Webflow/Shopify "Furniture & Home" subcategories)
-// If no keyword matches → use "Accessories" as fallback.
+// Best-match scoring: primary keywords (specific) vs weak (generic).
 // =======================================================
 
+/** Primary keywords = strong category signal, weight 2. Weak = generic (antique, wood, etc.), weight 0.5. */
 export const CATEGORY_KEYWORDS_FURNITURE = {
   LivingRoom: [
     "sofa", "sofas", "loveseat", "loveseats", "sectional", "sectionals",
@@ -54,9 +55,9 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
     "pottery", "potteries", "mirror", "mirrors", "wall mirror", "wall mirrors", "vanity mirror",
     "pier mirror", "convex mirror", "sunburst mirror", "gilt mirror",
     "floor mirror", "full length mirror", "cheval mirror", "trumeau",
-    "poster", "lithograph", "etching", "wall art", "gallery wall",
-    "sculpture", "sculptures", "carved", "statue", "statues", "figurine", "figurines",
-    "horse", "wooden", "wood", "antique"
+    "poster", "lithograph", "etching", "gallery wall",
+    "sculpture", "sculptures", "statue", "statues", "figurine", "figurines",
+    "trumeau mirror", "mantel mirror"
   ],
 
   Bedroom: [
@@ -100,4 +101,9 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
     "desk lamp", "task lamp", "reading lamp", "torchiere",
     "lantern", "lanterns", "candelabra", "candle holder"
   ]
+};
+
+/** Weak keywords: generic terms, low weight (0.5). Only add to these categories. Prevents "antique armoire" → Art/Mirrors. */
+export const CATEGORY_KEYWORDS_FURNITURE_WEAK = {
+  ArtMirrors: ["antique", "wood", "wooden", "carved"],
 };

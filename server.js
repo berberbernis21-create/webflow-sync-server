@@ -6,7 +6,7 @@ import dotenv from "dotenv";
 import fs from "fs";
 import nodemailer from "nodemailer";
 import { CATEGORY_KEYWORDS } from "./categoryKeywords.js";
-import { CATEGORY_KEYWORDS_FURNITURE } from "./categoryKeywordsFurniture.js";
+import { CATEGORY_KEYWORDS_FURNITURE, CATEGORY_KEYWORDS_FURNITURE_WEAK } from "./categoryKeywordsFurniture.js";
 import { detectBrandFromProduct } from "./brand.js";
 import { detectVertical } from "./vertical.js";
 
@@ -787,16 +787,46 @@ function matchFurnitureKeyword(normalized, keyword) {
 
 function detectCategoryFurniture(title, descriptionHtml, tags) {
   const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-  const descText = stripHtml(descriptionHtml || "");
+  const descText = stripHtml(descriptionHtml || "").trim();
   const tagsStr = Array.isArray(tags) ? tags.join(" ") : typeof tags === "string" ? tags : "";
-  const combined = [title || "", descText, tagsStr].filter(Boolean).join(" ").toLowerCase();
-  if (!combined) return "Accessories";
+  const name = ((title || "").trim()).toLowerCase();
+  const descAndTags = descText ? [descText, tagsStr].filter(Boolean).join(" ").toLowerCase() : "";
+  const hasDesc = !!descText;
+
+  if (!name && !descAndTags) return "Accessories";
+
+  const scores = {};
+
   for (const [category, keywords] of Object.entries(CATEGORY_KEYWORDS_FURNITURE)) {
+    scores[category] = 0;
     for (const kw of keywords) {
-      if (matchFurnitureKeyword(combined, kw)) return category;
+      const isMultiWord = kw.trim().includes(" ");
+      const inName = matchFurnitureKeyword(name, kw);
+      const inDesc = hasDesc && matchFurnitureKeyword(descAndTags, kw);
+      if (inName) scores[category] += isMultiWord ? 3 : 2;
+      else if (inDesc) scores[category] += isMultiWord ? 1.5 : 1;
     }
   }
-  return "Accessories";
+
+  if (CATEGORY_KEYWORDS_FURNITURE_WEAK) {
+    for (const [category, weakKws] of Object.entries(CATEGORY_KEYWORDS_FURNITURE_WEAK)) {
+      for (const kw of weakKws) {
+        const inName = matchFurnitureKeyword(name, kw);
+        const inDesc = hasDesc && matchFurnitureKeyword(descAndTags, kw);
+        if (inName || inDesc) scores[category] = (scores[category] || 0) + 0.5;
+      }
+    }
+  }
+
+  let bestCategory = "Accessories";
+  let bestScore = 0;
+  for (const [category, score] of Object.entries(scores)) {
+    if (score > bestScore) {
+      bestScore = score;
+      bestCategory = category;
+    }
+  }
+  return bestScore > 0 ? bestCategory : "Accessories";
 }
 
 const FURNITURE_CATEGORY_TO_SHOPIFY = {
