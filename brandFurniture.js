@@ -238,7 +238,7 @@ export const BRAND_KEYWORDS = {
   "Sunset West": ["sunset west"],
   "Arteriors": ["arteriors", "arteriors home"],
   "ELK Home": ["elk home", "elk lighting"],
-  "Essentials for Living": ["essentials for living", "efl"],
+  "Essentials for Living": ["efl"],
   "Lee Industries": ["lee industries"],
   "Minson Corp": ["minson corp", "minson corporation", "minson-corp"],
   "Sherrill": ["sherrill", "sherrill furniture"],
@@ -414,22 +414,39 @@ function extractByFromTitle(title) {
 
 /**
  * Detect furniture brand from title, description, and vendor.
- * Checks all three; returns canonical brand or null (caller uses "Unknown").
- * Uses word-boundary matching so short keywords (e.g. "efl") don't match inside words like "reflecting".
+ * Title matches ALWAYS outweigh description matches — if a brand is in the name, we use it.
  * Fallback: if no brand matches and title contains " by [Name]", use that as vendor.
  */
 export function detectBrandFromProductFurniture(title, descriptionHtml, vendor) {
   const titleNorm = normalize(title || "");
   const descNorm = normalize(stripHtml(descriptionHtml || ""));
   const vendorNorm = normalize(vendor || "");
-  const combined = [titleNorm, descNorm, vendorNorm].filter(Boolean).join(" ");
-  if (!combined) return null;
 
-  for (const [canonical, keywords] of Object.entries(BRAND_KEYWORDS)) {
-    if (!Array.isArray(keywords) || keywords.length === 0) continue;
-    for (const kw of keywords) {
-      if (containsKeyword(combined, kw)) return canonical;
+  // 1) Title first — if brand is in the name, it wins
+  if (titleNorm) {
+    for (const [canonical, keywords] of Object.entries(BRAND_KEYWORDS)) {
+      if (!Array.isArray(keywords) || keywords.length === 0) continue;
+      for (const kw of keywords) {
+        if (containsKeyword(titleNorm, kw)) return canonical;
+      }
     }
   }
-  return extractByFromTitle(title) || null;
+
+  // 2) "By [Name]" in title beats description — e.g. "Armoire By E. Dienst" → E. Dienst, not a false match from description
+  const byName = extractByFromTitle(title);
+  if (byName) return byName;
+
+  // 3) No title/by match — check description + vendor (Essentials for Living only matches from title)
+  const descAndVendor = [descNorm, vendorNorm].filter(Boolean).join(" ");
+  if (descAndVendor) {
+    for (const [canonical, keywords] of Object.entries(BRAND_KEYWORDS)) {
+      if (canonical === "Essentials for Living") continue; // EFL only if in title
+      if (!Array.isArray(keywords) || keywords.length === 0) continue;
+      for (const kw of keywords) {
+        if (containsKeyword(descAndVendor, kw)) return canonical;
+      }
+    }
+  }
+
+  return null;
 }
