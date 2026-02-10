@@ -8,6 +8,7 @@ import nodemailer from "nodemailer";
 import { CATEGORY_KEYWORDS } from "./categoryKeywords.js";
 import { CATEGORY_KEYWORDS_FURNITURE, CATEGORY_KEYWORDS_FURNITURE_WEAK } from "./categoryKeywordsFurniture.js";
 import { detectBrandFromProduct } from "./brand.js";
+import { detectBrandFromProductFurniture } from "./brandFurniture.js";
 import { detectVertical } from "./vertical.js";
 
 dotenv.config();
@@ -1550,9 +1551,11 @@ async function syncSingleProduct(product, cache, options = {}) {
   let qty = product.variants?.[0]?.inventory_quantity ?? null;
   let slug = product.handle;
 
-  let detectedBrand = detectBrandFromProduct(product.title, product.vendor);
-  if (!detectedBrand) detectedBrand = product.vendor || null;
-  const brand = detectedBrand;
+  let detectedBrand =
+    vertical === "furniture"
+      ? detectBrandFromProductFurniture(product.title, product.body_html, product.vendor)
+      : detectBrandFromProduct(product.title, product.vendor);
+  const brand = detectedBrand || "Unknown";
 
   const allImages = (product.images || []).map((img) => img.src);
   const featuredImage = allImages[0] || null;
