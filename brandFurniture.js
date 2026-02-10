@@ -88,6 +88,8 @@ export const BRAND_KEYWORDS = {
 
   // Pottery / art / mirrors
   "McCarty Pottery": ["mccarty pottery", "mccartypottery", "mccarty"],
+  "Ferrante": ["ferrante", "by ferrante"],
+  "Dennis Carney": ["dennis carney", "by dennis carney"],
   "Villeroy & Boch": ["villeroy & boch", "villeroy and boch", "villeroyandboch"],
   "Waterford": ["waterford"],
   "Wedgwood": ["wedgwood"],
@@ -164,6 +166,7 @@ export const BRAND_KEYWORDS = {
   "Sabai": ["sabai", "sabai design"],
   "The Inside": ["the inside"],
   "Modani": ["modani", "modani furniture"],
+  "Noir Furniture": ["noir furniture", "noir amunet", "noir trading"],
   "Zinus": ["zinus"],
   "Coaster": ["coaster", "coaster fine furniture"],
 
@@ -229,13 +232,15 @@ export const BRAND_KEYWORDS = {
   "Chaddock": ["chaddock", "chaddock home"],
   "Dovetail": ["dovetail"],
   "Four Hands": ["four hands"],
+  "Foundation Goods": ["foundation goods"],
   "Made Goods": ["made goods"],
   "Rowe": ["rowe", "rowe furniture"],
   "Sunset West": ["sunset west"],
   "Arteriors": ["arteriors", "arteriors home"],
   "ELK Home": ["elk home", "elk lighting"],
   "Essentials for Living": ["essentials for living", "efl"],
-  "Lee Industries": ["lee industries", "lee"],
+  "Lee Industries": ["lee industries"],
+  "Minson Corp": ["minson corp", "minson corporation", "minson-corp"],
   "Sherrill": ["sherrill", "sherrill furniture"],
   "CR Laine": ["cr laine", "c.r. laine"],
   "Smith Brothers": ["smith brothers", "smith brothers of berne"],
@@ -378,9 +383,40 @@ function normalize(str = "") {
     .trim();
 }
 
+/** Word-boundary match so "efl" doesn't match inside "reflecting". */
+function containsKeyword(text, keyword) {
+  const k = normalize(keyword);
+  if (!k) return false;
+  const words = k.split(/\s+/).filter(Boolean);
+  const pattern = words
+    .map((w) => "\\b" + w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b")
+    .join("\\s+");
+  try {
+    return new RegExp(pattern, "i").test(text);
+  } catch {
+    return text.includes(k);
+  }
+}
+
+/**
+ * Fallback: extract "by [Name]" from title when no brand matches.
+ * e.g. "Metal Wall Art by Dennis Carney - 80X20" → "Dennis Carney"
+ */
+function extractByFromTitle(title) {
+  if (!title || typeof title !== "string") return null;
+  const m = title.match(/\bby\s+([^\-]+?)(?:\s*-\s*|$)/i);
+  if (!m) return null;
+  const name = m[1].trim().replace(/\s+/g, " ");
+  if (name.length < 2 || name.length > 60) return null;
+  if (/^[\d\sXx"']+$/.test(name)) return null; // skip dimension-like junk
+  return name;
+}
+
 /**
  * Detect furniture brand from title, description, and vendor.
  * Checks all three; returns canonical brand or null (caller uses "Unknown").
+ * Uses word-boundary matching so short keywords (e.g. "efl") don't match inside words like "reflecting".
+ * Fallback: if no brand matches and title contains " by [Name]", use that as vendor.
  */
 export function detectBrandFromProductFurniture(title, descriptionHtml, vendor) {
   const titleNorm = normalize(title || "");
@@ -392,10 +428,8 @@ export function detectBrandFromProductFurniture(title, descriptionHtml, vendor) 
   for (const [canonical, keywords] of Object.entries(BRAND_KEYWORDS)) {
     if (!Array.isArray(keywords) || keywords.length === 0) continue;
     for (const kw of keywords) {
-      const k = normalize(kw);
-      if (!k) continue;
-      if (combined.includes(k)) return canonical;
+      if (containsKeyword(combined, kw)) return canonical;
     }
   }
-  return null;
+  return extractByFromTitle(title) || null;
 }
