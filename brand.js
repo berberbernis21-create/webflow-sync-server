@@ -328,8 +328,12 @@ export const BRAND_ALIASES = {
   "d&g": "Dolce & Gabbana",
   "dg": "Dolce & Gabbana",
 
+  // AllSaints (space variation)
+  "all saints": "AllSaints",
+
   // Bottega Veneta
   "bottega": "Bottega Veneta",
+  "bottega veneta": "Bottega Veneta",
 
   // Saks
   "saks fifth avenue": "Saks Fifth Avenue",
@@ -338,6 +342,36 @@ export const BRAND_ALIASES = {
   // Tiffany
   "tiffany": "Tiffany & Co",
   "tiffany and co": "Tiffany & Co",
+  "tiffany & co": "Tiffany & Co",
+
+  // Van Cleef & Arpels
+  "van cleef": "Van Cleef & Arpels",
+  "van cleef and arpels": "Van Cleef & Arpels",
+  "vca": "Van Cleef & Arpels",
+
+  // Alexander McQueen
+  "alexander mcqueen": "Alexander McQueen",
+
+  // Gianvito Rossi
+  "gianvito rossi": "Gianvito Rossi",
+
+  // Proenza Schouler
+  "proenza schouler": "Proenza Schouler",
+  "ps1": "Proenza Schouler",
+
+  // Common space/hyphen variations for single-word canonicals
+  "design within reach": "Design Within Reach",
+  "jonathan adler": "Jonathan Adler",
+  "john richard": "John Richard",
+  "maitland smith": "Maitland-Smith",
+  "rebecca minkoff": "Rebecca Minkoff",
+  "tory burch": "Tory Burch",
+  "vera bradley": "Vera Bradley",
+  "vivienne westwood": "Vivienne Westwood",
+  "valextra": "Valextra",
+  "whiting and davis": "Whiting & Davis",
+  "zadig voltaire": "Zadig & Voltaire",
+  "zadig and voltaire": "Zadig & Voltaire",
 };
 
 // ---------------------------

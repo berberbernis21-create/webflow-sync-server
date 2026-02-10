@@ -786,7 +786,26 @@ function matchFurnitureKeyword(normalized, keyword) {
   }
 }
 
-function detectCategoryFurniture(title, descriptionHtml, tags) {
+/**
+ * Apply dimension-based rules for tables. Returns overridden category or null if no override.
+ * Rules (height/depth/width in inches):
+ * - Dining: Height ≥ 28 AND Depth ≥ 30 AND Width ≥ 40 → Dining Room
+ * - Not dining: Height ≤ 22 OR Depth ≤ 24 → Living Room (disqualifies Dining)
+ */
+function applyTableDimensionRules(dims, name, descAndTags) {
+  const h = dims?.height != null && !Number.isNaN(dims.height) ? Number(dims.height) : null;
+  const w = dims?.width != null && !Number.isNaN(dims.width) ? Number(dims.width) : null;
+  const d = dims?.length != null && !Number.isNaN(dims.length) ? Number(dims.length) : null; // length = depth
+  if (h == null || w == null || d == null) return null;
+  const text = (name + " " + (descAndTags || "")).toLowerCase();
+  if (!/\btable\b/.test(text)) return null; // only for table-like products
+
+  if (h <= 22 || d <= 24) return "LivingRoom"; // cannot be dining
+  if (h >= 28 && d >= 30 && w >= 40) return "DiningRoom"; // dining table dimensions
+  return null;
+}
+
+function detectCategoryFurniture(title, descriptionHtml, tags, dimensions) {
   const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
   const descText = stripHtml(descriptionHtml || "").trim();
   const tagsStr = Array.isArray(tags) ? tags.join(" ") : typeof tags === "string" ? tags : "";
@@ -795,6 +814,10 @@ function detectCategoryFurniture(title, descriptionHtml, tags) {
   const hasDesc = !!descText;
 
   if (!name && !descAndTags) return "Accessories";
+
+  // Dimension-based override for tables (height/depth/width rules)
+  const dimOverride = applyTableDimensionRules(dimensions, name, descAndTags);
+  if (dimOverride != null) return dimOverride;
 
   const scores = {};
 
@@ -1571,7 +1594,7 @@ async function syncSingleProduct(product, cache, options = {}) {
   }
   const categoryForMetafield =
     department === "Furniture & Home"
-      ? mapFurnitureCategoryForShopify(detectCategoryFurniture(name, description, getProductTagsArray(product)))
+      ? mapFurnitureCategoryForShopify(detectCategoryFurniture(name, description, getProductTagsArray(product), dimensions))
       : getLuxuryCategoryFromType(productType, soldNow);
   const shopifyDepartment = department;
   const shopifyCategoryValue = categoryForMetafield;

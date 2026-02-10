@@ -9,8 +9,9 @@
 export const CATEGORY_KEYWORDS_FURNITURE = {
   LivingRoom: [
     "sofa", "sofas", "loveseat", "loveseats", "sectional", "sectionals",
-    "couch", "couches", "armchair", "armchairs", "accent chair",
-    "slipper chair", "chaise", "chaises", "recliner", "recliners",
+    "couch", "couches", "chair", "chairs", "armchair", "armchairs", "accent chair",
+    "slipper chair", "bergere", "chaise", "chaises", "recliner", "recliners",
+    "bar stool", "bar stools", "barstool", "barstools",
     "table", "tables", "coffee table", "coffee tables", "side table", "side tables",
     "end table", "end tables", "console table", "console tables",
     "media console", "media consoles", "tv stand", "tv stands",
@@ -63,6 +64,7 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
   Bedroom: [
     "bed", "beds", "bedroom", "headboard", "headboards", "nightstand", "nightstands",
     "dresser", "dressers", "chest", "chest of drawers", "armoire", "armoires",
+    "mirrored armoire", "armoire with mirror",
     "bunk bed", "bunk beds", "bed frame", "bedframe", "bed frames",
     "vanity", "vanity table", "vanity desk", "wardrobe", "wardrobes",
     "highboy", "lowboy", "tall boy", "blanket chest", "hope chest",
