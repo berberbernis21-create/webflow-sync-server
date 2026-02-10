@@ -1592,6 +1592,9 @@ async function syncSingleProduct(product, cache, options = {}) {
   if (department == null) {
     department = vertical === "furniture" ? "Furniture & Home" : "Luxury Goods";
   }
+  // Dimensions: must be available before category detection (table dimension rules)
+  let dimensionsStatus = null;
+  const dimensions = getDimensionsFromProduct(product);
   const categoryForMetafield =
     department === "Furniture & Home"
       ? mapFurnitureCategoryForShopify(detectCategoryFurniture(name, description, getProductTagsArray(product), dimensions))
@@ -1603,9 +1606,7 @@ async function syncSingleProduct(product, cache, options = {}) {
   const showOnWebflow = vertical === "luxury" ? !soldNow : true;
   const shopifyUrl = `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${slug}`;
 
-  // Dimensions: furniture uses for status + SKU; luxury uses for description when present
-  let dimensionsStatus = null;
-  let dimensions = getDimensionsFromProduct(product);
+  // Dimensions status + append to description when present
   if (vertical === "furniture") {
     dimensionsStatus = hasAnyDimensions(dimensions) ? "present" : "missing";
   }
