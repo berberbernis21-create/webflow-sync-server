@@ -694,6 +694,7 @@ async function updateShopifyVendorAndType(productId, brandValue, productType, ex
   if (department != null && category != null) {
     input.tags = mergeProductTagsForSync(existingTags ?? [], department, category);
   }
+  // Only update description if explicitly provided (not null and not empty)
   if (descriptionHtml != null && String(descriptionHtml).trim() !== "") {
     input.descriptionHtml = String(descriptionHtml).trim();
   }
@@ -1734,6 +1735,9 @@ async function syncSingleProduct(product, cache, options = {}) {
   const shopifyUrl = `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${slug}`;
 
   // Dimensions status + append to description when present
+  const originalDescription = product.body_html || "";
+  let descriptionChanged = false;
+  
   if (vertical === "furniture") {
     dimensionsStatus = hasAnyDimensions(dimensions) ? "present" : "missing";
   }
@@ -1743,7 +1747,13 @@ async function syncSingleProduct(product, cache, options = {}) {
       // Strip any existing dimensions block to prevent duplication
       const body = stripExistingDimensions(description || "").trim();
       // Both luxury and furniture: dimensions at end, on own line(s), weight underneath
-      description = (body + "<br><br>" + dimStr).trim();
+      const newDescription = (body + "<br><br>" + dimStr).trim();
+      
+      // Only update if description actually changed
+      if (newDescription !== originalDescription) {
+        description = newDescription;
+        descriptionChanged = true;
+      }
     }
   }
 
@@ -1752,7 +1762,7 @@ async function syncSingleProduct(product, cache, options = {}) {
     await removeConditionOptionIfFurniture(product);
   }
 
-  // Write metafields + vendor/type/tags/description to Shopify. Skip when category is "Recently Sold" — leave existing values as is.
+  // Write metafields + vendor/type/tags to Shopify. Skip when category is "Recently Sold" — leave existing values as is.
   if (shopifyCategoryValue !== "Recently Sold") {
     await updateShopifyMetafields(shopifyProductId, {
       department: shopifyDepartment,
@@ -1760,7 +1770,16 @@ async function syncSingleProduct(product, cache, options = {}) {
       vertical: department === "Furniture & Home" ? "furniture" : "luxury",
       dimensionsStatus: vertical === "furniture" ? dimensionsStatus : undefined,
     });
-    await updateShopifyVendorAndType(shopifyProductId, brand, shopifyCategoryValue, getProductTagsArray(product), shopifyDepartment, shopifyCategoryValue, description);
+    // Only pass description if it changed
+    await updateShopifyVendorAndType(
+      shopifyProductId, 
+      brand, 
+      shopifyCategoryValue, 
+      getProductTagsArray(product), 
+      shopifyDepartment, 
+      shopifyCategoryValue, 
+      descriptionChanged ? description : null
+    );
   }
 
   const currentHash = shopifyHash(product);
