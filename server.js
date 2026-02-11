@@ -718,9 +718,9 @@ async function updateShopifyVendorAndType(productId, brandValue, productType, ex
 }
 
 /* ======================================================
-   SHOPIFY — REMOVE "CONDITION" OPTION (Furniture only)
-   Removes the "Condition" product option for Furniture & Home products.
-   Only runs when there's effectively one variant (preserves price, inventory, weight, SKU).
+   SHOPIFY — REPLACE "CONDITION" WITH "TITLE" (Furniture only)
+   Replaces "Condition" option with "Title: Default Title" for Furniture & Home products.
+   This satisfies Shopify's requirement for at least one option while being eBay-compatible.
 ====================================================== */
 async function removeConditionOptionIfFurniture(product) {
   const productId = String(product.id);
@@ -741,27 +741,24 @@ async function removeConditionOptionIfFurniture(product) {
     return;
   }
 
-  // Safety check: only remove if there's effectively one variant
-  // (Condition is the only option, or product has only 1 variant total)
-  const variantCount = product.variants?.length ?? 0;
-  const hasMultipleLogicalVariants = product.options.length > 1 || variantCount > 1;
-  
-  if (hasMultipleLogicalVariants) {
-    webflowLog("info", { 
-      event: "condition_option.skip", 
-      shopifyProductId: productId, 
-      reason: "multiple_variants",
-      optionCount: product.options.length,
-      variantCount
-    });
-    return;
-  }
+  // Check if "Title" option already exists
+  const hasTitleOption = product.options.some(opt => 
+    opt && opt.name && String(opt.name).toLowerCase() === "title"
+  );
 
-  // Remove the Condition option via GraphQL
+  // Strategy: Update the Condition option to be Title instead
+  // This preserves the variant structure while changing the option name and value
   const mutation = `
-    mutation productOptionsDelete($productId: ID!, $optionsToDelete: [ID!]!) {
-      productOptionsDelete(productId: $productId, optionsToDelete: $optionsToDelete) {
-        deletedOptionsIds
+    mutation productOptionsUpdate($productId: ID!, $options: [OptionUpdateInput!]!) {
+      productOptionsUpdate(productId: $productId, options: $options) {
+        product {
+          id
+          options {
+            id
+            name
+            values
+          }
+        }
         userErrors {
           field
           message
@@ -772,7 +769,13 @@ async function removeConditionOptionIfFurniture(product) {
 
   const variables = {
     productId: `gid://shopify/Product/${productId}`,
-    optionsToDelete: [`gid://shopify/ProductOption/${conditionOption.id}`]
+    options: [
+      {
+        id: `gid://shopify/ProductOption/${conditionOption.id}`,
+        name: "Title",
+        values: [{ name: "Default Title" }]
+      }
+    ]
   };
 
   try {
@@ -787,12 +790,12 @@ async function removeConditionOptionIfFurniture(product) {
       }
     );
 
-    const data = res.data?.data?.productOptionsDelete;
+    const data = res.data?.data?.productOptionsUpdate;
     const userErrors = data?.userErrors ?? [];
 
     if (userErrors.length > 0) {
       webflowLog("warn", {
-        event: "condition_option.user_errors",
+        event: "condition_option.update_errors",
         shopifyProductId: productId,
         optionId: conditionOption.id,
         userErrors
@@ -800,26 +803,25 @@ async function removeConditionOptionIfFurniture(product) {
       return;
     }
 
-    const deletedIds = data?.deletedOptionsIds ?? [];
-    if (deletedIds.length > 0) {
+    const updatedProduct = data?.product;
+    if (updatedProduct) {
       webflowLog("info", {
-        event: "condition_option.removed",
+        event: "condition_option.replaced_with_title",
         shopifyProductId: productId,
-        optionId: conditionOption.id,
-        deletedIds
+        oldOptionId: conditionOption.id,
+        newOptions: updatedProduct.options
       });
     } else {
       webflowLog("warn", {
-        event: "condition_option.not_deleted",
+        event: "condition_option.update_no_product",
         shopifyProductId: productId,
-        optionId: conditionOption.id,
-        reason: "no_deleted_ids_returned"
+        optionId: conditionOption.id
       });
     }
   } catch (err) {
     // Log but don't throw - don't fail the entire sync for this
     webflowLog("error", {
-      event: "condition_option.error",
+      event: "condition_option.update_error",
       shopifyProductId: productId,
       optionId: conditionOption.id,
       message: err.message,
@@ -1283,6 +1285,15 @@ function formatDimensionsForDescription(dims) {
   return sizeLine || weightLine || "";
 }
 
+/** Strip existing dimensions block from description to prevent duplication. */
+function stripExistingDimensions(descriptionHtml) {
+  if (!descriptionHtml || typeof descriptionHtml !== "string") return "";
+  // Match pattern: <br><br>Dimensions: ... Weight: ... (at the end)
+  // This handles our formatted dimensions block that we append
+  const pattern = /(<br\s*\/?>\s*){2,}Dimensions:.*?(?:Weight:.*?)?$/is;
+  return descriptionHtml.replace(pattern, "").trim();
+}
+
 /** Webflow SKU dimension fields must be numbers; omit keys when value is null/NaN. */
 function skuDimensionFields(dimensions) {
   const d = dimensions || {};
@@ -1729,7 +1740,8 @@ async function syncSingleProduct(product, cache, options = {}) {
   if (hasAnyDimensions(dimensions)) {
     const dimStr = formatDimensionsForDescription(dimensions);
     if (dimStr) {
-      const body = (description || "").trim();
+      // Strip any existing dimensions block to prevent duplication
+      const body = stripExistingDimensions(description || "").trim();
       // Both luxury and furniture: dimensions at end, on own line(s), weight underneath
       description = (body + "<br><br>" + dimStr).trim();
     }
