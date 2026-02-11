@@ -747,11 +747,10 @@ async function removeConditionOptionIfFurniture(product) {
     opt && opt.name && String(opt.name).toLowerCase() === "title"
   );
 
-  // Strategy: Use productUpdate to change the option name and values
-  // More reliable than productOptionsUpdate for this use case
+  // Strategy: Use productOptionUpdate (singular) to update a specific option
   const mutation = `
-    mutation productUpdate($input: ProductInput!) {
-      productUpdate(input: $input) {
+    mutation productOptionUpdate($productId: ID!, $option: OptionUpdateInput!) {
+      productOptionUpdate(productId: $productId, option: $option) {
         product {
           id
           options {
@@ -769,15 +768,11 @@ async function removeConditionOptionIfFurniture(product) {
   `;
 
   const variables = {
-    input: {
-      id: `gid://shopify/Product/${productId}`,
-      options: [
-        {
-          id: `gid://shopify/ProductOption/${conditionOption.id}`,
-          name: "Title",
-          values: ["Default Title"]
-        }
-      ]
+    productId: `gid://shopify/Product/${productId}`,
+    option: {
+      id: `gid://shopify/ProductOption/${conditionOption.id}`,
+      name: "Title",
+      values: [{ name: "Default Title" }]
     }
   };
 
@@ -793,7 +788,7 @@ async function removeConditionOptionIfFurniture(product) {
       }
     );
 
-    const data = res.data?.data?.productUpdate;
+    const data = res.data?.data?.productOptionUpdate;
     const userErrors = data?.userErrors ?? [];
 
     if (userErrors.length > 0) {
