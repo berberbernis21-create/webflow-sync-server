@@ -742,15 +742,82 @@ async function removeConditionOptionIfFurniture(product) {
     return;
   }
 
-  // Check if "Title" option already exists
-  const hasTitleOption = product.options.some(opt => 
-    opt && opt.name && String(opt.name).toLowerCase() === "title"
-  );
+  // First, query the product to get the ProductOptionValue IDs
+  const queryProduct = `
+    query getProduct($id: ID!) {
+      product(id: $id) {
+        options {
+          id
+          name
+          optionValues {
+            id
+            name
+          }
+        }
+      }
+    }
+  `;
 
-  // Strategy: Use productOptionUpdate (singular) to update a specific option
+  let optionValueIds = [];
+  try {
+    const queryRes = await axios.post(
+      SHOPIFY_GRAPHQL_URL,
+      { 
+        query: queryProduct, 
+        variables: { id: `gid://shopify/Product/${productId}` } 
+      },
+      {
+        headers: {
+          "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    const productData = queryRes.data?.data?.product;
+    const conditionOptionData = productData?.options?.find(opt => 
+      opt.name && String(opt.name).toLowerCase() === "condition"
+    );
+
+    if (conditionOptionData?.optionValues) {
+      optionValueIds = conditionOptionData.optionValues.map(ov => ov.id);
+    }
+  } catch (err) {
+    webflowLog("error", {
+      event: "condition_option.query_error",
+      shopifyProductId: productId,
+      message: err.message
+    });
+    return;
+  }
+
+  if (optionValueIds.length === 0) {
+    webflowLog("warn", {
+      event: "condition_option.no_values",
+      shopifyProductId: productId,
+      optionId: conditionOption.id
+    });
+    return;
+  }
+
+  // Build the optionValuesToUpdate array with actual IDs
+  const optionValuesToUpdate = optionValueIds.map(id => ({
+    id,
+    name: "Default Title"
+  }));
+
+  // Strategy: Use productOptionUpdate to rename option and update all its values
   const mutation = `
-    mutation productOptionUpdate($productId: ID!, $option: OptionUpdateInput!) {
-      productOptionUpdate(productId: $productId, option: $option) {
+    mutation productOptionUpdate(
+      $productId: ID!,
+      $option: OptionUpdateInput!,
+      $optionValuesToUpdate: [OptionValueUpdateInput!]
+    ) {
+      productOptionUpdate(
+        productId: $productId,
+        option: $option,
+        optionValuesToUpdate: $optionValuesToUpdate
+      ) {
         product {
           id
           options {
@@ -762,6 +829,7 @@ async function removeConditionOptionIfFurniture(product) {
         userErrors {
           field
           message
+          code
         }
       }
     }
@@ -771,9 +839,9 @@ async function removeConditionOptionIfFurniture(product) {
     productId: `gid://shopify/Product/${productId}`,
     option: {
       id: `gid://shopify/ProductOption/${conditionOption.id}`,
-      name: "Title",
-      values: [{ name: "Default Title" }]
-    }
+      name: "Title"
+    },
+    optionValuesToUpdate
   };
 
   try {
