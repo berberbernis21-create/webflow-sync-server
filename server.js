@@ -747,11 +747,11 @@ async function removeConditionOptionIfFurniture(product) {
     opt && opt.name && String(opt.name).toLowerCase() === "title"
   );
 
-  // Strategy: Update the Condition option to be Title instead
-  // This preserves the variant structure while changing the option name and value
+  // Strategy: Use productUpdate to change the option name and values
+  // More reliable than productOptionsUpdate for this use case
   const mutation = `
-    mutation productOptionsUpdate($productId: ID!, $options: [OptionUpdateInput!]!) {
-      productOptionsUpdate(productId: $productId, options: $options) {
+    mutation productUpdate($input: ProductInput!) {
+      productUpdate(input: $input) {
         product {
           id
           options {
@@ -769,14 +769,16 @@ async function removeConditionOptionIfFurniture(product) {
   `;
 
   const variables = {
-    productId: `gid://shopify/Product/${productId}`,
-    options: [
-      {
-        id: `gid://shopify/ProductOption/${conditionOption.id}`,
-        name: "Title",
-        values: [{ name: "Default Title" }]
-      }
-    ]
+    input: {
+      id: `gid://shopify/Product/${productId}`,
+      options: [
+        {
+          id: `gid://shopify/ProductOption/${conditionOption.id}`,
+          name: "Title",
+          values: ["Default Title"]
+        }
+      ]
+    }
   };
 
   try {
@@ -791,7 +793,7 @@ async function removeConditionOptionIfFurniture(product) {
       }
     );
 
-    const data = res.data?.data?.productOptionsUpdate;
+    const data = res.data?.data?.productUpdate;
     const userErrors = data?.userErrors ?? [];
 
     if (userErrors.length > 0) {
@@ -813,10 +815,11 @@ async function removeConditionOptionIfFurniture(product) {
         newOptions: updatedProduct.options
       });
     } else {
-      webflowLog("warn", {
-        event: "condition_option.update_no_product",
+      webflowLog("info", {
+        event: "condition_option.update_success_no_return",
         shopifyProductId: productId,
-        optionId: conditionOption.id
+        optionId: conditionOption.id,
+        message: "Update likely succeeded but Shopify didn't return product data"
       });
     }
   } catch (err) {
