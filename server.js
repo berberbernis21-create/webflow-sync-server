@@ -665,7 +665,7 @@ function mergeProductTagsForSync(existingTags, department, category) {
   return combined;
 }
 
-async function updateShopifyVendorAndType(productId, brandValue, productType, existingTags, department, category) {
+async function updateShopifyVendorAndType(productId, brandValue, productType, existingTags, department, category, descriptionHtml) {
   const mutation = `
     mutation UpdateProduct($input: ProductInput!) {
       productUpdate(input: $input) {
@@ -674,6 +674,7 @@ async function updateShopifyVendorAndType(productId, brandValue, productType, ex
           vendor
           productType
           tags
+          descriptionHtml
         }
         userErrors {
           field
@@ -693,6 +694,9 @@ async function updateShopifyVendorAndType(productId, brandValue, productType, ex
   if (department != null && category != null) {
     input.tags = mergeProductTagsForSync(existingTags ?? [], department, category);
   }
+  if (descriptionHtml != null && String(descriptionHtml).trim() !== "") {
+    input.descriptionHtml = String(descriptionHtml).trim();
+  }
   const variables = { input };
 
   const res = await axios.post(
@@ -710,6 +714,118 @@ async function updateShopifyVendorAndType(productId, brandValue, productType, ex
     const msg = errors.map((e) => `${e.field}: ${e.message}`).join("; ");
     webflowLog("error", { event: "product_update.user_errors", productId, userErrors: errors });
     throw new Error(`Shopify productUpdate failed: ${msg}`);
+  }
+}
+
+/* ======================================================
+   SHOPIFY — REMOVE "CONDITION" OPTION (Furniture only)
+   Removes the "Condition" product option for Furniture & Home products.
+   Only runs when there's effectively one variant (preserves price, inventory, weight, SKU).
+====================================================== */
+async function removeConditionOptionIfFurniture(product) {
+  const productId = String(product.id);
+  
+  // Check if product has options
+  if (!product.options || !Array.isArray(product.options) || product.options.length === 0) {
+    webflowLog("info", { event: "condition_option.skip", shopifyProductId: productId, reason: "no_options" });
+    return;
+  }
+
+  // Find "Condition" option
+  const conditionOption = product.options.find(opt => 
+    opt && opt.name && String(opt.name).toLowerCase() === "condition"
+  );
+
+  if (!conditionOption || !conditionOption.id) {
+    webflowLog("info", { event: "condition_option.skip", shopifyProductId: productId, reason: "condition_not_found" });
+    return;
+  }
+
+  // Safety check: only remove if there's effectively one variant
+  // (Condition is the only option, or product has only 1 variant total)
+  const variantCount = product.variants?.length ?? 0;
+  const hasMultipleLogicalVariants = product.options.length > 1 || variantCount > 1;
+  
+  if (hasMultipleLogicalVariants) {
+    webflowLog("info", { 
+      event: "condition_option.skip", 
+      shopifyProductId: productId, 
+      reason: "multiple_variants",
+      optionCount: product.options.length,
+      variantCount
+    });
+    return;
+  }
+
+  // Remove the Condition option via GraphQL
+  const mutation = `
+    mutation productOptionsDelete($productId: ID!, $optionsToDelete: [ID!]!) {
+      productOptionsDelete(productId: $productId, optionsToDelete: $optionsToDelete) {
+        deletedOptionsIds
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+  `;
+
+  const variables = {
+    productId: `gid://shopify/Product/${productId}`,
+    optionsToDelete: [`gid://shopify/ProductOption/${conditionOption.id}`]
+  };
+
+  try {
+    const res = await axios.post(
+      SHOPIFY_GRAPHQL_URL,
+      { query: mutation, variables },
+      {
+        headers: {
+          "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    const data = res.data?.data?.productOptionsDelete;
+    const userErrors = data?.userErrors ?? [];
+
+    if (userErrors.length > 0) {
+      webflowLog("warn", {
+        event: "condition_option.user_errors",
+        shopifyProductId: productId,
+        optionId: conditionOption.id,
+        userErrors
+      });
+      return;
+    }
+
+    const deletedIds = data?.deletedOptionsIds ?? [];
+    if (deletedIds.length > 0) {
+      webflowLog("info", {
+        event: "condition_option.removed",
+        shopifyProductId: productId,
+        optionId: conditionOption.id,
+        deletedIds
+      });
+    } else {
+      webflowLog("warn", {
+        event: "condition_option.not_deleted",
+        shopifyProductId: productId,
+        optionId: conditionOption.id,
+        reason: "no_deleted_ids_returned"
+      });
+    }
+  } catch (err) {
+    // Log but don't throw - don't fail the entire sync for this
+    webflowLog("error", {
+      event: "condition_option.error",
+      shopifyProductId: productId,
+      optionId: conditionOption.id,
+      message: err.message,
+      status: err.response?.status,
+      responseData: err.response?.data
+    });
   }
 }
 
@@ -1619,7 +1735,12 @@ async function syncSingleProduct(product, cache, options = {}) {
     }
   }
 
-  // Write metafields + vendor/type/tags to Shopify. Skip when category is "Recently Sold" — leave existing values as is.
+  // Remove "Condition" option for Furniture & Home products (before metafields write)
+  if (department === "Furniture & Home") {
+    await removeConditionOptionIfFurniture(product);
+  }
+
+  // Write metafields + vendor/type/tags/description to Shopify. Skip when category is "Recently Sold" — leave existing values as is.
   if (shopifyCategoryValue !== "Recently Sold") {
     await updateShopifyMetafields(shopifyProductId, {
       department: shopifyDepartment,
@@ -1627,7 +1748,7 @@ async function syncSingleProduct(product, cache, options = {}) {
       vertical: department === "Furniture & Home" ? "furniture" : "luxury",
       dimensionsStatus: vertical === "furniture" ? dimensionsStatus : undefined,
     });
-    await updateShopifyVendorAndType(shopifyProductId, brand, shopifyCategoryValue, getProductTagsArray(product), shopifyDepartment, shopifyCategoryValue);
+    await updateShopifyVendorAndType(shopifyProductId, brand, shopifyCategoryValue, getProductTagsArray(product), shopifyDepartment, shopifyCategoryValue, description);
   }
 
   const currentHash = shopifyHash(product);
