@@ -1,6 +1,6 @@
 export const CATEGORY_KEYWORDS = { 
   Handbags: [
-    "handbag", "shoulder bag", "top handle", "hobo", "satchel",
+    "handbag", "handbags", "shoulder bag", "top handle", "top-handle", "top handle bag", "hobo", "satchel",
     "bowler", "structured", "shopper", "shopping bag",
     "doctor bag", "frame bag", "barrel bag", "bucket handbag", "bucket bag",
     "north south bag", "east west bag", "musubi", "jumbo flap",
@@ -24,19 +24,19 @@ export const CATEGORY_KEYWORDS = {
     "half moon", "demi lune", "phone bag", "phone holder with chain"
   ],
 
+  Backpacks: [
+    "backpack", "mini backpack", "daypack", "rucksack",
+    "drawstring backpack", "convertible backpack",
+    "2-way backpack", "sling/backpack", "school backpack",
+    "city backpack"
+  ],
+
   "Small Bags": [
     "mini bag", "micro bag", "nano bag", "small bag", "pochette",
     "clutch", "wristlet", "evening bag", "minaudiere", "pouch",
     "card case with chain", "key pouch with chain", "mini vanity",
     "mini box bag", "micro box", "wallet on strap",
     "baguette bag", "compact shoulder bag"
-  ],
-
-  Backpacks: [
-    "backpack", "mini backpack", "daypack", "rucksack",
-    "drawstring backpack", "convertible backpack",
-    "2-way backpack", "sling/backpack", "school backpack",
-    "city backpack"
   ],
 
   Wallets: [
@@ -49,10 +49,10 @@ export const CATEGORY_KEYWORDS = {
   ],
 
   Luggage: [
-    "briefcase", "travel case", "weekender", "duffle", "duffel",
+    "luggage", "luggage bag", "travel bag", "briefcase", "travel case", "weekender", "duffle", "duffel",
     "keepall", "carry-on", "garment bag", "overnight bag",
     "pilot case", "business bag", "portfolio bag", "roller bag",
-    "rolling suitcase", "train case", "Travel Bag", "steamer bag", "travel pouch"
+    "rolling suitcase", "train case", "steamer bag", "travel pouch"
   ],
 
   Scarves: [

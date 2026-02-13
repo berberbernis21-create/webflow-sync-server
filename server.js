@@ -1123,6 +1123,47 @@ function getLuxuryCategoryFromType(productType, soldNow) {
   return TYPE_TO_LUXURY_CATEGORY[n] ?? "Other ";
 }
 
+/** Word-boundary match for keyword in text. */
+function matchWordBoundary(text, keyword) {
+  if (!text || !keyword) return false;
+  const k = String(keyword).trim().toLowerCase();
+  if (!k) return false;
+  const escaped = k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  try {
+    return new RegExp("\\b" + escaped + "\\b", "i").test(String(text));
+  } catch {
+    return String(text).toLowerCase().includes(k);
+  }
+}
+
+/** Shoe keywords — explicitly route to Other (no Handbags/Totes/etc. category for footwear). */
+const SHOE_KEYWORDS = [
+  "sneakers", "sneaker", "pumps", "pump", "heels", "heel", "flats", "flat",
+  "boots", "boot", "sandals", "sandal", "loafers", "loafer", "mules", "mule",
+  "slides", "slide", "ballerina", "oxfords", "oxford", "footwear", "shoes", "shoe",
+];
+
+/** Detect luxury category from title/description when product_type is empty or unmatched. Title-first: match on title before description so accessory mentions (e.g. "comes with clutch") don't override the main product. */
+function detectLuxuryCategoryFromTitle(title, descriptionHtml) {
+  const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const titleText = (title || "").trim().toLowerCase();
+  const descText = stripHtml(descriptionHtml || "").trim().toLowerCase();
+  const combined = [titleText, descText].filter(Boolean).join(" ");
+  if (!combined) return null;
+  if (SHOE_KEYWORDS.some((kw) => matchWordBoundary(combined, kw))) return null;
+  const tryMatch = (text) => {
+    if (!text) return null;
+    for (const [category, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
+      if (!Array.isArray(keywords)) continue;
+      for (const kw of keywords) {
+        if (matchWordBoundary(text, kw)) return category;
+      }
+    }
+    return null;
+  };
+  return tryMatch(titleText) ?? tryMatch(descText);
+}
+
 /** In-memory map: display name (and slug) -> Webflow category item ID. Filled by loadFurnitureCategoryMap(). */
 let furnitureCategoryMapCache = null;
 
@@ -1805,7 +1846,12 @@ async function syncSingleProduct(product, cache, options = {}) {
   const categoryForMetafield =
     department === "Furniture & Home"
       ? mapFurnitureCategoryForShopify(detectCategoryFurniture(name, description, getProductTagsArray(product), dimensions))
-      : getLuxuryCategoryFromType(productType, soldNow);
+      : (() => {
+          const fromType = getLuxuryCategoryFromType(productType, soldNow);
+          if (fromType !== "Other ") return fromType;
+          const fromTitle = detectLuxuryCategoryFromTitle(name, description);
+          return fromTitle ?? "Other ";
+        })();
   const shopifyDepartment = department;
   const shopifyCategoryValue = categoryForMetafield;
   const category = shopifyCategoryValue;
