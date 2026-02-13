@@ -1143,6 +1143,13 @@ const SHOE_KEYWORDS = [
   "slides", "slide", "ballerina", "oxfords", "oxford", "footwear", "shoes", "shoe",
 ];
 
+/** True if title/description indicate footwear — checked before product_type so shoes with type "Accessories" become Other. */
+function isShoeProduct(title, descriptionHtml) {
+  const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const text = [(title || "").trim(), stripHtml(descriptionHtml || "")].filter(Boolean).join(" ").toLowerCase();
+  return text && SHOE_KEYWORDS.some((kw) => matchWordBoundary(text, kw));
+}
+
 /** Detect luxury category from title/description when product_type is empty or unmatched. Title-first: match on title before description so accessory mentions (e.g. "comes with clutch") don't override the main product. */
 function detectLuxuryCategoryFromTitle(title, descriptionHtml) {
   const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
@@ -1847,10 +1854,10 @@ async function syncSingleProduct(product, cache, options = {}) {
     department === "Furniture & Home"
       ? mapFurnitureCategoryForShopify(detectCategoryFurniture(name, description, getProductTagsArray(product), dimensions))
       : (() => {
-          const fromType = getLuxuryCategoryFromType(productType, soldNow);
-          if (fromType !== "Other ") return fromType;
+          if (isShoeProduct(name, description)) return "Other ";
           const fromTitle = detectLuxuryCategoryFromTitle(name, description);
-          return fromTitle ?? "Other ";
+          if (fromTitle != null) return fromTitle;
+          return getLuxuryCategoryFromType(productType, soldNow) ?? "Other ";
         })();
   const shopifyDepartment = department;
   const shopifyCategoryValue = categoryForMetafield;

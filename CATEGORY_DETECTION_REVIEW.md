@@ -13,12 +13,14 @@ Title/description uses **word-boundary matching** and iterates categories in **i
 
 ## Flow (Luxury Goods only)
 
+**Title/description first, product_type fallback.** We run through the full category keyword list from title+description before trusting product_type.
+
 ```
-product_type present?
-  └─ Yes → getLuxuryCategoryFromType(productType)
-       └─ Exact match in TYPE_TO_LUXURY_CATEGORY? → use it
-       └─ Else → "Other " → fall through to detectLuxuryCategoryFromTitle
-  └─ No  → "Other " → detectLuxuryCategoryFromTitle
+1. isShoeProduct(title, description) → if match, "Other "
+2. detectLuxuryCategoryFromTitle(title, description) → iterate all CATEGORY_KEYWORDS
+   └─ If match → use it (title semantics win over product_type)
+3. getLuxuryCategoryFromType(productType) → fallback only when title/description yield no match
+```
 
 detectLuxuryCategoryFromTitle(title, description):
   1. Combine title + description (HTML stripped), lowercase

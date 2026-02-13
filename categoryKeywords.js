@@ -1,4 +1,11 @@
-export const CATEGORY_KEYWORDS = { 
+export const CATEGORY_KEYWORDS = {
+  Luggage: [
+    "luggage", "luggage bag", "travel bag", "travel luggage", "briefcase", "travel case", "weekender", "duffle", "duffel",
+    "keepall", "carry-on", "garment bag", "overnight bag",
+    "pilot case", "business bag", "portfolio bag", "roller bag",
+    "rolling suitcase", "train case", "steamer bag", "travel pouch"
+  ],
+
   Handbags: [
     "handbag", "handbags", "shoulder bag", "top handle", "top-handle", "top handle bag", "hobo", "satchel",
     "bowler", "structured", "shopper", "shopping bag",
@@ -46,13 +53,6 @@ export const CATEGORY_KEYWORDS = {
     "passport case", "fold wallet", "envelope wallet",
     "flap wallet", "coin purse", "checkbook cover",
     "organizer pouch"
-  ],
-
-  Luggage: [
-    "luggage", "luggage bag", "travel bag", "briefcase", "travel case", "weekender", "duffle", "duffel",
-    "keepall", "carry-on", "garment bag", "overnight bag",
-    "pilot case", "business bag", "portfolio bag", "roller bag",
-    "rolling suitcase", "train case", "steamer bag", "travel pouch"
   ],
 
   Scarves: [

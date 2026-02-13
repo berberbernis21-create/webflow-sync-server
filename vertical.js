@@ -41,6 +41,8 @@ const FURNITURE_SIGNALS = [
   "wood",
   "rack",
   "stands",
+  "pedestal",
+  "drawers",
   "sofa",
   "chair",
   "table",
@@ -172,17 +174,19 @@ export function detectVertical(product) {
     if (hasFurnitureInCombined) return "furniture";
   }
 
-  // 3) Known luxury brand in vendor or title → luxury
-  if (detectBrandFromProduct(product.title, product.vendor)) return "luxury";
-
   const tagsStr = getTagsArray(product).join(" ");
-  // 4) Type/tag signals: furniture vs luxury
-  if (textMatchesAny(product.product_type, FURNITURE_SIGNALS) || textMatchesAny(tagsStr, FURNITURE_SIGNALS)) {
+  // 3) Type/tag/NAME signals: furniture vs luxury — check BEFORE luxury brand so product semantics win
+  // (e.g. "Wood Pedestal" in title = furniture even if brand is in luxury list)
+  const nameTypeTags = nameAndTags;
+  if (textMatchesAny(product.product_type, FURNITURE_SIGNALS) || textMatchesAny(tagsStr, FURNITURE_SIGNALS) || textMatchesAny(nameTypeTags, FURNITURE_SIGNALS)) {
     return "furniture";
   }
   if (textMatchesAny(product.product_type, LUXURY_SIGNALS) || textMatchesAny(tagsStr, LUXURY_SIGNALS)) {
     return "luxury";
   }
+
+  // 4) Known luxury brand in vendor or title → luxury (after furniture semantics)
+  if (detectBrandFromProduct(product.title, product.vendor)) return "luxury";
 
   // 5) Luxury categories in full combined (word-boundary)
   const luxuryCategories = Object.values(CATEGORY_KEYWORDS).flat();
