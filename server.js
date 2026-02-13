@@ -1352,13 +1352,26 @@ function formatDimensionsForDescription(dims) {
   return sizeLine || weightLine || "";
 }
 
-/** Strip existing dimensions block from description to prevent duplication. */
+/** Strip existing dimensions/weight block(s) from description to prevent duplication.
+ * Must match BOTH formats we emit:
+ * 1) Dimensions: ... Weight: ... (furniture with size + weight)
+ * 2) Weight: N lb. (handbags with weight only - was not matched before, causing repeated appends)
+ * Also strips any number of trailing duplicate blocks from prior bug.
+ */
 function stripExistingDimensions(descriptionHtml) {
   if (!descriptionHtml || typeof descriptionHtml !== "string") return "";
-  // Match pattern: <br><br>Dimensions: ... Weight: ... (at the end)
-  // This handles our formatted dimensions block that we append
-  const pattern = /(<br\s*\/?>\s*){2,}Dimensions:.*?(?:Weight:.*?)?$/is;
-  return descriptionHtml.replace(pattern, "").trim();
+  let s = descriptionHtml;
+  // Strip trailing blocks in a loop (handles multiple duplicates from prior bug)
+  for (let prev = ""; prev !== s; ) {
+    prev = s;
+    // Pattern 1: <br><br>Dimensions: ... (optional Weight: ...)
+    s = s.replace(/(<br\s*\/?>\s*){2,}Dimensions:[\s\S]*?Weight:\s*[\d.]+?\s*lb\.?$/i, "").trim();
+    s = s.replace(/(<br\s*\/?>\s*){2,}Dimensions:[\s\S]*?$/i, "").trim();
+    // Pattern 2: <br><br>Weight: N lb. (weight-only — handbags)
+    s = s.replace(/(<br\s*\/?>\s*){2,}Weight:\s*[\d.]+?\s*lb\.?$/i, "").trim();
+    s = s.replace(/(<br\s*\/?>\s*)+Weight:\s*[\d.]+?\s*lb\.?$/i, "").trim();
+  }
+  return s.trim();
 }
 
 /** Webflow SKU dimension fields must be numbers; omit keys when value is null/NaN. */
