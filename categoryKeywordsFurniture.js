@@ -12,11 +12,13 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
     "couch", "couches", "chair", "chairs", "armchair", "armchairs", "accent chair",
     "slipper chair", "bergere", "chaise", "chaises", "recliner", "recliners",
     "bar stool", "bar stools", "barstool", "barstools",
+    "counter stool", "counter stools", "kitchen stool", "kitchen stools",
     "table", "tables", "coffee table", "coffee tables", "side table", "side tables",
-    "end table", "end tables", "console table", "console tables",
+    "end table", "end tables", "console", "consoles", "console table", "console tables",
     "media console", "media consoles", "tv stand", "tv stands",
     "bookshelf", "bookshelves", "bookcase", "bookcases",
-    "entertainment center", "credenza", "cabinet", "ottoman", "ottomans",
+    "entertainment center", "credenza", "cabinet", "cabinets", "ottoman", "ottomans",
+    "drawer", "drawers", "case goods",
     "settee", "settees", "canape", "divan", "chesterfield",
     "nesting tables", "drink table", "cocktail table", "lift top table",
     "hall tree", "hall table", "sofa table"
@@ -75,6 +77,7 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
   Accessories: [
     "vase", "vases", "tray", "trays", "decor", "sculpture", "sculptures",
     "bowl", "bowls", "jar", "jars", "planter", "planters",
+    "box", "boxes", "trinket box", "storage box", "decorative box", "keepsake box",
     "basket", "baskets", "figurine", "figurines", "bookend", "bookends",
     "centerpiece", "centerpieces", "candlestick", "candlesticks",
     "picture frame", "frames", "clock", "clocks", "mantel", "mantle",
