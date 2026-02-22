@@ -1916,6 +1916,22 @@ async function syncSingleProduct(product, cache, options = {}) {
 
   const currentHash = shopifyHash(product);
 
+  // Early skip: if cache says unchanged and not newly sold, avoid Webflow API calls entirely
+  const previousHash = cacheEntry?.hash || null;
+  const hashUnchanged = previousHash && JSON.stringify(currentHash) === JSON.stringify(previousHash);
+  const newlySoldCheck = (previousQty === null || previousQty > 0) && qty !== null && qty <= 0;
+  if (cacheEntry?.webflowId && hashUnchanged && !newlySoldCheck) {
+    webflowLog("info", { event: "sync_product.skip_early_no_webflow", shopifyProductId, productTitle: name, webflowId: cacheEntry.webflowId });
+    cache[shopifyProductId] = {
+      hash: currentHash,
+      webflowId: cacheEntry.webflowId,
+      lastQty: qty,
+      vertical,
+    };
+    webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "skip", webflowId: cacheEntry.webflowId, vertical });
+    return { operation: "skip", id: cacheEntry.webflowId };
+  }
+
   webflowLog("info", {
     event: "sync_product.entry",
     shopifyProductId,
