@@ -139,25 +139,58 @@ function webflowFailureLog(method, url, status, responseBody, requestBody) {
 
 // Axios interceptors: only for api.webflow.com
 const WEBFLOW_ORIGIN = "https://api.webflow.com";
-axios.interceptors.request.use((config) => {
-  if (LOG_REQUESTS && config.url && String(config.url).startsWith(WEBFLOW_ORIGIN)) {
+const WEBFLOW_MIN_DELAY_MS = Math.max(500, parseInt(process.env.WEBFLOW_MIN_DELAY_MS || "1000", 10)); // ~60 req/min; use 600 for CMS (120/min)
+const WEBFLOW_429_MAX_RETRIES = Math.min(5, Math.max(1, parseInt(process.env.WEBFLOW_429_MAX_RETRIES || "3", 10)));
+
+let lastWebflowRequestTime = 0;
+
+axios.interceptors.request.use(async (config) => {
+  if (!config.url || !String(config.url).startsWith(WEBFLOW_ORIGIN)) return config;
+  const now = Date.now();
+  const elapsed = now - lastWebflowRequestTime;
+  if (elapsed < WEBFLOW_MIN_DELAY_MS) {
+    await new Promise((r) => setTimeout(r, WEBFLOW_MIN_DELAY_MS - elapsed));
+  }
+  lastWebflowRequestTime = Date.now();
+  if (LOG_REQUESTS) {
     webflowRequestLog(config.method?.toUpperCase() ?? "GET", config.url, config.data);
   }
   return config;
 });
 axios.interceptors.response.use(
   (response) => response,
-  (err) => {
-    const url = err.config?.url;
-    if (url && String(url).startsWith(WEBFLOW_ORIGIN)) {
-      webflowFailureLog(
-        err.config?.method?.toUpperCase() ?? "?",
-        url,
-        err.response?.status,
-        err.response?.data,
-        err.config?.data
-      );
+  async (err) => {
+    const config = err.config;
+    const url = config?.url;
+    if (!url || !String(url).startsWith(WEBFLOW_ORIGIN)) return Promise.reject(err);
+
+    const status = err.response?.status;
+    const retryCount = config.__webflowRetryCount ?? 0;
+
+    if (status === 429 && retryCount < WEBFLOW_429_MAX_RETRIES) {
+      const retryAfter = err.response?.headers?.["retry-after"];
+      const waitSec = retryAfter != null ? parseInt(String(retryAfter), 10) : 60;
+      const waitMs = Math.min(120000, Math.max(5000, (Number.isNaN(waitSec) ? 60 : waitSec) * 1000));
+      webflowLog("warn", {
+        event: "webflow.429_retry",
+        url: config.url,
+        retryCount: retryCount + 1,
+        maxRetries: WEBFLOW_429_MAX_RETRIES,
+        waitMs,
+        retryAfter: retryAfter ?? "default 60s",
+      });
+      await new Promise((r) => setTimeout(r, waitMs));
+      config.__webflowRetryCount = retryCount + 1;
+      return axios(config);
     }
+
+    webflowFailureLog(
+      config?.method?.toUpperCase() ?? "?",
+      url,
+      status,
+      err.response?.data,
+      config?.data
+    );
     return Promise.reject(err);
   }
 );
@@ -2382,7 +2415,7 @@ app.post("/sync-all", async (req, res) => {
     }
 
     const duplicateEmailSentFor = new Set();
-    const concurrency = Math.min(Math.max(1, parseInt(process.env.SYNC_CONCURRENCY || "5", 10) || 1), 15);
+    const concurrency = Math.min(Math.max(1, parseInt(process.env.SYNC_CONCURRENCY || "3", 10) || 1), 15);
 
     for (let i = 0; i < products.length; i += concurrency) {
       const chunk = products.slice(i, i + concurrency);
