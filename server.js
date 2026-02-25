@@ -1167,22 +1167,6 @@ function hasFurnitureOrArtSignals(product) {
   return signals.some((w) => combined.includes(w));
 }
 
-/** True when title or description clearly indicate luxury (footwear, bags, jewelry, barrette, pouch). Override: these must never be Furniture. */
-function hasStrongLuxurySignalsInTitle(product) {
-  const title = (product.title || "").toLowerCase();
-  const desc = (product.body_html || "").replace(/<[^>]*>/g, " ").toLowerCase();
-  const combined = [title, desc].join(" ");
-  const luxuryTitleWords = [
-    "boots", "boot", "heels", "heel", "mules", "mule", "sandals", "sandal", "shoes", "shoe", "loafers", "loafer",
-    "pumps", "pump", "flats", "flat", "sneakers", "sneaker", "slides", "slide", "footwear", "wedges", "stilettos", "oxfords",
-    "handbag", "handbags", "tote bag", "tote", "totes", "bag", "bags", "pouch", "pouches", "clutch", "clutches",
-    "wallet", "wallets", "crossbody", "backpack", "backpacks", "satchel", "purse", "purses",
-    "bracelet", "bracelets", "necklace", "necklaces", "earring", "earrings", "jewelry", "barrette", "barrettes",
-    "ring", "rings", "pendant", "pendants", "brooch", "brooches", "charm", "charms",
-  ];
-  return luxuryTitleWords.some((w) => combined.includes(w));
-}
-
 /** True when product is obviously luxury (jewelry, earring, bracelet, pouch, or clearly a luxury accessory).
  *  IMPORTANT: Brand alone is NOT enough — we require accessory/jewelry cues so furniture/housewares from luxury brands stay in Furniture & Home.
  */
@@ -1193,8 +1177,7 @@ function isClearlyLuxury(product) {
   const combined = [title, tagsStr, desc].join(" ");
   const clearlyLuxuryWords = [
     "jewelry", "earring", "earrings", "bracelet", "bracelets", "necklace", "necklaces",
-    "pouch", "barrette", "barrettes", "ring", "rings", "pendant", "pendants", "brooch", "brooches",
-    "designer accessories", "statement jewelry", "costume jewelry", "luxury-collection"
+    "pouch", "designer accessories", "statement jewelry", "costume jewelry", "luxury-collection"
   ];
   if (clearlyLuxuryWords.some((w) => combined.includes(w))) return true;
   // Brand-based override ONLY when it looks like a wearable/accessory (bag, clutch, scarf, wallet, belt, etc.).
@@ -1203,8 +1186,7 @@ function isClearlyLuxury(product) {
     const accessoryWords = [
       "bag", "bags", "handbag", "handbags", "tote", "totes", "crossbody",
       "wallet", "wallets", "clutch", "clutches", "backpack", "backpacks",
-      "scarf", "scarves", "belt", "belts", "pouch", "small bag",
-      "boots", "boot", "heels", "heel", "mules", "mule", "sandals", "shoes", "shoe", "loafers", "pumps", "flats", "sneakers", "slides", "footwear"
+      "scarf", "scarves", "belt", "belts", "pouch", "small bag"
     ];
     if (accessoryWords.some((w) => combined.includes(w))) return true;
   }
@@ -1869,10 +1851,6 @@ async function syncSingleProduct(product, cache, options = {}) {
       cacheEntry?.vertical === "furniture" && detectedVertical === "luxury"
         ? "luxury"
         : (cacheEntry?.vertical ?? detectedVertical);
-  }
-  // RULE: Shoes, bags, jewelry, barrette, pouch in title/description must never be Furniture — override any wrong type/tags.
-  if (vertical === "furniture" && hasStrongLuxurySignalsInTitle(product)) {
-    vertical = "luxury";
   }
   const verticalCorrected = cacheEntry?.vertical === "furniture" && detectedVertical === "luxury";
   webflowLog("info", {

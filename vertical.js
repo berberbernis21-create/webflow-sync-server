@@ -133,11 +133,8 @@ const TITLE_LUXURY_WORDS = [
   "clutch", "tote", "totes", "crossbody", "wallet", "wallets", "luggage", "satchel", "briefcase",
   "agenda", "agenda cover", "belt", "belts", "scarf", "scarves",
   "purse", "purses", "card holder", "key pouch", "woc", "wallet on chain",
-  "ballet flats", "flats", "flat", "heels", "heel", "pumps", "pump", "sneakers", "sneaker", "loafers", "loafer",
-  "boots", "boot", "sandals", "sandal", "mules", "mule", "slides", "slide", "shoes", "shoe", "footwear",
-  "wedges", "stilettos", "oxfords",
+  "ballet flats", "flats", "heels", "pumps", "sneakers", "loafers", "boots", "sandals", "mules", "slides", "shoes",
   "jewelry", "earring", "earrings", "bracelet", "bracelets", "necklace", "necklaces", "pouch",
-  "barrette", "barrettes", "ring", "rings", "pendant", "pendants", "brooch", "brooches", "charm", "charms",
 ];
 
 /** Substring signals for luxury — avoid phrases that are furniture (e.g. luggage rack). */
