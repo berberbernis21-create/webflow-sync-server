@@ -1147,7 +1147,9 @@ function getDepartmentFromType(productType) {
   return null;
 }
 
-/** True when product is obviously luxury (jewelry, earring, bracelet, pouch, or known luxury brand). Overrides wrong Type (e.g. "Dining Room") so these go to Luxury, not Furniture. */
+/** True when product is obviously luxury (jewelry, earring, bracelet, pouch, or clearly a luxury accessory).
+ *  IMPORTANT: Brand alone is NOT enough — we require accessory/jewelry cues so furniture/housewares from luxury brands stay in Furniture & Home.
+ */
 function isClearlyLuxury(product) {
   const title = (product.title || "").toLowerCase();
   const tagsStr = getProductTagsArray(product).join(" ").toLowerCase();
@@ -1158,7 +1160,16 @@ function isClearlyLuxury(product) {
     "pouch", "designer accessories", "statement jewelry", "costume jewelry", "luxury-collection"
   ];
   if (clearlyLuxuryWords.some((w) => combined.includes(w))) return true;
-  if (detectBrandFromProduct(product.title, product.vendor)) return true;
+  // Brand-based override ONLY when it looks like a wearable/accessory (bag, clutch, scarf, wallet, belt, etc.).
+  const isLuxuryBrand = detectBrandFromProduct(product.title, product.vendor);
+  if (isLuxuryBrand) {
+    const accessoryWords = [
+      "bag", "bags", "handbag", "handbags", "tote", "totes", "crossbody",
+      "wallet", "wallets", "clutch", "clutches", "backpack", "backpacks",
+      "scarf", "scarves", "belt", "belts", "pouch", "small bag"
+    ];
+    if (accessoryWords.some((w) => combined.includes(w))) return true;
+  }
   return false;
 }
 
