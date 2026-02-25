@@ -124,7 +124,7 @@ function getCombinedProductText(product) {
   return [nameAndTags, descriptionText].filter(Boolean).join(" ").toLowerCase();
 }
 
-/** Strong bag/accessory/footwear words in title → luxury (handbag, belt, shoe, etc. are very easy to detect). */
+/** Strong bag/accessory/footwear/jewelry words in title → luxury (handbag, belt, shoe, earring, etc. are very easy to detect). */
 const TITLE_LUXURY_WORDS = [
   "backpack", "backpacks", "handbag", "handbags", "bag", "bags",
   "tote bag", "tote bags", "sling bag", "sling bags", "envelope bag",
@@ -134,6 +134,7 @@ const TITLE_LUXURY_WORDS = [
   "agenda", "agenda cover", "belt", "belts", "scarf", "scarves",
   "purse", "purses", "card holder", "key pouch", "woc", "wallet on chain",
   "ballet flats", "flats", "heels", "pumps", "sneakers", "loafers", "boots", "sandals", "mules", "slides", "shoes",
+  "jewelry", "earring", "earrings", "bracelet", "bracelets", "necklace", "necklaces", "pouch",
 ];
 
 /** Substring signals for luxury — avoid phrases that are furniture (e.g. luggage rack). */

@@ -1124,6 +1124,21 @@ function getDepartmentFromType(productType) {
   return null;
 }
 
+/** True when product is obviously luxury (jewelry, earring, bracelet, pouch, or known luxury brand). Overrides wrong Type (e.g. "Dining Room") so these go to Luxury, not Furniture. */
+function isClearlyLuxury(product) {
+  const title = (product.title || "").toLowerCase();
+  const tagsStr = getProductTagsArray(product).join(" ").toLowerCase();
+  const desc = (product.body_html || "").replace(/<[^>]*>/g, " ").toLowerCase();
+  const combined = [title, tagsStr, desc].join(" ");
+  const clearlyLuxuryWords = [
+    "jewelry", "earring", "earrings", "bracelet", "bracelets", "necklace", "necklaces",
+    "pouch", "designer accessories", "statement jewelry", "costume jewelry", "luxury-collection"
+  ];
+  if (clearlyLuxuryWords.some((w) => combined.includes(w))) return true;
+  if (detectBrandFromProduct(product.title, product.vendor)) return true;
+  return false;
+}
+
 // Existing taxonomy: Furniture & Home metafield values (exact)
 const FURNITURE_TAXONOMY = ["Living Room", "Dining Room", "Office Den", "Rugs", "Art / Mirrors", "Bedroom", "Accessories", "Outdoor / Patio", "Lighting"];
 // Type → Furniture & Home metafield value (normalized type key → taxonomy value)
@@ -1717,12 +1732,14 @@ async function syncSingleProduct(product, cache, options = {}) {
   const cacheEntry = getCacheEntry(cache, shopifyProductId);
   const duplicateEmailSentFor = options.duplicateEmailSentFor ?? null;
 
-  // Department/vertical from Type first (authoritative). Fallback to detectVertical when Type empty/unmatched.
+  // Department/vertical from Type first (authoritative). Override: if Type says Furniture but product is clearly luxury (jewelry, earring, bracelet, pouch, luxury brand), use luxury.
   const productTypeForVertical = (product.product_type ?? "").trim();
   const departmentFromType = getDepartmentFromType(productTypeForVertical);
   const detectedVertical = detectVertical(product);
   let vertical;
-  if (departmentFromType != null) {
+  if (departmentFromType === "Furniture & Home" && isClearlyLuxury(product)) {
+    vertical = "luxury";
+  } else if (departmentFromType != null) {
     vertical = departmentFromType === "Furniture & Home" ? "furniture" : "luxury";
   } else {
     vertical =
