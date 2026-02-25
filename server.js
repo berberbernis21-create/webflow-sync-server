@@ -939,13 +939,19 @@ async function removeConditionOptionIfFurniture(product) {
 /* ======================================================
    HASH FOR CHANGE DETECTION
    Includes dimensions (variant + metafields + tags) so dimension changes trigger an update.
+   body_html is normalized (collapse whitespace) so Shopify formatting drift doesn't cause false "changed".
 ====================================================== */
+function normalizeHtmlForHash(html) {
+  if (html == null || typeof html !== "string") return html;
+  return html.replace(/\s+/g, " ").trim();
+}
+
 function shopifyHash(product) {
   const dimensions = getDimensionsFromProduct(product);
   return {
     title: product.title,
     vendor: product.vendor,
-    body_html: product.body_html,
+    body_html: normalizeHtmlForHash(product.body_html),
     price: product.variants?.[0]?.price || null,
     qty: product.variants?.[0]?.inventory_quantity ?? null,
     images: (product.images || []).map((i) => i.src),
@@ -2325,15 +2331,26 @@ async function syncSingleProduct(product, cache, options = {}) {
 function fieldDataEffectivelyEqual(newFD, existingFD) {
   if (!newFD || typeof newFD !== "object") return !existingFD;
   if (!existingFD || typeof existingFD !== "object") return false;
+  const strNorm = (v) => (v == null ? "" : String(v).replace(/\s+/g, " ").trim());
+  const priceNorm = (v) => {
+    if (v == null) return null;
+    const num = parseFloat(String(v).replace(/[^0-9.-]/g, ""));
+    return Number.isNaN(num) ? String(v) : num;
+  };
   for (const key of Object.keys(newFD)) {
-    const n = newFD[key];
-    const e = existingFD[key];
+    let n = newFD[key];
+    let e = existingFD[key];
     if (n === e) continue;
     if (n == null && e == null) continue;
     if (typeof n === "object" && n !== null && typeof e === "object" && e !== null) {
       if (n.url != null && e.url != null && n.url === e.url) continue;
       if (JSON.stringify(n) === JSON.stringify(e)) continue;
     }
+    if (key === "description" || key === "body_html") {
+      if (strNorm(n) === strNorm(e)) continue;
+    }
+    if (key === "price" && priceNorm(n) === priceNorm(e)) continue;
+    if (["name", "brand", "slug", "category", "shopify-product-id", "shopify-url"].includes(key) && strNorm(n) === strNorm(e)) continue;
     if (String(n) === String(e)) continue;
     return false;
   }
