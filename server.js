@@ -1163,7 +1163,7 @@ function hasFurnitureOrArtSignals(product) {
   const title = (product.title || "").toLowerCase();
   const desc = (product.body_html || "").replace(/<[^>]*>/g, " ").toLowerCase();
   const combined = [title, desc].join(" ");
-  const signals = ["painting", "paintings", "canvas", "acrylic on canvas", "art", "mirror", "mirrors", "rug", "rugs", "furniture", "decor", "lamp", "lamps", "seating", "case goods", "living room", "dining room", "bedroom", "outdoor", "patio"];
+  const signals = ["painting", "paintings", "canvas", "acrylic on canvas", "art", "mirror", "mirrors", "rug", "rugs", "furniture", "decor", "lamp", "lamps", "seating", "case goods", "living room", "dining room", "bedroom", "outdoor", "patio", "pillow", "pillows"];
   return signals.some((w) => combined.includes(w));
 }
 
@@ -1177,7 +1177,7 @@ function isClearlyLuxury(product) {
   const combined = [title, tagsStr, desc].join(" ");
   const clearlyLuxuryWords = [
     "jewelry", "earring", "earrings", "bracelet", "bracelets", "necklace", "necklaces",
-    "pouch", "designer accessories", "statement jewelry", "costume jewelry", "luxury-collection"
+    "pouch", "barrette", "barrettes", "designer accessories", "statement jewelry", "costume jewelry", "luxury-collection"
   ];
   if (clearlyLuxuryWords.some((w) => combined.includes(w))) return true;
   // Brand-based override ONLY when it looks like a wearable/accessory (bag, clutch, scarf, wallet, belt, etc.).

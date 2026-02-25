@@ -132,7 +132,7 @@ const SHOE_JEWELRY_TITLE_WORDS = [
   "shoe", "shoes", "footwear", "sneaker", "sneakers", "heel", "heels", "boot", "boots",
   "sandal", "sandals", "loafer", "loafers", "pump", "pumps", "mule", "mules", "slide", "slides", "flat", "flats",
   "jewelry", "jewellery", "jewel", "earring", "earrings", "bracelet", "bracelets",
-  "necklace", "necklaces", "ring", "rings", "pendant", "pendants", "brooch", "barrette",
+  "necklace", "necklaces", "ring", "rings", "pendant", "pendants", "brooch", "barrette", "barrettes",
 ];
 
 /** Description phrases that mean "this product is a furniture item" (e.g. jewelry box, shoe rack). */
@@ -156,7 +156,7 @@ const TITLE_LUXURY_WORDS = [
   "agenda", "agenda cover", "belt", "belts", "scarf", "scarves",
   "purse", "purses", "card holder", "key pouch", "woc", "wallet on chain",
   "ballet flats", "flats", "heels", "pumps", "sneakers", "loafers", "boots", "sandals", "mules", "slides", "shoes",
-  "jewelry", "earring", "earrings", "bracelet", "bracelets", "necklace", "necklaces", "pouch",
+  "jewelry", "earring", "earrings", "bracelet", "bracelets", "necklace", "necklaces", "pouch", "barrette", "barrettes",
 ];
 
 /** Substring signals for luxury — avoid phrases that are furniture (e.g. luggage rack). */
@@ -184,6 +184,10 @@ export function detectVertical(product) {
   const title = (product.title || "").toLowerCase();
   const typeAndTags = [product.product_type || "", getTagsArray(product).join(" ")].join(" ").toLowerCase();
   const descriptionText = stripHtml(product.body_html || "").toLowerCase();
+
+  // 0a) Pillow and painting always → furniture (before any luxury checks; "canvas tote bag" has no pillow/painting so stays luxury in step 1)
+  const alwaysFurnitureWords = ["pillow", "pillows", "painting", "paintings"];
+  if (alwaysFurnitureWords.some((w) => matchWordBoundary(nameAndTags, w))) return "furniture";
 
   // 0) Furniture trap: luggage rack, coat rack, jewelry box, shoe rack, etc. — check FIRST so they don't match luxury
   const textForTrap = `${title} ${typeAndTags}`;

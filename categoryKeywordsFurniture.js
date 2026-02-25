@@ -81,7 +81,7 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
     "basket", "baskets", "figurine", "figurines", "bookend", "bookends",
     "centerpiece", "centerpieces", "candlestick", "candlesticks",
     "picture frame", "frames", "clock", "clocks", "mantel", "mantle",
-    "throw pillow", "pillow", "cushion", "blanket", "throw",
+    "throw pillow", "pillow", "pillows", "cushion", "blanket", "throw",
     "curtain", "curtains", "drapery", "draperies", "valance",
     "door knocker", "door hardware", "hardware", "knob", "pull",
     "umbrella stand", "coat rack", "hat rack", "luggage rack", "magazine rack", "wine rack", "key holder",
