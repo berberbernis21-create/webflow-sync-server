@@ -9,7 +9,7 @@ import { CATEGORY_KEYWORDS } from "./categoryKeywords.js";
 import { CATEGORY_KEYWORDS_FURNITURE, CATEGORY_KEYWORDS_FURNITURE_WEAK } from "./categoryKeywordsFurniture.js";
 import { detectBrandFromProduct } from "./brand.js";
 import { detectBrandFromProductFurniture } from "./brandFurniture.js";
-import { detectVertical, hasStrongLuxurySignalsInTitle } from "./vertical.js";
+import { classifyWithLLM } from "./llmVerticalClassifier.js";
 
 dotenv.config();
 
@@ -1134,7 +1134,7 @@ const LUXURY_TYPE_SIGNALS = [
   "crossbody", "backpack", "backpacks", "luggage", "clutch", "small bag",
 ];
 
-/** Returns "Furniture & Home" | "Luxury Goods" | null. null = use fallback (detectVertical). */
+/** Returns "Furniture & Home" | "Luxury Goods" | null. (Legacy; vertical is now from LLM classifier.) */
 function getDepartmentFromType(productType) {
   const n = normalizeTypeForMatch(productType);
   if (!n) return null;
@@ -1830,42 +1830,29 @@ async function syncSingleProduct(product, cache, options = {}) {
   const cacheEntry = getCacheEntry(cache, shopifyProductId);
   const duplicateEmailSentFor = options.duplicateEmailSentFor ?? null;
 
-  // Department/vertical from Type first (authoritative). Override: if Type says Furniture but product is clearly luxury (jewelry, earring, bracelet, pouch, luxury brand), use luxury.
-  // Also: if Type is generic "Accessories" (Luxury bucket) but title/description are clearly art or furniture (painting, canvas, art, etc.), keep in Furniture & Home.
-  const productTypeForVertical = (product.product_type ?? "").trim();
-  let departmentFromType = getDepartmentFromType(productTypeForVertical);
-  if (departmentFromType === "Luxury Goods" && isGenericLuxuryTypeOnly(productTypeForVertical) && hasFurnitureOrArtSignals(product)) {
-    departmentFromType = "Furniture & Home";
-  }
-  const detectedVerticalRaw = detectVertical(product);
-  // Hard override: if detector says luxury but the product clearly looks like art/furniture (painting, canvas, rug, mirror, etc.), keep it in Furniture.
-  // Do NOT override when title has strong bag/shoe/jewelry (e.g. "Canvas Tote Bag" = bag, not art).
-  const detectedVertical =
-    detectedVerticalRaw === "luxury" && hasFurnitureOrArtSignals(product) && !hasStrongLuxurySignalsInTitle(product)
-      ? "furniture"
-      : detectedVerticalRaw;
-  let vertical;
-  // If Type says Furniture & Home but the detector (or luxury heuristics) say Luxury, treat it as Luxury — unless it looks like art/furniture (handled above).
-  if (departmentFromType === "Furniture & Home" && (detectedVertical === "luxury" || isClearlyLuxury(product))) {
-    vertical = "luxury";
-  } else if (departmentFromType != null) {
-    vertical = departmentFromType === "Furniture & Home" ? "furniture" : "luxury";
-  } else {
-    vertical =
-      cacheEntry?.vertical === "furniture" && detectedVertical === "luxury"
-        ? "luxury"
-        : (cacheEntry?.vertical ?? detectedVertical);
-  }
+  // LLM-based vertical classification: LUXURY vs HOME_INTERIOR (replaces keyword classifier)
+  const llmLogPayload = {};
+  const llmResult = await classifyWithLLM(product, llmLogPayload, webflowLog);
+  const detectedVertical = llmResult.category === "LUXURY" ? "luxury" : "furniture";
+  let vertical =
+    cacheEntry?.vertical === "furniture" && detectedVertical === "luxury"
+      ? "luxury"
+      : (cacheEntry?.vertical ?? detectedVertical);
   const verticalCorrected = cacheEntry?.vertical === "furniture" && detectedVertical === "luxury";
   webflowLog("info", {
     event: "vertical.resolved",
     shopifyProductId,
-    fromType: departmentFromType != null,
     detectedVertical,
     cacheVertical: cacheEntry?.vertical ?? null,
     vertical,
     corrected: verticalCorrected,
+    llmConfidence: llmResult.confidence,
+    llmReasoning: llmResult.reasoning?.slice(0, 120),
+    llmOverride: llmLogPayload.override ?? null,
   });
+  if (llmLogPayload.raw != null || llmLogPayload.override) {
+    webflowLog("info", { event: "llm_vertical.audit", shopifyProductId, ...llmLogPayload });
+  }
 
   // When we correct furniture → luxury, remove the mistaken product from Webflow (archive) and clear cache so we create in luxury.
   // If it's already archived, don't re-archive and don't send duplicate email.

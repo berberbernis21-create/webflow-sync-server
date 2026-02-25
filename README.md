@@ -23,6 +23,11 @@ Dual-pipeline sync: **Luxury / Accessories** and **Furniture & Home**. Each vert
 **Furniture & Home (RESALE)**  
 `RESALE_TOKEN`, `RESALE_Products_Collection_ID`, `RESALE_SKUs_Collection_ID`, `RESALE_WEBFLOW_SITE_ID`
 
+**LLM vertical classifier (required for sync)**  
+`OPENAI_API_KEY` — OpenAI API key for GPT-based LUXURY vs HOME_INTERIOR classification.  
+`OPENAI_VERTICAL_MODEL` — (optional) Model name, default `gpt-4o-mini`.  
+`LLM_VERTICAL_SECOND_PASS` — (optional) Set to `true` or `1` to run a second validation pass; if it disagrees with the first, result is forced to HOME_INTERIOR.
+
 **Furniture categories (required for “Pick Categories” to be set)**  
 Webflow ecommerce expects `category` to be an ItemRef (the 24-character hex ID of the category item from your Webflow Categories collection). Set one env var per category; the key is derived from the display name (spaces → `_`, `/` → `_`, uppercase, non‑alphanumeric removed):
 
@@ -44,7 +49,7 @@ Example: `FURNITURE_CATEGORY_LIVING_ROOM=507f1f77bcf86cd799439011` (use the real
 
 ## Behavior
 
-- **Vertical detection:** Product title, description (body), vendor, tags, product type → `luxury` or `furniture` (keyword/fuzzy matching so e.g. "silk scarf" in the description can classify as luxury).
+- **Vertical detection:** LLM-based (GPT): product title, description, vendor, tags, product type → `LUXURY` or `HOME_INTERIOR` (mapped to `luxury` / `furniture`). Uses semantic understanding; confidence < 0.65 or parse failure → HOME_INTERIOR. Strong furniture indicators force HOME_INTERIOR unless clearly wearable/jewelry. Optional second-pass validation can override LUXURY to HOME_INTERIOR on disagreement.
 - **Luxury:** Syncs to Luxury Webflow collection. SOLD → "Recently Sold" + hidden. Category from luxury keywords.
 - **Furniture:** Syncs to Furniture Webflow collection. SOLD → `sold: true`, item stays visible. Category from furniture keywords (fallback: Accessories). Dimensions (weight + optional metafields) and `dimensions_status` (present | missing) written when applicable.
 - **Shopify write-back:** `custom.department` (parent: "Furniture & Home" or "Luxury Goods"), `custom.category` (child: e.g. Living Room, Handbags), `custom.vertical`, `custom.dimensions_status` (furniture), vendor. Use these metafields in Shopify collection rules (e.g. Department is equal to Luxury Goods, Luxury Goods is equal to Handbags).
