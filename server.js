@@ -1517,6 +1517,41 @@ async function fetchAllShopifyProducts() {
 }
 
 /* ======================================================
+   SHOPIFY — FETCH SINGLE PRODUCT (confirm status before touching Webflow)
+   Returns { status: 'active'|'archived'|'draft'|'gone' } or null on request failure (don't assume).
+====================================================== */
+async function fetchShopifyProductStatus(productId) {
+  const store = process.env.SHOPIFY_STORE;
+  const token = process.env.SHOPIFY_ACCESS_TOKEN;
+  if (!store || !token) return null;
+  const url = `https://${store}.myshopify.com/admin/api/2024-01/products/${productId}.json`;
+  try {
+    const response = await axios.get(url, {
+      headers: {
+        "X-Shopify-Access-Token": token,
+        "Content-Type": "application/json",
+      },
+    });
+    const product = response.data?.product;
+    if (!product) return null;
+    const status = (product.status || "").toLowerCase();
+    if (status === "active") return { status: "active", product };
+    if (status === "archived") return { status: "archived", product };
+    if (status === "draft") return { status: "draft", product };
+    return { status: status || "unknown", product };
+  } catch (err) {
+    if (err.response?.status === 404) return { status: "gone" };
+    webflowLog("info", {
+      event: "shopify_fetch_one.failed",
+      shopifyProductId: productId,
+      status: err.response?.status,
+      message: err.message,
+    });
+    return null; // couldn't confirm — do not touch Webflow
+  }
+}
+
+/* ======================================================
    WEBFLOW — STRONG MATCHER (ID / URL / SLUG)
    Uses config (collectionId + token) for target collection.
 ====================================================== */
@@ -2379,30 +2414,61 @@ app.post("/sync-all", async (req, res) => {
       skipped = 0,
       sold = 0;
 
-    // detect disappeared Shopify items (Option A behaviour)
+    // Disappeared: in cache but not in this run's product list. Only touch Webflow when we've confirmed in Shopify that the product is not active.
     const previousIds = Object.keys(cache);
     const currentIds = products.map((p) => String(p.id));
     const disappeared = previousIds.filter((id) => !currentIds.includes(id));
 
+    const disappearedConcurrency = Math.min(10, Math.max(3, disappeared.length));
     webflowLog("info", {
       event: "sync-all.disappeared_check",
       previousIds: previousIds.length,
       currentIds: currentIds.length,
       disappeared: disappeared.length,
+      disappearedConcurrency,
     });
 
+    // Run Shopify status checks in parallel (capped) so many disappeared don't slow the run.
+    const confirmedById = {};
+    for (let i = 0; i < disappeared.length; i += disappearedConcurrency) {
+      const chunk = disappeared.slice(i, i + disappearedConcurrency);
+      const results = await Promise.all(chunk.map((id) => fetchShopifyProductStatus(id)));
+      chunk.forEach((id, idx) => {
+        confirmedById[id] = results[idx];
+      });
+    }
+
     for (const goneId of disappeared) {
+      const confirmed = confirmedById[goneId];
+      if (confirmed === null || confirmed === undefined) {
+        webflowLog("info", {
+          event: "sync-all.disappeared_skip_unconfirmed",
+          shopifyProductId: goneId,
+          reason: "fetch_failed_or_unknown",
+        });
+        continue;
+      }
+      if (confirmed.status === "active") {
+        webflowLog("info", {
+          event: "sync-all.disappeared_skip_still_active",
+          shopifyProductId: goneId,
+          reason: "product_still_active_in_shopify",
+        });
+        continue;
+      }
+      if (confirmed.status !== "gone" && confirmed.status !== "archived" && confirmed.status !== "draft") {
+        webflowLog("info", {
+          event: "sync-all.disappeared_skip_unconfirmed",
+          shopifyProductId: goneId,
+          reason: "shopify_status_unknown",
+          status: confirmed.status,
+        });
+        continue;
+      }
       const entry = getCacheEntry(cache, goneId);
       const vertical = entry?.vertical ?? "luxury";
       const config = getWebflowConfig(vertical);
       let existing = null;
-
-      webflowLog("info", {
-        event: "sync-all.disappeared_item",
-        shopifyProductId: goneId,
-        cacheWebflowId: entry?.webflowId ?? null,
-        vertical,
-      });
 
       if (entry?.webflowId) {
         if (vertical === "furniture" && config.siteId) {
@@ -2420,7 +2486,13 @@ app.post("/sync-all", async (req, res) => {
       }
 
       if (existing) {
-        webflowLog("info", { event: "sync-all.disappeared_mark_sold", shopifyProductId: goneId, webflowId: existing.id, vertical });
+        webflowLog("info", {
+          event: "sync-all.disappeared_mark_sold_confirmed",
+          shopifyProductId: goneId,
+          webflowId: existing.id,
+          vertical,
+          shopifyStatus: confirmed.status,
+        });
         await markAsSold(existing, vertical, config);
         sold++;
       } else {
@@ -2428,7 +2500,7 @@ app.post("/sync-all", async (req, res) => {
       }
 
       delete cache[goneId];
-      webflowLog("info", { event: "cache.mutated", shopifyProductId: goneId, op: "deleted", reason: "disappeared" });
+      webflowLog("info", { event: "cache.mutated", shopifyProductId: goneId, op: "deleted", reason: "disappeared_confirmed" });
     }
 
     const duplicateEmailSentFor = new Set();
