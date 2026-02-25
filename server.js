@@ -1838,9 +1838,11 @@ async function syncSingleProduct(product, cache, options = {}) {
     departmentFromType = "Furniture & Home";
   }
   const detectedVerticalRaw = detectVertical(product);
+  // Hard override: if detector says luxury but the product clearly looks like art/furniture (painting, canvas, rug, mirror, etc.), keep it in Furniture.
   const detectedVertical = detectedVerticalRaw === "luxury" && hasFurnitureOrArtSignals(product) ? "furniture" : detectedVerticalRaw;
   let vertical;
-  if (departmentFromType === "Furniture & Home" && isClearlyLuxury(product)) {
+  // If Type says Furniture & Home but the detector (or luxury heuristics) say Luxury, treat it as Luxury — unless it looks like art/furniture (handled above).
+  if (departmentFromType === "Furniture & Home" && (detectedVertical === "luxury" || isClearlyLuxury(product))) {
     vertical = "luxury";
   } else if (departmentFromType != null) {
     vertical = departmentFromType === "Furniture & Home" ? "furniture" : "luxury";
@@ -2121,6 +2123,20 @@ async function syncSingleProduct(product, cache, options = {}) {
     }
   }
 
+  // RULE: If an item exists in Webflow with this Shopify product ID anywhere, never create a new one.
+  // Final lookup by Shopify ID across both verticals so we never duplicate (e.g. cache/slug mismatch).
+  if (!existing) {
+    const inFurniture = furnitureProductIndex?.byShopifyId?.get(String(shopifyProductId));
+    const inLuxury = luxuryItemIndex?.byShopifyId?.get(String(shopifyProductId));
+    if (vertical === "furniture" && inFurniture) {
+      existing = inFurniture;
+      webflowLog("info", { event: "sync_product.found_by_shopify_id", shopifyProductId, productTitle: name, webflowId: existing.id, vertical, source: "furniture_index" });
+    } else if (vertical === "luxury" && inLuxury) {
+      existing = inLuxury;
+      webflowLog("info", { event: "sync_product.found_by_shopify_id", shopifyProductId, productTitle: name, webflowId: existing.id, vertical, source: "luxury_index" });
+    }
+  }
+
   if (existing) {
     webflowLog("info", { event: "sync_product.linked", shopifyProductId, productTitle: name, webflowId: existing.id });
 
@@ -2237,6 +2253,81 @@ async function syncSingleProduct(product, cache, options = {}) {
       productTitle: name,
       message: cacheEntry ? "CACHE MISS (Webflow item deleted) → Creating new" : "NO CACHE + NO MATCH → Creating new Webflow item",
     });
+
+    // RULE: Never create if an item with this Shopify product ID already exists in the TARGET vertical. Update the existing one; only PATCH if something changed.
+    const alreadyInFurniture = furnitureProductIndex?.byShopifyId?.get(String(shopifyProductId));
+    const alreadyInLuxury = luxuryItemIndex?.byShopifyId?.get(String(shopifyProductId));
+    const existingFromGuard = (detectedVertical === "furniture" && alreadyInFurniture) ? alreadyInFurniture : (detectedVertical === "luxury" && alreadyInLuxury) ? alreadyInLuxury : null;
+    if (existingFromGuard) {
+      webflowLog("info", {
+        event: "sync_product.found_existing_by_shopify_id",
+        shopifyProductId,
+        productTitle: name,
+        webflowId: existingFromGuard.id,
+        vertical: detectedVertical,
+        message: "Item already exists; updating instead of creating. Will only PATCH if data differs.",
+      });
+      const guardConfig = getWebflowConfig(detectedVertical);
+      const fieldData = buildWebflowFieldData({
+        vertical: detectedVertical,
+        name,
+        brand,
+        price,
+        description,
+        shopifyProductId,
+        shopifyUrl,
+        shopifySlug: slug,
+        productType: product.product_type,
+        category,
+        featuredImage,
+        gallery,
+        showOnWebflow,
+        soldNow,
+        dimensions,
+        dimensionsStatus,
+        existingSlug: existingFromGuard.fieldData?.slug,
+        newSlug: slug,
+      });
+      const existingFD = existingFromGuard.fieldData || {};
+      if (fieldDataEffectivelyEqual(fieldData, existingFD)) {
+        webflowLog("info", { event: "sync_product.skip_webflow_unchanged", shopifyProductId, productTitle: name, webflowId: existingFromGuard.id, message: "Existing item matches; not touching" });
+        cache[shopifyProductId] = { hash: currentHash, webflowId: existingFromGuard.id, lastQty: qty, vertical: detectedVertical };
+        webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "skip", webflowId: existingFromGuard.id, vertical: detectedVertical });
+        return { operation: "skip", id: existingFromGuard.id };
+      }
+      webflowLog("info", { event: "sync_product.updating", shopifyProductId, productTitle: name, webflowId: existingFromGuard.id, reason: "shopify_changed_and_webflow_differs" });
+      if (detectedVertical === "furniture" && guardConfig.siteId) {
+        await updateWebflowEcommerceProduct(guardConfig.siteId, existingFromGuard.id, fieldData, guardConfig.token, existingFromGuard);
+        await syncFurnitureEcommerceSku(product, existingFromGuard.id, guardConfig);
+      } else {
+        await axios.patch(
+          `https://api.webflow.com/v2/collections/${guardConfig.collectionId}/items/${existingFromGuard.id}`,
+          { fieldData },
+          {
+            headers: {
+              Authorization: `Bearer ${guardConfig.token}`,
+              "Content-Type": "application/json",
+            },
+          }
+        );
+      }
+      cache[shopifyProductId] = { hash: currentHash, webflowId: existingFromGuard.id, lastQty: qty, vertical: detectedVertical };
+      webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "update", webflowId: existingFromGuard.id, vertical: detectedVertical });
+      return { operation: "update", id: existingFromGuard.id };
+    }
+
+    // Sweep: if we're creating in Furniture, remove from Luxury so we never have the same Shopify ID in both.
+    if (detectedVertical === "furniture" && alreadyInLuxury) {
+      const luxuryConfig = getWebflowConfig("luxury");
+      if (luxuryConfig?.collectionId && luxuryConfig?.token) {
+        try {
+          await deleteWebflowCollectionItem(luxuryConfig.collectionId, alreadyInLuxury.id, luxuryConfig.token);
+          webflowLog("info", { event: "sweep.removed_from_luxury", shopifyProductId, webflowId: alreadyInLuxury.id, productTitle: name });
+        } catch (err) {
+          webflowLog("error", { event: "sweep.remove_luxury_failed", shopifyProductId, webflowId: alreadyInLuxury.id, message: err.message });
+        }
+      }
+    }
 
     // Sweep: if we're creating in Luxury, check if this product wrongly exists in Furniture (e.g. no cache / cache lost). Archive it so it doesn't stay in both places.
     if (detectedVertical === "luxury") {
