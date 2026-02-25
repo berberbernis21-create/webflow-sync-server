@@ -2628,14 +2628,13 @@ app.post("/sync-all", async (req, res) => {
 
       for (const result of results) {
         if (result.duplicateCorrected && result.duplicateLog) {
-          webflowLog("error", {
+          webflowLog("info", {
             event: "sync-all.duplicate_placement",
-            message: "Item was in multiple places; archived duplicate and re-synced. Throwing so run fails and email was sent.",
+            message: "Item was in Furniture but detected as Luxury; archived and re-synced to Luxury. Run continues so cache is saved.",
             ...result.duplicateLog,
           });
           await sendDuplicatePlacementEmail(result.duplicateLog, duplicateEmailSentFor);
-          const errMsg = `Duplicate placement: "${result.duplicateLog.productTitle}" (Shopify ID ${result.duplicateLog.shopifyProductId}) is archived. We re-synced to Luxury. Please go into the backend and delete the archived item if it still appears.`;
-          throw new Error(errMsg);
+          // Do NOT throw: we already created/updated in Luxury and updated cache. Throwing prevented saveCache(), so next run had no cache and the item stayed in limbo (re-archiving / duplicate emails every run).
         }
         if (result.operation === "create") created++;
         else if (result.operation === "update") updated++;
