@@ -407,7 +407,9 @@ async function createWebflowEcommerceProduct(siteId, productFieldData, skuFieldD
 function sanitizeCategoryForWebflow(fieldData) {
   if (!fieldData || typeof fieldData !== "object") return fieldData;
   const out = { ...fieldData };
-  if ("category" in out && (typeof out.category !== "string" || !WEBFLOW_ITEM_REF_REGEX.test(out.category))) {
+  const cat = out.category;
+  const validRef = typeof cat === "string" && WEBFLOW_ITEM_REF_REGEX.test(cat);
+  if ("category" in out && !validRef) {
     delete out.category;
   }
   return out;
@@ -415,7 +417,7 @@ function sanitizeCategoryForWebflow(fieldData) {
 
 async function updateWebflowEcommerceProduct(siteId, productId, fieldData, token, existingProduct = null) {
   const url = `https://api.webflow.com/v2/sites/${siteId}/products/${productId}`;
-  const data = sanitizeCategoryForWebflow({ ...fieldData });
+  let data = sanitizeCategoryForWebflow({ ...fieldData });
   let skuFieldData = existingProduct?.skus?.[0]?.fieldData;
   if (skuFieldData == null || typeof skuFieldData !== "object") {
     webflowLog("info", { event: "product.patch.skuRefetch", productId, reason: "existingProduct had no skus or sku.fieldData" });
@@ -427,6 +429,8 @@ async function updateWebflowEcommerceProduct(siteId, productId, fieldData, token
     product: { fieldData: data },
     sku: { fieldData: skuFieldData },
   };
+  body.product.fieldData = sanitizeCategoryForWebflow(body.product.fieldData);
+  body.sku.fieldData = sanitizeCategoryForWebflow(body.sku.fieldData);
   webflowLog("info", { event: "product.patch.calling", method: "PATCH", url, productId, bodyKeys: ["product", "sku"] });
   await axios.patch(url, body, {
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -2350,7 +2354,13 @@ function fieldDataEffectivelyEqual(newFD, existingFD) {
       if (strNorm(n) === strNorm(e)) continue;
     }
     if (key === "price" && priceNorm(n) === priceNorm(e)) continue;
-    if (["name", "brand", "slug", "category", "shopify-product-id", "shopify-url"].includes(key) && strNorm(n) === strNorm(e)) continue;
+    if (["name", "brand", "slug", "shopify-product-id", "shopify-url"].includes(key) && strNorm(n) === strNorm(e)) continue;
+    if (key === "category") {
+      const nRef = typeof n === "string" && WEBFLOW_ITEM_REF_REGEX.test(n);
+      const eRef = typeof e === "string" && WEBFLOW_ITEM_REF_REGEX.test(e);
+      if (nRef && eRef && n === e) continue;
+      if ((nRef && typeof e === "string" && e.trim()) || (eRef && typeof n === "string" && n.trim())) continue;
+    }
     if (String(n) === String(e)) continue;
     return false;
   }
@@ -2406,7 +2416,7 @@ function buildWebflowFieldData(opts) {
       "ec-product-type": productType ?? null,
       shippable: true,
     };
-    if (categoryRef != null) out.category = categoryRef;
+    if (categoryRef != null && WEBFLOW_ITEM_REF_REGEX.test(String(categoryRef))) out.category = categoryRef;
     return out;
   }
 
