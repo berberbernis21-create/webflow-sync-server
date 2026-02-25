@@ -14,6 +14,9 @@ import { CATEGORY_KEYWORDS_FURNITURE } from "./categoryKeywordsFurniture.js";
 const FURNITURE_TRAP_PHRASES = [
   "luggage rack", "coat rack", "hat rack", "umbrella stand", "hall tree",
   "towel rack", "magazine rack", "wine rack", "plant stand", "lamp stand",
+  "shoe rack", "shoe shelf", "shoe cabinet", "shoe organizer", "shoe storage",
+  "jewelry box", "jewelry armoire", "jewelry cabinet", "jewelry display", "jewelry organizer",
+  "jewelry stand", "jewelry holder", "jewelry tray", "jewelry chest", "jewelry case",
 ];
 
 const FURNITURE_SIGNALS = [
@@ -124,6 +127,25 @@ function getCombinedProductText(product) {
   return [nameAndTags, descriptionText].filter(Boolean).join(" ").toLowerCase();
 }
 
+/** Any mention of shoes or jewelry in title/name → luxury, unless description says it's furniture (box, rack, etc.). */
+const SHOE_JEWELRY_TITLE_WORDS = [
+  "shoe", "shoes", "footwear", "sneaker", "sneakers", "heel", "heels", "boot", "boots",
+  "sandal", "sandals", "loafer", "loafers", "pump", "pumps", "mule", "mules", "slide", "slides", "flat", "flats",
+  "jewelry", "jewellery", "jewel", "earring", "earrings", "bracelet", "bracelets",
+  "necklace", "necklaces", "ring", "rings", "pendant", "pendants", "brooch", "barrette",
+];
+
+/** Description phrases that mean "this product is a furniture item" (e.g. jewelry box, shoe rack). */
+const DESCRIPTION_FURNITURE_PHRASES = [
+  "jewelry box", "jewelry armoire", "jewelry cabinet", "jewelry organizer", "jewelry display",
+  "jewelry stand", "jewelry holder", "jewelry tray", "jewelry chest", "jewelry case",
+  "shoe rack", "shoe shelf", "shoe cabinet", "shoe organizer", "shoe storage", "shoe stand",
+  "display case", "display cabinet", "storage cabinet", "storage box",
+  "keeps your jewelry", "store your jewelry", "display your jewelry", "for storing jewelry",
+  "holds your jewelry", "organize your jewelry", "keeps your shoes", "store your shoes",
+  "entrance bench", "hall tree",
+];
+
 /** Strong bag/accessory/footwear/jewelry words in title → luxury (handbag, belt, shoe, earring, etc. are very easy to detect). */
 const TITLE_LUXURY_WORDS = [
   "backpack", "backpacks", "handbag", "handbags", "bag", "bags",
@@ -150,11 +172,23 @@ export function detectVertical(product) {
   const combined = getCombinedProductText(product);
   const title = (product.title || "").toLowerCase();
   const typeAndTags = [product.product_type || "", getTagsArray(product).join(" ")].join(" ").toLowerCase();
+  const descriptionText = stripHtml(product.body_html || "").toLowerCase();
 
-  // 0) Furniture trap: luggage rack, coat rack, umbrella stand, etc. — these contain "luggage" but are furniture
+  // 0) Furniture trap: luggage rack, coat rack, jewelry box, shoe rack, etc. — check FIRST so they don't match luxury
   const textForTrap = `${title} ${typeAndTags}`;
   for (const phrase of FURNITURE_TRAP_PHRASES) {
     if (textForTrap.includes(phrase.toLowerCase())) return "furniture";
+  }
+
+  // 0b) Shoes/jewelry in name or title → Luxury, unless description says it's a furniture item (box, rack, cabinet, etc.)
+  const nameForShoeJewelry = `${title} ${typeAndTags}`;
+  const hasShoeOrJewelryInName = SHOE_JEWELRY_TITLE_WORDS.some((w) => matchWordBoundary(nameForShoeJewelry, w));
+  if (hasShoeOrJewelryInName) {
+    const descriptionSaysFurniture = DESCRIPTION_FURNITURE_PHRASES.some((phrase) =>
+      descriptionText.includes(phrase.toLowerCase())
+    );
+    if (descriptionSaysFurniture) return "furniture";
+    return "luxury";
   }
 
   // 1) Strong luxury signals in title/type/tags — handbag, belt, wallet, shoe, etc. are very easy to detect
@@ -169,7 +203,6 @@ export function detectVertical(product) {
   const hasFurnitureInName = furnitureCategories.some((kw) => matchWordBoundary(nameAndTags, kw));
   if (hasFurnitureInName) return "furniture";
   // If name didn't match, use description when it exists
-  const descriptionText = stripHtml(product.body_html || "");
   if (descriptionText) {
     const hasFurnitureInCombined = furnitureCategories.some((kw) => matchWordBoundary(combined, kw));
     if (hasFurnitureInCombined) return "furniture";
