@@ -1837,7 +1837,8 @@ async function syncSingleProduct(product, cache, options = {}) {
   if (departmentFromType === "Luxury Goods" && isGenericLuxuryTypeOnly(productTypeForVertical) && hasFurnitureOrArtSignals(product)) {
     departmentFromType = "Furniture & Home";
   }
-  const detectedVertical = detectVertical(product);
+  const detectedVerticalRaw = detectVertical(product);
+  const detectedVertical = detectedVerticalRaw === "luxury" && hasFurnitureOrArtSignals(product) ? "furniture" : detectedVerticalRaw;
   let vertical;
   if (departmentFromType === "Furniture & Home" && isClearlyLuxury(product)) {
     vertical = "luxury";
