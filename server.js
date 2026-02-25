@@ -2040,12 +2040,13 @@ async function syncSingleProduct(product, cache, options = {}) {
 
   const currentHash = shopifyHash(product);
 
-  // Early skip: if cache says unchanged and not newly sold, avoid Webflow API calls entirely
+  // RULE: Only touch Webflow when (1) item removed from Shopify, or (2) item changed in Shopify from previous run.
+  // Otherwise we do not call Webflow at all. When we do go to Webflow we retrieve the item, compare to what we'd send, and only update if there is a difference.
   const previousHash = cacheEntry?.hash || null;
   const hashUnchanged = previousHash && JSON.stringify(currentHash) === JSON.stringify(previousHash);
   const newlySoldCheck = (previousQty === null || previousQty > 0) && qty !== null && qty <= 0;
   if (cacheEntry?.webflowId && hashUnchanged && !newlySoldCheck) {
-    webflowLog("info", { event: "sync_product.skip_early_no_webflow", shopifyProductId, productTitle: name, webflowId: cacheEntry.webflowId });
+    webflowLog("info", { event: "sync_product.skip_early_no_webflow", shopifyProductId, productTitle: name, webflowId: cacheEntry.webflowId, reason: "shopify_unchanged" });
     cache[shopifyProductId] = {
       hash: currentHash,
       webflowId: cacheEntry.webflowId,
@@ -2073,7 +2074,7 @@ async function syncSingleProduct(product, cache, options = {}) {
     ...(vertical === "furniture" && { dimensionsStatus }),
   });
 
-  // Find existing: ecommerce API for Furniture (siteId), CMS for Luxury (collectionId)
+  // Retrieve from Webflow only when we might need to update (hash changed or no cache). Then compare; only PATCH if different.
   let existing = null;
   if (vertical === "furniture" && config.siteId) {
     if (cacheEntry?.webflowId) {
@@ -2145,7 +2146,7 @@ async function syncSingleProduct(product, cache, options = {}) {
       });
       const existingFD = existing.fieldData || {};
       if (fieldDataEffectivelyEqual(fieldData, existingFD)) {
-        webflowLog("info", { event: "sync_product.skip_webflow_unchanged", shopifyProductId, productTitle: name, webflowId: existing.id, message: "Built data matches Webflow; not touching" });
+        webflowLog("info", { event: "sync_product.skip_webflow_unchanged", shopifyProductId, productTitle: name, webflowId: existing.id, message: "Retrieved from Webflow; same as Shopify would send; not touching" });
         cache[shopifyProductId] = {
           hash: currentHash,
           webflowId: existing.id,
@@ -2155,7 +2156,7 @@ async function syncSingleProduct(product, cache, options = {}) {
         webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "skip", webflowId: existing.id, vertical });
         return { operation: "skip", id: existing.id };
       }
-      webflowLog("info", { event: "sync_product.updating", shopifyProductId, productTitle: name, webflowId: existing.id });
+      webflowLog("info", { event: "sync_product.updating", shopifyProductId, productTitle: name, webflowId: existing.id, reason: "shopify_changed_and_webflow_differs" });
       if (vertical === "furniture" && config.siteId) {
         await updateWebflowEcommerceProduct(config.siteId, existing.id, fieldData, config.token, existing);
         await syncFurnitureEcommerceSku(product, existing.id, config);
