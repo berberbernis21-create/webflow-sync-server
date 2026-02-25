@@ -9,7 +9,7 @@ import { CATEGORY_KEYWORDS } from "./categoryKeywords.js";
 import { CATEGORY_KEYWORDS_FURNITURE, CATEGORY_KEYWORDS_FURNITURE_WEAK } from "./categoryKeywordsFurniture.js";
 import { detectBrandFromProduct } from "./brand.js";
 import { detectBrandFromProductFurniture } from "./brandFurniture.js";
-import { detectVertical } from "./vertical.js";
+import { detectVertical, hasStrongLuxurySignalsInTitle } from "./vertical.js";
 
 dotenv.config();
 
@@ -1130,7 +1130,7 @@ const FURNITURE_TYPE_SIGNALS = [
 // Type signals: if Type contains these → Luxury Goods
 const LUXURY_TYPE_SIGNALS = [
   "handbag", "handbags", "bag", "bags", "wallet", "wallets", "belt", "belts",
-  "scarf", "scarves", "fashion accessories", "wearable", "tote", "totes",
+  "scarf", "scarves", "fashion accessories", "wearable", "accessories", "tote", "totes",
   "crossbody", "backpack", "backpacks", "luggage", "clutch", "small bag",
 ];
 
@@ -1839,7 +1839,11 @@ async function syncSingleProduct(product, cache, options = {}) {
   }
   const detectedVerticalRaw = detectVertical(product);
   // Hard override: if detector says luxury but the product clearly looks like art/furniture (painting, canvas, rug, mirror, etc.), keep it in Furniture.
-  const detectedVertical = detectedVerticalRaw === "luxury" && hasFurnitureOrArtSignals(product) ? "furniture" : detectedVerticalRaw;
+  // Do NOT override when title has strong bag/shoe/jewelry (e.g. "Canvas Tote Bag" = bag, not art).
+  const detectedVertical =
+    detectedVerticalRaw === "luxury" && hasFurnitureOrArtSignals(product) && !hasStrongLuxurySignalsInTitle(product)
+      ? "furniture"
+      : detectedVerticalRaw;
   let vertical;
   // If Type says Furniture & Home but the detector (or luxury heuristics) say Luxury, treat it as Luxury — unless it looks like art/furniture (handled above).
   if (departmentFromType === "Furniture & Home" && (detectedVertical === "luxury" || isClearlyLuxury(product))) {
@@ -2073,15 +2077,37 @@ async function syncSingleProduct(product, cache, options = {}) {
   const hashUnchanged = previousHash && JSON.stringify(currentHash) === JSON.stringify(previousHash);
   const newlySoldCheck = (previousQty === null || previousQty > 0) && qty !== null && qty <= 0;
   if (cacheEntry?.webflowId && hashUnchanged && !newlySoldCheck) {
-    webflowLog("info", { event: "sync_product.skip_early_no_webflow", shopifyProductId, productTitle: name, webflowId: cacheEntry.webflowId, reason: "shopify_unchanged" });
-    cache[shopifyProductId] = {
-      hash: currentHash,
-      webflowId: cacheEntry.webflowId,
-      lastQty: qty,
-      vertical,
-    };
-    webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "skip", webflowId: cacheEntry.webflowId, vertical });
-    return { operation: "skip", id: cacheEntry.webflowId };
+    // Verify cached item still exists in this vertical (fixes stale cache when item was archived or ID was wrong vertical)
+    let cachedExists = false;
+    if (vertical === "furniture" && config?.siteId) {
+      const prod = await getWebflowEcommerceProductById(config.siteId, cacheEntry.webflowId, config.token);
+      cachedExists = prod != null && !prod.isArchived;
+    } else if (vertical === "luxury" && config?.collectionId) {
+      const item = await getWebflowItemById(cacheEntry.webflowId, config);
+      cachedExists = item != null;
+    }
+    if (!cachedExists) {
+      webflowLog("info", {
+        event: "sync_product.cache_stale",
+        shopifyProductId,
+        productTitle: name,
+        webflowId: cacheEntry.webflowId,
+        vertical,
+        reason: "item_not_found_or_archived",
+      });
+      delete cache[shopifyProductId];
+      // fall through to normal lookup/create
+    } else {
+      webflowLog("info", { event: "sync_product.skip_early_no_webflow", shopifyProductId, productTitle: name, webflowId: cacheEntry.webflowId, reason: "shopify_unchanged" });
+      cache[shopifyProductId] = {
+        hash: currentHash,
+        webflowId: cacheEntry.webflowId,
+        lastQty: qty,
+        vertical,
+      };
+      webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "skip", webflowId: cacheEntry.webflowId, vertical });
+      return { operation: "skip", id: cacheEntry.webflowId };
+    }
   }
 
   webflowLog("info", {
@@ -2593,6 +2619,38 @@ app.get("/", (req, res) => {
   res.send(
     "Lost & Found — Clean Sync Server (No Duplicates, Sold Logic Fixed, Deep Scan Matcher + Logging)"
   );
+});
+
+/**
+ * POST /clear-cache — Remove cache entries for given Shopify product IDs so the next sync will
+ * re-resolve vertical and create/update in the correct collection (fixes items stuck as wrong vertical or archived).
+ * Body: { "shopifyProductIds": ["9319055327491", "9319054213379", ...] }
+ */
+app.post("/clear-cache", (req, res) => {
+  try {
+    const ids = req.body?.shopifyProductIds;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({
+        error: "Missing or empty shopifyProductIds",
+        usage: "POST /clear-cache with body: { \"shopifyProductIds\": [\"id1\", \"id2\", ...] }",
+      });
+    }
+    const cache = loadCache();
+    let cleared = 0;
+    for (const id of ids) {
+      const key = String(id).trim();
+      if (key && cache[key] !== undefined) {
+        delete cache[key];
+        cleared++;
+      }
+    }
+    saveCache(cache);
+    webflowLog("info", { event: "clear_cache", cleared, requested: ids.length, shopifyProductIds: ids });
+    res.json({ cleared, totalRequested: ids.length });
+  } catch (err) {
+    webflowLog("error", { event: "clear_cache.error", message: err.message });
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.post("/sync-all", async (req, res) => {
