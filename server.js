@@ -342,7 +342,7 @@ async function getWebflowEcommerceProductById(siteId, productId, token) {
 /** Run-scoped index: Furniture ecommerce products. Populated at sync start for O(1) lookup. */
 let furnitureProductIndex = null;
 
-async function findExistingWebflowEcommerceProduct(shopifyProductId, slug, config) {
+async function findExistingWebflowEcommerceProduct(shopifyProductId, slug, config, productNameForFallback = null) {
   if (!config?.siteId || !config?.token) return null;
   const slugNorm = slug ? String(slug).trim() : null;
 
@@ -353,6 +353,14 @@ async function findExistingWebflowEcommerceProduct(shopifyProductId, slug, confi
     if (slugNorm) {
       const bySlug = furnitureProductIndex.bySlug?.get(slugNorm);
       if (bySlug) return bySlug;
+    }
+    if (productNameForFallback && furnitureProductIndex.byName) {
+      const nameKey = normalizeProductNameForIndex(productNameForFallback);
+      const byName = furnitureProductIndex.byName.get(nameKey);
+      if (byName) {
+        webflowLog("info", { event: "furniture_find_by_name", shopifyProductId, webflowId: byName.id, name: productNameForFallback });
+        return byName;
+      }
     }
     return null;
   }
@@ -1318,12 +1326,18 @@ async function loadLuxuryItemIndex() {
   webflowLog("info", { event: "luxury_item_index.loaded", count: byShopifyId.size });
 }
 
+/** Normalize product name for index (so we can find by name and avoid duplicate creates). */
+function normalizeProductNameForIndex(name) {
+  return (name ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
 /** Pre-load Furniture ecommerce products once per sync → O(1) lookup. */
 async function loadFurnitureProductIndex() {
   const config = getWebflowConfig("furniture");
   if (!config?.siteId || !config?.token) return;
   const byShopifyId = new Map();
   const bySlug = new Map();
+  const byName = new Map();
   let offset = 0;
   const limit = 100;
   while (true) {
@@ -1339,15 +1353,18 @@ async function loadFurnitureProductIndex() {
       const fd = product.fieldData || {};
       const wfId = fd["shopify-product-id"] ? String(fd["shopify-product-id"]) : null;
       const wfSlug = (fd["slug"] || fd["shopify-slug-2"]) ? String(fd["slug"] || fd["shopify-slug-2"]).trim() : null;
+      const wfName = fd.name ?? product.name;
       const entry = { ...product, skus };
       if (wfId) byShopifyId.set(wfId, entry);
       if (wfSlug) bySlug.set(wfSlug, entry);
+      const nameKey = normalizeProductNameForIndex(wfName);
+      if (nameKey && !byName.has(nameKey)) byName.set(nameKey, entry);
     }
     if (list.length < limit) break;
     offset += limit;
   }
-  furnitureProductIndex = { byShopifyId, bySlug };
-  webflowLog("info", { event: "furniture_product_index.loaded", count: byShopifyId.size });
+  furnitureProductIndex = { byShopifyId, bySlug, byName };
+  webflowLog("info", { event: "furniture_product_index.loaded", count: byShopifyId.size, byName: byName.size });
 }
 
 /** Pre-load Furniture SKUs by product ID once per sync → O(1) lookup. */
@@ -2054,7 +2071,7 @@ async function syncSingleProduct(product, cache, options = {}) {
       if (!existing) webflowLog("info", { event: "sync_product.cache_miss", shopifyProductId, reason: "ecommerce_not_found" });
     }
     if (!existing) {
-      existing = await findExistingWebflowEcommerceProduct(shopifyProductId, slug, config);
+      existing = await findExistingWebflowEcommerceProduct(shopifyProductId, slug, config, name);
     }
   } else {
     if (cacheEntry?.webflowId) {
@@ -2188,7 +2205,7 @@ async function syncSingleProduct(product, cache, options = {}) {
     if (detectedVertical === "luxury") {
       const furnitureConfig = getWebflowConfig("furniture");
       if (furnitureConfig?.siteId && furnitureConfig?.token) {
-        const existingInFurniture = await findExistingWebflowEcommerceProduct(shopifyProductId, slug, furnitureConfig);
+        const existingInFurniture = await findExistingWebflowEcommerceProduct(shopifyProductId, slug, furnitureConfig, name);
         if (existingInFurniture) {
           const full = await getWebflowEcommerceProductById(furnitureConfig.siteId, existingInFurniture.id, furnitureConfig.token);
           const alreadyArchived = full?.isArchived === true;
