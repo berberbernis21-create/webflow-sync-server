@@ -1941,17 +1941,13 @@ async function syncSingleProduct(product, cache, options = {}) {
 
   const soldNow = qty !== null && qty <= 0;
 
-  // Department and metafield from Type only (authoritative). Fallback to current vertical when Type empty/unmatched.
+  // Single source of truth: resolved VERTICAL. Department and category are derived from it everywhere (Webflow + Shopify).
   const productType = (product.product_type ?? "").trim();
-  let department = getDepartmentFromType(productType);
-  if (department == null) {
-    department = vertical === "furniture" ? "Furniture & Home" : "Luxury Goods";
-  }
-  // Dimensions: must be available before category detection (table dimension rules)
+  const department = vertical === "furniture" ? "Furniture & Home" : "Luxury Goods";
   let dimensionsStatus = null;
   const dimensions = getDimensionsFromProduct(product);
   const categoryForMetafield =
-    department === "Furniture & Home"
+    vertical === "furniture"
       ? mapFurnitureCategoryForShopify(detectCategoryFurniture(name, description, getProductTagsArray(product), dimensions))
       : (() => {
           if (isShoeProduct(name, description)) return "Other ";
@@ -1989,17 +1985,17 @@ async function syncSingleProduct(product, cache, options = {}) {
     }
   }
 
-  // Remove "Condition" option for Furniture & Home products (before metafields write)
-  if (department === "Furniture & Home") {
+  // Remove "Condition" option only for products we're actually syncing as Furniture.
+  if (vertical === "furniture") {
     await removeConditionOptionIfFurniture(product);
   }
 
-  // Write metafields + vendor/type/tags to Shopify. Skip when category is "Recently Sold" — leave existing values as is.
+  // Write metafields + vendor/type/tags to Shopify so Shopify matches the vertical we're syncing to Webflow.
   if (shopifyCategoryValue !== "Recently Sold") {
     await updateShopifyMetafields(shopifyProductId, {
       department: shopifyDepartment,
       category: shopifyCategoryValue,
-      vertical: department === "Furniture & Home" ? "furniture" : "luxury",
+      vertical: vertical === "furniture" ? "furniture" : "luxury",
       dimensionsStatus: vertical === "furniture" ? dimensionsStatus : undefined,
     });
     // Only pass description if it changed
@@ -2420,8 +2416,9 @@ function buildWebflowFieldData(opts) {
     return out;
   }
 
-  // Webflow rejects "Other " (trailing space); use "Other" for Luxury CMS
-  const webflowCategory = (category && category.trimEnd() === "Other") ? "Other" : (category ?? "");
+  // Webflow rejects "Other " (trailing space); use "Other" for Luxury CMS. Never send Furniture-only categories (Dining Room, etc.) to Luxury.
+  const luxuryCategory = category && FURNITURE_TAXONOMY.includes(category) ? "Other " : (category ?? "Other ");
+  const webflowCategory = (luxuryCategory && luxuryCategory.trimEnd() === "Other") ? "Other" : (luxuryCategory ?? "");
   const base = {
     name,
     brand,
