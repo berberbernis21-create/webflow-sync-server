@@ -26,6 +26,15 @@ const WEARABLE_INDICATORS = [
   "backpack", "backpacks", "jewelry", "jewellery", "pendant", "brooch", "barrette",
 ];
 
+/** Strong wearable/footwear: if present in title/type/tags, always LUXURY (never furniture). Backpacks, boots, shoes, mules, bags, etc. */
+const STRONG_LUXURY_SIGNALS = [
+  "backpack", "backpacks", "boot", "boots", "shoe", "shoes", "mule", "mules",
+  "handbag", "handbags", "bag", "bags", "wallet", "wallets", "clutch", "tote", "totes",
+  "belt", "belts", "scarf", "scarves", "satchel", "briefcase", "crossbody", "luggage",
+  "earring", "earrings", "bracelet", "bracelets", "necklace", "necklaces", "jewelry", "jewellery",
+  "sandal", "sandals", "pump", "pumps", "heel", "heels", "sneaker", "sneakers", "loafer", "loafers", "flat", "flats", "slide", "slides",
+];
+
 function stripHtml(html) {
   if (!html || typeof html !== "string") return "";
   return html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
@@ -204,6 +213,23 @@ export async function classifyWithLLM(product, logPayload = {}, logFn = null) {
     logPayload.final = defaultResult;
     logPayload.override = "no_api_key";
     return defaultResult;
+  }
+
+  // Strong wearable/footwear in title/type/tags → always LUXURY (backpack, boots, handbag, etc. are never furniture)
+  const { title, productType, tagsStr } = getProductText(product);
+  const nameAndTypeAndTags = `${title} ${productType} ${tagsStr}`.toLowerCase();
+  if (hasAnyWord(nameAndTypeAndTags, STRONG_LUXURY_SIGNALS)) {
+    const strongLuxuryResult = {
+      category: "LUXURY",
+      confidence: 1,
+      reasoning: "Strong wearable/footwear signal in title, type, or tags (e.g. backpack, boots, handbag).",
+    };
+    logPayload.raw = null;
+    logPayload.parsed = null;
+    logPayload.final = strongLuxuryResult;
+    logPayload.override = "strong_luxury_signal";
+    if (logFn) logFn("info", { event: "llm_vertical.strong_luxury", category: "LUXURY", reason: "wearable/footwear in name or type" });
+    return strongLuxuryResult;
   }
 
   const userPrompt = buildUserPrompt(product);
