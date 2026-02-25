@@ -167,6 +167,17 @@ const BAG_SUBSTRINGS = [
   "drawstring", "double flap", "flap bag", " purse", "purse ",
 ];
 
+/** True when title/type/tags clearly indicate a bag, shoe, or jewelry (so we don't send canvas totes to Furniture due to "canvas"). */
+export function hasStrongLuxurySignalsInTitle(product) {
+  const title = (product.title || "").toLowerCase();
+  const typeAndTags = [product.product_type || "", getTagsArray(product).join(" ")].join(" ").toLowerCase();
+  const nameForCheck = `${title} ${typeAndTags}`;
+  if (BAG_SUBSTRINGS.some((s) => title.includes(s) || typeAndTags.includes(s))) return true;
+  if (TITLE_LUXURY_WORDS.some((w) => matchWordBoundary(nameForCheck, w))) return true;
+  if (SHOE_JEWELRY_TITLE_WORDS.some((w) => matchWordBoundary(nameForCheck, w))) return true;
+  return false;
+}
+
 export function detectVertical(product) {
   const nameAndTags = getNameAndTags(product);
   const combined = getCombinedProductText(product);
