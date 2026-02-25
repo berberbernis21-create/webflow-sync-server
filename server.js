@@ -2576,6 +2576,108 @@ app.post("/sync-all", async (req, res) => {
 });
 
 /* ======================================================
+   ONE-TIME REPAIR — Fix wrongly marked "Recently Sold" (Luxury only)
+   POST /repair-recently-sold: find Luxury items with category "Recently Sold",
+   check each in Shopify; if still active, set category + show-on-webflow true.
+   Run once then remove this block and the route.
+====================================================== */
+async function fetchLuxuryRecentlySoldItems() {
+  const config = getWebflowConfig("luxury");
+  if (!config?.collectionId || !config?.token) return [];
+  const out = [];
+  let offset = 0;
+  const limit = 100;
+  while (true) {
+    const url = `https://api.webflow.com/v2/collections/${config.collectionId}/items?limit=${limit}&offset=${offset}`;
+    const resp = await axios.get(url, {
+      headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
+    });
+    const items = resp.data?.items ?? [];
+    for (const item of items) {
+      const cat = (item.fieldData || {}).category;
+      if (cat && String(cat).toLowerCase() === "recently sold") out.push(item);
+    }
+    if (items.length < limit) break;
+    offset += limit;
+  }
+  return out;
+}
+
+function repairLuxuryCategoryFromProduct(product) {
+  const name = product.title || "";
+  const description = product.body_html || "";
+  const productType = (product.product_type || "").trim();
+  if (isShoeProduct(name, description)) return "Other ";
+  const fromTitle = detectLuxuryCategoryFromTitle(name, description);
+  if (fromTitle != null) return fromTitle;
+  return getLuxuryCategoryFromType(productType, false) ?? "Other ";
+}
+
+app.post("/repair-recently-sold", async (req, res) => {
+  try {
+    const items = await fetchLuxuryRecentlySoldItems();
+    const config = getWebflowConfig("luxury");
+    if (!config?.collectionId || !config?.token) {
+      return res.status(500).json({ error: "Luxury Webflow config missing" });
+    }
+    let fixed = 0;
+    let skippedStillSold = 0;
+    let errors = [];
+    const concurrency = 5;
+    for (let i = 0; i < items.length; i += concurrency) {
+      const chunk = items.slice(i, i + concurrency);
+      const statuses = await Promise.all(
+        chunk.map((item) => {
+          const sid = (item.fieldData || {})["shopify-product-id"];
+          return sid ? fetchShopifyProductStatus(String(sid)) : Promise.resolve(null);
+        })
+      );
+      for (let j = 0; j < chunk.length; j++) {
+        const item = chunk[j];
+        const shopifyId = (item.fieldData || {})["shopify-product-id"];
+        const confirmed = statuses[j];
+        if (!shopifyId) continue;
+        if (confirmed === null || confirmed === undefined) {
+          errors.push({ webflowId: item.id, shopifyId, reason: "fetch_failed" });
+          continue;
+        }
+        if (confirmed.status !== "active") {
+          skippedStillSold++;
+          continue;
+        }
+        const product = confirmed.product;
+        if (!product) {
+          errors.push({ webflowId: item.id, shopifyId, reason: "no_product" });
+          continue;
+        }
+        const newCategory = repairLuxuryCategoryFromProduct(product);
+        const webflowCategory = (newCategory && newCategory.trimEnd() === "Other") ? "Other" : (newCategory ?? "");
+        const base = { ...(item.fieldData || {}) };
+        const fieldData = { ...base, category: webflowCategory, "show-on-webflow": true };
+        await axios.patch(
+          `https://api.webflow.com/v2/collections/${config.collectionId}/items/${item.id}`,
+          { fieldData },
+          { headers: { Authorization: `Bearer ${config.token}`, "Content-Type": "application/json" } }
+        );
+        fixed++;
+        webflowLog("info", { event: "repair_recently_sold.fixed", shopifyId, webflowId: item.id, newCategory: webflowCategory });
+      }
+    }
+    res.json({
+      message: "Repair completed. Remove /repair-recently-sold code after running once.",
+      checked: items.length,
+      fixed,
+      skippedStillSold,
+      errors: errors.length,
+      errorDetails: errors.length ? errors : undefined,
+    });
+  } catch (err) {
+    webflowLog("error", { event: "repair_recently_sold.error", message: err.message });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ======================================================
    SERVER
 ====================================================== */
 const PORT = process.env.PORT || 4000;
