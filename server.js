@@ -1147,6 +1147,26 @@ function getDepartmentFromType(productType) {
   return null;
 }
 
+/** True when product_type is only a generic luxury bucket (accessories/wearable) with no specific bag/scarf/belt etc. */
+function isGenericLuxuryTypeOnly(productType) {
+  const n = normalizeTypeForMatch(productType);
+  if (!n) return false;
+  const generic = ["accessories", "wearable", "fashion accessories"];
+  const specific = ["handbag", "handbags", "bag", "bags", "wallet", "wallets", "belt", "belts", "scarf", "scarves", "tote", "totes", "crossbody", "backpack", "backpacks", "luggage", "clutch", "small bag"];
+  const hasGeneric = generic.some((s) => n.includes(s));
+  const hasSpecific = specific.some((s) => n.includes(s));
+  return hasGeneric && !hasSpecific;
+}
+
+/** True when title or description clearly indicate art or furniture (painting, canvas, art, mirror, rug, etc.). */
+function hasFurnitureOrArtSignals(product) {
+  const title = (product.title || "").toLowerCase();
+  const desc = (product.body_html || "").replace(/<[^>]*>/g, " ").toLowerCase();
+  const combined = [title, desc].join(" ");
+  const signals = ["painting", "paintings", "canvas", "acrylic on canvas", "art", "mirror", "mirrors", "rug", "rugs", "furniture", "decor", "lamp", "lamps", "seating", "case goods", "living room", "dining room", "bedroom", "outdoor", "patio"];
+  return signals.some((w) => combined.includes(w));
+}
+
 /** True when product is obviously luxury (jewelry, earring, bracelet, pouch, or clearly a luxury accessory).
  *  IMPORTANT: Brand alone is NOT enough — we require accessory/jewelry cues so furniture/housewares from luxury brands stay in Furniture & Home.
  */
@@ -1811,8 +1831,12 @@ async function syncSingleProduct(product, cache, options = {}) {
   const duplicateEmailSentFor = options.duplicateEmailSentFor ?? null;
 
   // Department/vertical from Type first (authoritative). Override: if Type says Furniture but product is clearly luxury (jewelry, earring, bracelet, pouch, luxury brand), use luxury.
+  // Also: if Type is generic "Accessories" (Luxury bucket) but title/description are clearly art or furniture (painting, canvas, art, etc.), keep in Furniture & Home.
   const productTypeForVertical = (product.product_type ?? "").trim();
-  const departmentFromType = getDepartmentFromType(productTypeForVertical);
+  let departmentFromType = getDepartmentFromType(productTypeForVertical);
+  if (departmentFromType === "Luxury Goods" && isGenericLuxuryTypeOnly(productTypeForVertical) && hasFurnitureOrArtSignals(product)) {
+    departmentFromType = "Furniture & Home";
+  }
   const detectedVertical = detectVertical(product);
   let vertical;
   if (departmentFromType === "Furniture & Home" && isClearlyLuxury(product)) {
