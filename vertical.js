@@ -189,6 +189,11 @@ export function detectVertical(product) {
   const alwaysFurnitureWords = ["pillow", "pillows", "painting", "paintings"];
   if (alwaysFurnitureWords.some((w) => matchWordBoundary(nameAndTags, w))) return "furniture";
 
+  // 0a2) Art-on-canvas phrases → furniture ("plant painting on canvas", "acrylic painting on canvas"; "canvas tote bag" has none of these)
+  const nameAndTagsLower = nameAndTags.toLowerCase();
+  const artOnCanvasPhrases = ["painting on canvas", "acrylic on canvas", "acrylic painting", "paintings on canvas", "on canvas by", "oil on canvas", "plant painting"];
+  if (artOnCanvasPhrases.some((phrase) => nameAndTagsLower.includes(phrase))) return "furniture";
+
   // 0) Furniture trap: luggage rack, coat rack, jewelry box, shoe rack, etc. — check FIRST so they don't match luxury
   const textForTrap = `${title} ${typeAndTags}`;
   for (const phrase of FURNITURE_TRAP_PHRASES) {
