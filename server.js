@@ -391,13 +391,11 @@ const WEBFLOW_ITEM_REF_REGEX = /^[a-f0-9]{24}$/i;
 
 async function createWebflowEcommerceProduct(siteId, productFieldData, skuFieldData, token) {
   const url = `https://api.webflow.com/v2/sites/${siteId}/products`;
-  const productData = { ...productFieldData };
-  if ("category" in productData && (typeof productData.category !== "string" || !WEBFLOW_ITEM_REF_REGEX.test(productData.category))) {
-    delete productData.category;
-  }
+  const productData = sanitizeCategoryForWebflow({ ...productFieldData });
+  const skuData = sanitizeCategoryForWebflow({ ...skuFieldData });
   const payload = {
     product: { fieldData: productData },
-    sku: { fieldData: skuFieldData },
+    sku: { fieldData: skuData },
     publishStatus: "staging",
   };
   const response = await axios.post(url, payload, {
@@ -406,18 +404,25 @@ async function createWebflowEcommerceProduct(siteId, productFieldData, skuFieldD
   return response.data;
 }
 
+function sanitizeCategoryForWebflow(fieldData) {
+  if (!fieldData || typeof fieldData !== "object") return fieldData;
+  const out = { ...fieldData };
+  if ("category" in out && (typeof out.category !== "string" || !WEBFLOW_ITEM_REF_REGEX.test(out.category))) {
+    delete out.category;
+  }
+  return out;
+}
+
 async function updateWebflowEcommerceProduct(siteId, productId, fieldData, token, existingProduct = null) {
   const url = `https://api.webflow.com/v2/sites/${siteId}/products/${productId}`;
-  const data = { ...fieldData };
-  if ("category" in data && (typeof data.category !== "string" || !WEBFLOW_ITEM_REF_REGEX.test(data.category))) {
-    delete data.category;
-  }
+  const data = sanitizeCategoryForWebflow({ ...fieldData });
   let skuFieldData = existingProduct?.skus?.[0]?.fieldData;
   if (skuFieldData == null || typeof skuFieldData !== "object") {
     webflowLog("info", { event: "product.patch.skuRefetch", productId, reason: "existingProduct had no skus or sku.fieldData" });
     const full = await getWebflowEcommerceProductById(siteId, productId, token);
     skuFieldData = full?.skus?.[0]?.fieldData ?? {};
   }
+  skuFieldData = sanitizeCategoryForWebflow({ ...skuFieldData });
   const body = {
     product: { fieldData: data },
     sku: { fieldData: skuFieldData },
@@ -2084,7 +2089,6 @@ async function syncSingleProduct(product, cache, options = {}) {
       JSON.stringify(currentHash) !== JSON.stringify(previousHash);
 
     if (changed) {
-      webflowLog("info", { event: "sync_product.updating", shopifyProductId, productTitle: name, webflowId: existing.id });
       const fieldData = buildWebflowFieldData({
         vertical,
         name,
@@ -2105,6 +2109,19 @@ async function syncSingleProduct(product, cache, options = {}) {
         existingSlug: existing.fieldData?.slug,
         newSlug: slug,
       });
+      const existingFD = existing.fieldData || {};
+      if (fieldDataEffectivelyEqual(fieldData, existingFD)) {
+        webflowLog("info", { event: "sync_product.skip_webflow_unchanged", shopifyProductId, productTitle: name, webflowId: existing.id, message: "Built data matches Webflow; not touching" });
+        cache[shopifyProductId] = {
+          hash: currentHash,
+          webflowId: existing.id,
+          lastQty: qty,
+          vertical,
+        };
+        webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "skip", webflowId: existing.id, vertical });
+        return { operation: "skip", id: existing.id };
+      }
+      webflowLog("info", { event: "sync_product.updating", shopifyProductId, productTitle: name, webflowId: existing.id });
       if (vertical === "furniture" && config.siteId) {
         await updateWebflowEcommerceProduct(config.siteId, existing.id, fieldData, config.token, existing);
         await syncFurnitureEcommerceSku(product, existing.id, config);
@@ -2299,6 +2316,28 @@ async function syncSingleProduct(product, cache, options = {}) {
 
   // Should not reach: existing was non-null but we didn't update/skip/sold
   return { operation: "skip", id: null };
+}
+
+/* ======================================================
+   COMPARE FIELD DATA — skip PATCH when nothing actually changed
+   Avoids touching Webflow (no Modified bump, no unpublished changes).
+====================================================== */
+function fieldDataEffectivelyEqual(newFD, existingFD) {
+  if (!newFD || typeof newFD !== "object") return !existingFD;
+  if (!existingFD || typeof existingFD !== "object") return false;
+  for (const key of Object.keys(newFD)) {
+    const n = newFD[key];
+    const e = existingFD[key];
+    if (n === e) continue;
+    if (n == null && e == null) continue;
+    if (typeof n === "object" && n !== null && typeof e === "object" && e !== null) {
+      if (n.url != null && e.url != null && n.url === e.url) continue;
+      if (JSON.stringify(n) === JSON.stringify(e)) continue;
+    }
+    if (String(n) === String(e)) continue;
+    return false;
+  }
+  return true;
 }
 
 /* ======================================================
@@ -2572,108 +2611,6 @@ app.post("/sync-all", async (req, res) => {
     furnitureProductIndex = null;
     furnitureSkuIndex = null;
     syncStartTime = null;
-  }
-});
-
-/* ======================================================
-   ONE-TIME REPAIR — Fix wrongly marked "Recently Sold" (Luxury only)
-   POST /repair-recently-sold: find Luxury items with category "Recently Sold",
-   check each in Shopify; if still active, set category + show-on-webflow true.
-   Run once then remove this block and the route.
-====================================================== */
-async function fetchLuxuryRecentlySoldItems() {
-  const config = getWebflowConfig("luxury");
-  if (!config?.collectionId || !config?.token) return [];
-  const out = [];
-  let offset = 0;
-  const limit = 100;
-  while (true) {
-    const url = `https://api.webflow.com/v2/collections/${config.collectionId}/items?limit=${limit}&offset=${offset}`;
-    const resp = await axios.get(url, {
-      headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
-    });
-    const items = resp.data?.items ?? [];
-    for (const item of items) {
-      const cat = (item.fieldData || {}).category;
-      if (cat && String(cat).toLowerCase() === "recently sold") out.push(item);
-    }
-    if (items.length < limit) break;
-    offset += limit;
-  }
-  return out;
-}
-
-function repairLuxuryCategoryFromProduct(product) {
-  const name = product.title || "";
-  const description = product.body_html || "";
-  const productType = (product.product_type || "").trim();
-  if (isShoeProduct(name, description)) return "Other ";
-  const fromTitle = detectLuxuryCategoryFromTitle(name, description);
-  if (fromTitle != null) return fromTitle;
-  return getLuxuryCategoryFromType(productType, false) ?? "Other ";
-}
-
-app.post("/repair-recently-sold", async (req, res) => {
-  try {
-    const items = await fetchLuxuryRecentlySoldItems();
-    const config = getWebflowConfig("luxury");
-    if (!config?.collectionId || !config?.token) {
-      return res.status(500).json({ error: "Luxury Webflow config missing" });
-    }
-    let fixed = 0;
-    let skippedStillSold = 0;
-    let errors = [];
-    const concurrency = 5;
-    for (let i = 0; i < items.length; i += concurrency) {
-      const chunk = items.slice(i, i + concurrency);
-      const statuses = await Promise.all(
-        chunk.map((item) => {
-          const sid = (item.fieldData || {})["shopify-product-id"];
-          return sid ? fetchShopifyProductStatus(String(sid)) : Promise.resolve(null);
-        })
-      );
-      for (let j = 0; j < chunk.length; j++) {
-        const item = chunk[j];
-        const shopifyId = (item.fieldData || {})["shopify-product-id"];
-        const confirmed = statuses[j];
-        if (!shopifyId) continue;
-        if (confirmed === null || confirmed === undefined) {
-          errors.push({ webflowId: item.id, shopifyId, reason: "fetch_failed" });
-          continue;
-        }
-        if (confirmed.status !== "active") {
-          skippedStillSold++;
-          continue;
-        }
-        const product = confirmed.product;
-        if (!product) {
-          errors.push({ webflowId: item.id, shopifyId, reason: "no_product" });
-          continue;
-        }
-        const newCategory = repairLuxuryCategoryFromProduct(product);
-        const webflowCategory = (newCategory && newCategory.trimEnd() === "Other") ? "Other" : (newCategory ?? "");
-        const base = { ...(item.fieldData || {}) };
-        const fieldData = { ...base, category: webflowCategory, "show-on-webflow": true };
-        await axios.patch(
-          `https://api.webflow.com/v2/collections/${config.collectionId}/items/${item.id}`,
-          { fieldData },
-          { headers: { Authorization: `Bearer ${config.token}`, "Content-Type": "application/json" } }
-        );
-        fixed++;
-        webflowLog("info", { event: "repair_recently_sold.fixed", shopifyId, webflowId: item.id, newCategory: webflowCategory });
-      }
-    }
-    res.json({
-      message: "Repair completed. Remove /repair-recently-sold code after running once.",
-      checked: items.length,
-      fixed,
-      skippedStillSold,
-      errors: errors.length,
-      errorDetails: errors.length ? errors : undefined,
-    });
-  } catch (err) {
-    webflowLog("error", { event: "repair_recently_sold.error", message: err.message });
-    res.status(500).json({ error: err.message });
   }
 });
 
