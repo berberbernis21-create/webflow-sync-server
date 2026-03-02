@@ -60,6 +60,7 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
     "floor mirror", "full length mirror", "cheval mirror", "trumeau",
     "poster", "lithograph", "etching", "gallery wall",
     "sculpture", "sculptures", "statue", "statues", "figurine", "figurines",
+    "photograph", "photographs", "photo", "photos", "framed photograph", "framed photo", "artwork", "art work",
     "trumeau mirror", "mantel mirror"
   ],
 
@@ -75,16 +76,16 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
   ],
 
   Accessories: [
-    "vase", "vases", "tray", "trays", "decor", "sculpture", "sculptures",
+    "vase", "vases", "tray", "trays", "decor",
     "bowl", "bowls", "jar", "jars", "planter", "planters",
     "box", "boxes", "trinket box", "storage box", "decorative box", "keepsake box",
-    "basket", "baskets", "figurine", "figurines", "bookend", "bookends",
+    "basket", "baskets", "bookend", "bookends",
     "centerpiece", "centerpieces", "candlestick", "candlesticks",
     "picture frame", "frames", "clock", "clocks", "mantel", "mantle",
     "throw pillow", "pillow", "pillows", "cushion", "blanket", "throw",
     "curtain", "curtains", "drapery", "draperies", "valance",
     "door knocker", "door hardware", "hardware", "knob", "pull",
-    "umbrella stand", "coat rack", "hat rack", "luggage rack", "magazine rack", "wine rack", "key holder",
+    "coat rack", "hat rack", "luggage rack", "magazine rack", "wine rack", "key holder",
     "trinket", "objet", "ornament", "decorative", "accent piece"
   ],
 
@@ -95,7 +96,8 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
     "adirondack", "chaise lounge", "lounger", "sun lounger",
     "bistro set", "bistro table", "patio set", "deck",
     "porch swing", "swing", "hammock", "fire pit", "firepit",
-    "planter box", "window box", "trellis", "arbor"
+    "planter box", "window box", "trellis", "arbor",
+    "umbrella", "umbrellas", "umbrella stand", "umbrella stands", "patio umbrella", "outdoor umbrella"
   ],
 
   Lighting: [
