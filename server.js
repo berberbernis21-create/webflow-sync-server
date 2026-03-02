@@ -10,6 +10,7 @@ import { CATEGORY_KEYWORDS_FURNITURE, CATEGORY_KEYWORDS_FURNITURE_WEAK } from ".
 import { detectBrandFromProduct } from "./brand.js";
 import { detectBrandFromProductFurniture } from "./brandFurniture.js";
 import { classifyWithLLM } from "./llmVerticalClassifier.js";
+import { classifyCategoryWithLLM } from "./llmCategoryClassifier.js";
 
 dotenv.config();
 
@@ -1992,15 +1993,27 @@ async function syncSingleProduct(product, cache, options = {}) {
   const department = vertical === "furniture" ? "Furniture & Home" : "Luxury Goods";
   let dimensionsStatus = null;
   const dimensions = getDimensionsFromProduct(product);
-  const categoryForMetafield =
-    vertical === "furniture"
-      ? mapFurnitureCategoryForShopify(detectCategoryFurniture(name, description, getProductTagsArray(product), dimensions))
-      : (() => {
-          if (isShoeProduct(name, description)) return "Other ";
+  let categoryForMetafield;
+  if (vertical === "furniture") {
+    const llmCategory = await classifyCategoryWithLLM(product, "furniture", {}, webflowLog);
+    const resolved = llmCategory?.category ?? detectCategoryFurniture(name, description, getProductTagsArray(product), dimensions);
+    categoryForMetafield = mapFurnitureCategoryForShopify(resolved);
+  } else {
+    if (soldNow) {
+      categoryForMetafield = "Recently Sold";
+    } else {
+      const llmCategory = await classifyCategoryWithLLM(product, "luxury", {}, webflowLog);
+      if (llmCategory?.category) {
+        categoryForMetafield = mapCategoryForShopify(llmCategory.category);
+      } else {
+        if (isShoeProduct(name, description)) categoryForMetafield = "Other ";
+        else {
           const fromTitle = detectLuxuryCategoryFromTitle(name, description);
-          if (fromTitle != null) return fromTitle;
-          return getLuxuryCategoryFromType(productType, soldNow) ?? "Other ";
-        })();
+          categoryForMetafield = fromTitle != null ? fromTitle : (getLuxuryCategoryFromType(productType, soldNow) ?? "Other ");
+        }
+      }
+    }
+  }
   const shopifyDepartment = department;
   const shopifyCategoryValue = categoryForMetafield;
   const category = shopifyCategoryValue;

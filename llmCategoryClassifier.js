@@ -1,0 +1,181 @@
+/**
+ * LLM-based category classifier: picks the exact category within a vertical.
+ * - Luxury: Handbags, Totes, Crossbody, Backpacks, Small Bags, Wallets, Luggage, Scarves, Belts, Accessories, Other
+ *   Rules: jewelry → Accessories; shoes → Other; miscellaneous luxury items (straps, pouches, charms, etc.) → Accessories; Other only for footwear or truly uncategorizable.
+ * - Furniture: LivingRoom, DiningRoom, OfficeDen, Rugs, ArtMirrors, Bedroom, Accessories, OutdoorPatio, Lighting
+ *   Rules: art/paintings/photographs/framed → ArtMirrors; umbrellas/patio → OutdoorPatio.
+ * Uses same OPENAI_API_KEY as vertical classifier. Falls back to null on failure so caller can use keyword logic.
+ */
+
+import axios from "axios";
+
+const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
+const DEFAULT_MODEL = "gpt-4o-mini";
+
+function stripHtml(html) {
+  if (!html || typeof html !== "string") return "";
+  return html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function getProductText(product) {
+  const title = (product.title || "").trim();
+  const productType = (product.product_type || "").trim();
+  const vendor = (product.vendor || "").trim();
+  const tags = Array.isArray(product.tags)
+    ? product.tags
+    : typeof product.tags === "string"
+      ? product.tags.split(",").map((s) => s.trim()).filter(Boolean)
+      : [];
+  const tagsStr = tags.join(", ");
+  const description = stripHtml(product.body_html || "").trim();
+  return { title, productType, vendor, tagsStr, description };
+}
+
+const LUXURY_CATEGORIES = [
+  "Handbags", "Totes", "Crossbody", "Backpacks", "Small Bags",
+  "Wallets", "Luggage", "Scarves", "Belts", "Accessories", "Other"
+];
+
+const FURNITURE_CATEGORIES = [
+  "LivingRoom", "DiningRoom", "OfficeDen", "Rugs", "ArtMirrors",
+  "Bedroom", "Accessories", "OutdoorPatio", "Lighting"
+];
+
+const LUXURY_SYSTEM = `You are a retail category classifier for luxury consignment.
+Given a product (title, type, tags, description), choose exactly ONE category. Return only valid JSON.
+
+Allowed categories: ${LUXURY_CATEGORIES.join(", ")}.
+
+RULES (mandatory):
+- Jewelry, earrings, bracelets, necklaces, rings, pendants, brooches → always "Accessories".
+- Shoes, sneakers, boots, heels, sandals, loafers, mules, flats, pumps, footwear → always "Other".
+- Handbags, shoulder bags, satchels, day bags → "Handbags".
+- Totes, carryalls, book totes → "Totes".
+- Crossbody, camera bag, WOC, chain bag, sling bag → "Crossbody".
+- Backpacks, daypacks, rucksacks → "Backpacks".
+- Small bags, clutches, pochettes, minaudiere, wristlets → "Small Bags".
+- Wallets, cardholders, key pouches, passport holders → "Wallets".
+- Luggage, briefcases, weekender, duffle, keepall → "Luggage".
+- Scarves, shawls, wraps, stoles → "Scarves".
+- Belts → "Belts".
+- PREFER "Accessories" for any miscellaneous luxury item: dust bags, straps, bag charms, keychains, cosmetic pouches, makeup bags, sunglass cases, phone cases, small leather goods that are not wallets, decorative items, etc. Use "Accessories" whenever the item is clearly luxury/designer but does not fit a specific bag/scarf/belt category.
+- Use "Other" ONLY for: (1) footwear, or (2) truly uncategorizable/odd items that do not fit anywhere (e.g. random non-accessory merchandise). When in doubt between Accessories and Other, choose "Accessories".
+
+Output format only: {"category": "<one of allowed>", "confidence": 0-1, "reasoning": "brief"}`;
+
+const FURNITURE_SYSTEM = `You are a retail category classifier for furniture and home.
+Given a product (title, type, tags, description), choose exactly ONE category. Return only valid JSON.
+
+Allowed categories: ${FURNITURE_CATEGORIES.join(", ")}.
+(These map to: Living Room, Dining Room, Office Den, Rugs, Art/Mirrors, Bedroom, Accessories, Outdoor/Patio, Lighting.)
+
+RULES (mandatory):
+- Paintings, art prints, framed art, photographs, framed photos, canvas art, sculpture, statues, figurines, mirrors, wall art, lithographs → "ArtMirrors".
+- Umbrellas, umbrella stand, patio umbrella, outdoor umbrella, patio furniture, outdoor seating, garden, deck, adirondack, hammock, fire pit → "OutdoorPatio".
+- Sofas, chairs, tables, coffee table, console, ottoman, sectional, loveseat → "LivingRoom".
+- Dining table, dining chairs, buffet, sideboard, bar cart, hutch → "DiningRoom".
+- Desk, office chair, filing cabinet, bookshelf (office) → "OfficeDen".
+- Rug, runner, area rug → "Rugs".
+- Bed, headboard, nightstand, dresser, armoire, vanity → "Bedroom".
+- Lamp, chandelier, sconce, pendant light → "Lighting".
+- Vases, trays, bowls, decorative boxes, pillows, clocks, picture frames (empty), trinkets → "Accessories".
+- If unclear, prefer the most specific match; default "Accessories" only when nothing else fits.
+
+Output format only: {"category": "<one of allowed>", "confidence": 0-1, "reasoning": "brief"}`;
+
+function buildUserPrompt(product) {
+  const { title, productType, vendor, tagsStr, description } = getProductText(product);
+  return `Classify this product into exactly one category. Return only valid JSON: {"category": "<allowed value>", "confidence": 0-1, "reasoning": "brief"}
+
+Title: ${title || "(none)"}
+Product type: ${productType || "(none)"}
+Vendor: ${vendor || "(none)"}
+Tags: ${tagsStr || "(none)"}
+Description: ${description ? description.slice(0, 2000) : "(none)"}`;
+}
+
+function parseResponse(rawContent, allowedCategories) {
+  const trimmed = (rawContent || "").trim();
+  const jsonStr = trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/i, "").trim();
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonStr);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  const cat = parsed.category;
+  if (!cat || typeof cat !== "string") return null;
+  const normalized = allowedCategories.find((c) => c.toLowerCase() === cat.trim().toLowerCase()) || cat.trim();
+  if (!allowedCategories.includes(normalized)) return null;
+  const confidence = typeof parsed.confidence === "number" ? parsed.confidence : parseFloat(parsed.confidence);
+  const safeConfidence = Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0;
+  return {
+    category: normalized,
+    confidence: safeConfidence,
+    reasoning: typeof parsed.reasoning === "string" ? parsed.reasoning : "",
+  };
+}
+
+/**
+ * Classify product into a single category for the given vertical using OpenAI.
+ * @param {object} product - Shopify product { title, product_type, vendor, tags, body_html }
+ * @param {"luxury"|"furniture"} vertical
+ * @param {object} [logPayload] - Optional object for logging raw/parsed
+ * @param {Function} [logFn] - Optional (level, data) logger
+ * @returns {Promise<{ category: string, confidence: number, reasoning: string } | null>} Null if disabled, no key, or parse failure (caller should use keyword fallback).
+ */
+export async function classifyCategoryWithLLM(product, vertical, logPayload = {}, logFn = null) {
+  const openaiKey = process.env.OPENAI_API_KEY;
+  const model = (process.env.OPENAI_CATEGORY_MODEL || process.env.OPENAI_VERTICAL_MODEL || DEFAULT_MODEL).trim() || DEFAULT_MODEL;
+  const useLLMCategory = process.env.LLM_CATEGORY_ENABLED !== "false" && process.env.LLM_CATEGORY_ENABLED !== "0";
+
+  if (!useLLMCategory || !openaiKey || typeof openaiKey !== "string" || !openaiKey.trim()) {
+    if (logFn && !openaiKey) logFn("info", { event: "llm_category.skipped", reason: "OPENAI_API_KEY missing or LLM_CATEGORY_ENABLED=false" });
+    logPayload.skipped = true;
+    return null;
+  }
+
+  const systemPrompt = vertical === "luxury" ? LUXURY_SYSTEM : FURNITURE_SYSTEM;
+  const allowedCategories = vertical === "luxury" ? LUXURY_CATEGORIES : FURNITURE_CATEGORIES;
+  const userPrompt = buildUserPrompt(product);
+
+  try {
+    const res = await axios.post(
+      OPENAI_API_URL,
+      {
+        model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        temperature: 0,
+        max_tokens: 150,
+      },
+      {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${openaiKey}`,
+        },
+        timeout: 15000,
+      }
+    );
+
+    const rawContent = res.data?.choices?.[0]?.message?.content;
+    logPayload.raw = rawContent;
+
+    const parsed = parseResponse(rawContent, allowedCategories);
+    logPayload.parsed = parsed;
+
+    if (parsed && parsed.confidence >= 0.5) {
+      if (logFn) logFn("info", { event: "llm_category.result", vertical, category: parsed.category, confidence: parsed.confidence });
+      return parsed;
+    }
+    if (logFn && parsed) logFn("info", { event: "llm_category.low_confidence", vertical, category: parsed?.category, confidence: parsed?.confidence });
+    return parsed;
+  } catch (err) {
+    if (logFn) logFn("warn", { event: "llm_category.error", vertical, message: err.message || String(err) });
+    logPayload.error = err.message || String(err);
+    return null;
+  }
+}
