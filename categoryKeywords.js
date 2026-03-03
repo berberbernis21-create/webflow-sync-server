@@ -41,6 +41,8 @@ export const CATEGORY_KEYWORDS = {
   "Small Bags": [
     "mini bag", "micro bag", "nano bag", "small bag", "pochette",
     "clutch", "wristlet", "evening bag", "minaudiere", "pouch",
+    "cosmetic pouch", "cosmetic bag", "cosmetic case", "makeup bag", "vanity case",
+    "beauty case", "toiletry bag", "toiletry pouch",
     "card case with chain", "key pouch with chain", "mini vanity",
     "mini box bag", "micro box", "wallet on strap",
     "baguette bag", "compact shoulder bag"
@@ -70,10 +72,9 @@ export const CATEGORY_KEYWORDS = {
 
   Accessories: [
     "belt bag", "bag charm", "keychain", "strap",
-    "dust bag", "cosmetic pouch", "cosmetic case", "makeup bag",
-    "vanity case", "sunglasses case", "eyeglass case", "phone case",
+    "dust bag", "sunglasses case", "eyeglass case", "phone case",
     "jewelry", "earring", "earrings", "bracelet", "bracelets",
-    "pouch", "designer accessories", "statement jewelry", "costume jewelry"
+    "designer accessories", "statement jewelry", "costume jewelry"
   ]
 };
 

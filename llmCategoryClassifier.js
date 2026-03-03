@@ -53,13 +53,14 @@ RULES (mandatory):
 - Totes, carryalls, book totes → "Totes".
 - Crossbody, camera bag, WOC, chain bag, sling bag → "Crossbody".
 - Backpacks, daypacks, rucksacks → "Backpacks".
-- Small bags, clutches, pochettes, minaudiere, wristlets → "Small Bags".
+- Small bags, clutches, pochettes, wristlets, minaudiere, pouches, cosmetic pouches/cases, makeup bags, vanity cases, toiletry/beauty pouches → "Small Bags".
 - Wallets, cardholders, key pouches, passport holders → "Wallets".
 - Luggage, briefcases, weekender, duffle, keepall → "Luggage".
 - Scarves, shawls, wraps, stoles → "Scarves".
 - Belts → "Belts".
-- PREFER "Accessories" for any miscellaneous luxury item: dust bags, straps, bag charms, keychains, cosmetic pouches, makeup bags, sunglass cases, phone cases, small leather goods that are not wallets, decorative items, etc. Use "Accessories" whenever the item is clearly luxury/designer but does not fit a specific bag/scarf/belt category.
-- Use "Other" ONLY for: (1) footwear, or (2) truly uncategorizable/odd items that do not fit anywhere (e.g. random non-accessory merchandise). When in doubt between Accessories and Other, choose "Accessories".
+- PREFER "Accessories" for miscellaneous luxury add-ons that are not bags or pouches: dust bags, straps, bag charms, keychains, sunglass cases, phone cases, decorative accessories, etc.
+- Treat agendas, agenda covers, document holders, notebooks, notepads, folios, business card cases and similar stationery/office pieces as "Other" (not Accessories).
+- Use "Other" ONLY for: (1) footwear, or (2) these stationery/office items, or (3) truly uncategorizable/odd items that do not fit anywhere. When in doubt between "Small Bags" and "Accessories" for a pouch-like item, choose "Small Bags"; when in doubt between "Accessories" and "Other", choose "Accessories" except for the stationery/office items above.
 
 Output format only: {"category": "<one of allowed>", "confidence": 0-1, "reasoning": "brief"}`;
 
