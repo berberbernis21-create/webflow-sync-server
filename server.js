@@ -1276,6 +1276,22 @@ const BELT_KEYWORDS = [
   "belt", "belts", "chain belt", "belt accessory", "belt accessories", "waist belt", "leather belt",
 ];
 
+/** Bag/agenda terms — if present, never force to Accessories; use real category (Crossbody, Handbags, etc.) or Other. */
+const BAG_AGENDA_KEYWORDS = [
+  "crossbody", "handbag", "handbags", "tote", "totes", "wallet", "wallets", "clutch", "backpack", "backpacks",
+  "luggage", "satchel", "shoulder bag", "small bag", "pochette", "agenda", "agenda cover", "notepad", "notebook",
+  "document holder", "folio", "business card case",
+];
+
+/** True if title or description indicate a bag or agenda — do NOT categorize as Accessories. */
+function isBagOrAgendaProduct(title, descriptionHtml) {
+  const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const desc = stripHtml(descriptionHtml || "").trim();
+  const text = [(title || "").trim(), desc].filter(Boolean).join(" ").toLowerCase();
+  if (!text) return false;
+  return BAG_AGENDA_KEYWORDS.some((kw) => matchWordBoundary(text, kw));
+}
+
 /** True if title or description indicate a belt — force category Belts. */
 function isBeltProduct(title, descriptionHtml) {
   const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
@@ -2057,8 +2073,12 @@ async function syncSingleProduct(product, cache, options = {}) {
           categoryForMetafield = fromTitle ?? "Other ";
         }
       }
-      if (isJewelryOrAccessoryProduct(name, description)) categoryForMetafield = "Accessories";
+      if (isJewelryOrAccessoryProduct(name, description) && !isBagOrAgendaProduct(name, description)) categoryForMetafield = "Accessories";
       if (isBeltProduct(name, description)) categoryForMetafield = "Belts";
+      if (categoryForMetafield === "Accessories" && isBagOrAgendaProduct(name, description)) {
+        const fromTitle = detectLuxuryCategoryFromTitle(name, description);
+        categoryForMetafield = fromTitle ?? "Other ";
+      }
     }
   }
   const shopifyDepartment = department;
