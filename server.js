@@ -953,6 +953,7 @@ async function removeConditionOptionIfFurniture(product) {
    HASH FOR CHANGE DETECTION
    Includes dimensions (variant + metafields + tags) so dimension changes trigger an update.
    body_html is normalized (collapse whitespace) so Shopify formatting drift doesn't cause false "changed".
+   taxonomyVersion: bump this when category/vertical logic changes so all items resync once.
 ====================================================== */
 function normalizeHtmlForHash(html) {
   if (html == null || typeof html !== "string") return html;
@@ -970,6 +971,7 @@ function shopifyHash(product) {
     images: (product.images || []).map((i) => i.src),
     slug: product.handle,
     dimensions: { width: dimensions.width, height: dimensions.height, length: dimensions.length, weight: dimensions.weight },
+    taxonomyVersion: 2,
   };
 }
 
