@@ -1914,7 +1914,14 @@ async function syncSingleProduct(product, cache, options = {}) {
     (cacheEntry?.webflowId && previousContentHash == null);
   const forceReclassify = options.forceReclassify === true;
 
-  if (nameOrDescriptionUnchanged && cacheEntry?.webflowId && !forceReclassify) {
+  // Sold item we already classified (cache has vertical, no webflowId, qty 0): skip LLM and will hit skip_create_sold later.
+  let recoveredFromWebflow = null;
+  if (nameOrDescriptionUnchanged && cacheEntry?.vertical && qty !== null && qty <= 0 && !cacheEntry?.webflowId && !forceReclassify) {
+    recoveredFromWebflow = { vertical: cacheEntry.vertical };
+    webflowLog("info", { event: "sync_product.skip_llm_sold_already_classified", shopifyProductId, vertical: cacheEntry.vertical, message: "Cache has vertical and qty 0; skipping LLM" });
+  }
+
+  if (!recoveredFromWebflow && nameOrDescriptionUnchanged && cacheEntry?.webflowId && !forceReclassify) {
     const vertical = cacheEntry.vertical ?? "luxury";
     const config = getWebflowConfig(vertical);
     let existing = null;
@@ -1942,12 +1949,23 @@ async function syncSingleProduct(product, cache, options = {}) {
   }
 
   // When cache is missing (e.g. didn't persist after deploy), don't call LLM — check Webflow first. If item exists there, use it and repopulate cache.
-  const noCacheEntry = !cacheEntry?.webflowId;
-  const inFurniture = noCacheEntry && !forceReclassify ? furnitureProductIndex?.byShopifyId?.get(shopifyProductId) : null;
-  const inLuxury = noCacheEntry && !forceReclassify ? luxuryItemIndex?.byShopifyId?.get(shopifyProductId) : null;
-  const recoveredFromWebflow = inFurniture ? { vertical: "furniture" } : inLuxury ? { vertical: "luxury" } : null;
-  if (recoveredFromWebflow) {
+  if (!recoveredFromWebflow) {
+    const noCacheEntry = !cacheEntry?.webflowId;
+    const inFurniture = noCacheEntry && !forceReclassify ? furnitureProductIndex?.byShopifyId?.get(shopifyProductId) : null;
+    const inLuxury = noCacheEntry && !forceReclassify ? luxuryItemIndex?.byShopifyId?.get(shopifyProductId) : null;
+    recoveredFromWebflow = inFurniture ? { vertical: "furniture", fromWebflowIndex: true } : inLuxury ? { vertical: "luxury", fromWebflowIndex: true } : null;
+  }
+  if (recoveredFromWebflow?.fromWebflowIndex) {
     webflowLog("info", { event: "sync_product.skip_llm_cache_missing_found_in_webflow", shopifyProductId, vertical: recoveredFromWebflow.vertical, message: "Cache missing but item exists in Webflow; skipping LLM" });
+  }
+
+  // Sold items (qty 0): never call the LLM — use a simple heuristic for vertical so we can write cache at skip_create_sold.
+  if (!recoveredFromWebflow && qty !== null && qty <= 0 && !forceReclassify) {
+    const pt = (product.product_type ?? "").toLowerCase();
+    const title = (product.title ?? "").toLowerCase();
+    const soldVertical = (pt.includes("furniture") || pt.includes("home") || title.includes("dresser") || title.includes("chair") || title.includes("table") || title.includes("cabinet") || title.includes("bed")) ? "furniture" : "luxury";
+    recoveredFromWebflow = { vertical: soldVertical, soldNoLlm: true };
+    webflowLog("info", { event: "sync_product.skip_llm_sold", shopifyProductId, vertical: soldVertical, message: "Sold item (qty 0); skipping LLM, using heuristic vertical" });
   }
 
   let vertical, detectedVertical, verticalCorrected;
@@ -2410,6 +2428,9 @@ async function syncSingleProduct(product, cache, options = {}) {
   if (!existing) {
     // Don't recreate sold items (qty 0). If you deleted them from Webflow, we won't push them back.
     if (soldNow) {
+      // Write cache so next run skips LLM for this already-classified sold item.
+      cache[shopifyProductId] = { hash: currentHash, contentHash: currentContentHash, webflowId: null, lastQty: 0, vertical };
+      webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "skip_sold", webflowId: null, vertical });
       webflowLog("info", {
         event: "sync_product.skip_create_sold",
         shopifyProductId,
