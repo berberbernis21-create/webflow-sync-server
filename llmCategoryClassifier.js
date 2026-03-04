@@ -77,6 +77,7 @@ RULES (mandatory):
 - Sofas, chairs, tables, coffee table, console, ottoman, sectional, loveseat → "LivingRoom".
 - Dining table, dining chairs, buffet, sideboard, bar cart, hutch → "DiningRoom".
 - Desk, office chair, filing cabinet, bookshelf (office) → "OfficeDen".
+- Game tables (shuffleboard, pool table, ping pong, foosball), exercise/workout/fitness equipment (dumbbells, treadmill, home gym), play equipment, game room furniture → "OfficeDen".
 - Rug, runner, area rug → "Rugs".
 - Bed, headboard, nightstand, dresser, armoire, vanity → "Bedroom".
 - Lamp, chandelier, sconce, pendant light → "Lighting".

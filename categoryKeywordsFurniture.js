@@ -42,7 +42,11 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
     "bookcase", "bookcases", "bookshelf", "bookshelves",
     "secretary", "secretary desk", "rolltop", "roll-top",
     "lateral file", "credenza", "standing desk", "executive desk",
-    "computer desk", "workstation", "library table", "study desk"
+    "computer desk", "workstation", "library table", "study desk",
+    "shuffleboard", "game table", "game tables", "pool table", "ping pong", "foosball",
+    "exercise equipment", "workout equipment", "fitness equipment", "home gym",
+    "dumbbell", "dumbbells", "weight set", "treadmill", "exercise bike", "rower",
+    "play equipment", "recreation", "game room", "game room furniture"
   ],
 
   Rugs: [
