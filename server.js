@@ -224,7 +224,8 @@ app.use(express.json());
 /* ======================================================
    PATHS / CACHE SETUP
 ====================================================== */
-const DATA_DIR = "./data";
+// Persist across deploys (e.g. mount a volume at DATA_DIR) so we don't re-call the LLM for every product after a new build.
+const DATA_DIR = process.env.DATA_DIR || "./data";
 const CACHE_FILE = `${DATA_DIR}/lastSync.json`;
 const DUPLICATE_EMAIL_SENT_FILE = `${DATA_DIR}/duplicate_placement_emails_sent.json`;
 
@@ -257,6 +258,7 @@ function saveDuplicatePlacementSentId(id) {
   }
 }
 
+/** Load cache from disk. Must persist across deploys so we only call LLM for new products or when name/description change. */
 function loadCache() {
   try {
     ensureDataDir();
@@ -971,6 +973,15 @@ function shopifyHash(product) {
     images: (product.images || []).map((i) => i.src),
     slug: product.handle,
     dimensions: { width: dimensions.width, height: dimensions.height, length: dimensions.length, weight: dimensions.weight },
+    taxonomyVersion: 2,
+  };
+}
+
+/** Hash of only name + description; used to decide if we call the LLM (only when this changes). */
+function contentHashForLLM(product) {
+  return {
+    title: product.title || "",
+    body_html: normalizeHtmlForHash(product.body_html),
     taxonomyVersion: 2,
   };
 }
@@ -1892,16 +1903,64 @@ async function syncSingleProduct(product, cache, options = {}) {
   const cacheEntry = getCacheEntry(cache, shopifyProductId);
   const duplicateEmailSentFor = options.duplicateEmailSentFor ?? null;
 
-  // LLM-based vertical classification: LUXURY vs HOME_INTERIOR (replaces keyword classifier)
-  const llmLogPayload = {};
-  const llmResult = await classifyWithLLM(product, llmLogPayload, webflowLog);
-  const detectedVertical = llmResult.category === "LUXURY" ? "luxury" : "furniture";
-  let vertical =
-    cacheEntry?.vertical === "furniture" && detectedVertical === "luxury"
-      ? "luxury"
-      : (cacheEntry?.vertical ?? detectedVertical);
-  const verticalCorrected = cacheEntry?.vertical === "furniture" && detectedVertical === "luxury";
-  webflowLog("info", {
+  const currentHash = shopifyHash(product);
+  const currentContentHash = contentHashForLLM(product);
+  const previousContentHash = cacheEntry?.contentHash ?? null;
+  const previousQty = cacheEntry?.lastQty ?? null;
+  const qty = product.variants?.[0]?.inventory_quantity ?? null;
+  // Skip LLM only when: (1) we have same name/description as last time, OR (2) we have a cached webflowId but no contentHash (legacy) — treat as unchanged to avoid cost.
+  const nameOrDescriptionUnchanged =
+    (previousContentHash && JSON.stringify(currentContentHash) === JSON.stringify(previousContentHash)) ||
+    (cacheEntry?.webflowId && previousContentHash == null);
+  const forceReclassify = options.forceReclassify === true;
+
+  if (nameOrDescriptionUnchanged && cacheEntry?.webflowId && !forceReclassify) {
+    const vertical = cacheEntry.vertical ?? "luxury";
+    const config = getWebflowConfig(vertical);
+    let existing = null;
+    if (vertical === "furniture" && config?.siteId && config?.token) {
+      existing = await getWebflowEcommerceProductById(config.siteId, cacheEntry.webflowId, config.token);
+    } else if (vertical === "luxury" && config?.collectionId && config?.token) {
+      existing = await getWebflowItemById(cacheEntry.webflowId, config);
+    }
+    if (existing) {
+      const newlySold = (previousQty === null || previousQty > 0) && qty !== null && qty <= 0;
+      if (newlySold) {
+        webflowLog("info", { event: "sync_product.newly_sold", shopifyProductId, productTitle: product.title, webflowId: existing.id, vertical });
+        await markAsSold(existing, vertical, config);
+        if (vertical === "furniture" && config?.siteId) {
+          await syncFurnitureEcommerceSku(product, existing.id, config);
+        }
+        cache[shopifyProductId] = { hash: currentHash, contentHash: currentContentHash, webflowId: existing.id, lastQty: qty, vertical };
+        webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "sold", webflowId: existing.id, vertical });
+        return { operation: "sold", id: existing.id };
+      }
+      cache[shopifyProductId] = { hash: currentHash, contentHash: currentContentHash, webflowId: existing.id, lastQty: qty, vertical };
+      webflowLog("info", { event: "sync_product.skip_unchanged", shopifyProductId, productTitle: product.title, webflowId: existing.id, message: "Name/description unchanged; skipped LLM and write" });
+      return { operation: "skip", id: existing.id };
+    }
+  }
+
+  // When cache is missing (e.g. didn't persist after deploy), don't call LLM — check Webflow first. If item exists there, use it and repopulate cache.
+  const noCacheEntry = !cacheEntry?.webflowId;
+  const inFurniture = noCacheEntry && !forceReclassify ? furnitureProductIndex?.byShopifyId?.get(shopifyProductId) : null;
+  const inLuxury = noCacheEntry && !forceReclassify ? luxuryItemIndex?.byShopifyId?.get(shopifyProductId) : null;
+  const recoveredFromWebflow = inFurniture ? { vertical: "furniture" } : inLuxury ? { vertical: "luxury" } : null;
+  if (recoveredFromWebflow) {
+    webflowLog("info", { event: "sync_product.skip_llm_cache_missing_found_in_webflow", shopifyProductId, vertical: recoveredFromWebflow.vertical, message: "Cache missing but item exists in Webflow; skipping LLM" });
+  }
+
+  let vertical, detectedVertical, verticalCorrected;
+  if (!recoveredFromWebflow) {
+    const llmLogPayload = {};
+    const llmResult = await classifyWithLLM(product, llmLogPayload, webflowLog);
+    detectedVertical = llmResult.category === "LUXURY" ? "luxury" : "furniture";
+    vertical =
+      cacheEntry?.vertical === "furniture" && detectedVertical === "luxury"
+        ? "luxury"
+        : (cacheEntry?.vertical ?? detectedVertical);
+    verticalCorrected = cacheEntry?.vertical === "furniture" && detectedVertical === "luxury";
+    webflowLog("info", {
     event: "vertical.resolved",
     shopifyProductId,
     detectedVertical,
@@ -1911,14 +1970,14 @@ async function syncSingleProduct(product, cache, options = {}) {
     llmConfidence: llmResult.confidence,
     llmReasoning: llmResult.reasoning?.slice(0, 120),
     llmOverride: llmLogPayload.override ?? null,
-  });
-  if (llmLogPayload.raw != null || llmLogPayload.override) {
-    webflowLog("info", { event: "llm_vertical.audit", shopifyProductId, ...llmLogPayload });
-  }
+    });
+    if (llmLogPayload.raw != null || llmLogPayload.override) {
+      webflowLog("info", { event: "llm_vertical.audit", shopifyProductId, ...llmLogPayload });
+    }
 
-  // When we correct furniture → luxury, remove the mistaken product from Webflow (archive) and clear cache so we create in luxury.
-  // If it's already archived, don't re-archive and don't send duplicate email.
-  if (verticalCorrected && cacheEntry?.webflowId && vertical === "luxury") {
+    // When we correct furniture → luxury, remove the mistaken product from Webflow (archive) and clear cache so we create in luxury.
+    // If it's already archived, don't re-archive and don't send duplicate email.
+    if (verticalCorrected && cacheEntry?.webflowId && vertical === "luxury") {
     const furnitureConfig = getWebflowConfig("furniture");
     let alreadyArchived = false;
     if (furnitureConfig?.siteId && furnitureConfig?.token) {
@@ -2026,15 +2085,17 @@ async function syncSingleProduct(product, cache, options = {}) {
       }
     }
   }
+  } else {
+    vertical = recoveredFromWebflow.vertical;
+    detectedVertical = vertical;
+  }
 
   const config = getWebflowConfig(vertical);
 
   // Use name + description FROM Shopify to decide; then write our decision back to Shopify and update the correct Webflow collection (Luxury or Furniture).
-  const previousQty = cacheEntry?.lastQty ?? null;
   let name = product.title;
   let description = product.body_html;
   let price = product.variants?.[0]?.price || null;
-  let qty = product.variants?.[0]?.inventory_quantity ?? null;
   let slug = product.handle;
 
   let detectedBrand =
@@ -2055,7 +2116,22 @@ async function syncSingleProduct(product, cache, options = {}) {
   let dimensionsStatus = null;
   const dimensions = getDimensionsFromProduct(product);
   let categoryForMetafield;
-  if (vertical === "furniture") {
+  if (recoveredFromWebflow) {
+    // Cache-missing path: no LLM; use keyword-only category.
+    if (vertical === "furniture") {
+      const resolved = detectCategoryFurniture(name, description, getProductTagsArray(product), dimensions);
+      categoryForMetafield = mapFurnitureCategoryForShopify(resolved);
+    } else {
+      if (soldNow) categoryForMetafield = "Recently Sold";
+      else {
+        if (isShoeProduct(name, description)) categoryForMetafield = "Other ";
+        else categoryForMetafield = detectLuxuryCategoryFromTitle(name, description) ?? "Other ";
+        if (isJewelryOrAccessoryProduct(name, description) && !isBagOrAgendaProduct(name, description)) categoryForMetafield = "Accessories";
+        if (isBeltProduct(name, description)) categoryForMetafield = "Belts";
+        if (categoryForMetafield === "Accessories" && isBagOrAgendaProduct(name, description)) categoryForMetafield = detectLuxuryCategoryFromTitle(name, description) ?? "Other ";
+      }
+    }
+  } else if (vertical === "furniture") {
     const llmCategory = await classifyCategoryWithLLM(product, "furniture", {}, webflowLog);
     const resolved = llmCategory?.category ?? detectCategoryFurniture(name, description, getProductTagsArray(product), dimensions);
     categoryForMetafield = mapFurnitureCategoryForShopify(resolved);
@@ -2136,8 +2212,6 @@ async function syncSingleProduct(product, cache, options = {}) {
     );
   }
 
-  const currentHash = shopifyHash(product);
-
   // RULE: Only touch Webflow when (1) item removed from Shopify, or (2) item changed in Shopify from previous run.
   // Otherwise we do not call Webflow at all. When we do go to Webflow we retrieve the item, compare to what we'd send, and only update if there is a difference.
   const previousHash = cacheEntry?.hash || null;
@@ -2168,6 +2242,7 @@ async function syncSingleProduct(product, cache, options = {}) {
       webflowLog("info", { event: "sync_product.skip_early_no_webflow", shopifyProductId, productTitle: name, webflowId: cacheEntry.webflowId, reason: "shopify_unchanged" });
       cache[shopifyProductId] = {
         hash: currentHash,
+        contentHash: currentContentHash,
         webflowId: cacheEntry.webflowId,
         lastQty: qty,
         vertical,
@@ -2244,6 +2319,7 @@ async function syncSingleProduct(product, cache, options = {}) {
       }
       cache[shopifyProductId] = {
         hash: currentHash,
+        contentHash: currentContentHash,
         webflowId: existing.id,
         lastQty: qty,
         vertical,
@@ -2283,6 +2359,7 @@ async function syncSingleProduct(product, cache, options = {}) {
         webflowLog("info", { event: "sync_product.skip_webflow_unchanged", shopifyProductId, productTitle: name, webflowId: existing.id, message: "Retrieved from Webflow; same as Shopify would send; not touching" });
         cache[shopifyProductId] = {
           hash: currentHash,
+          contentHash: currentContentHash,
           webflowId: existing.id,
           lastQty: qty,
           vertical,
@@ -2308,6 +2385,7 @@ async function syncSingleProduct(product, cache, options = {}) {
       }
       cache[shopifyProductId] = {
         hash: currentHash,
+        contentHash: currentContentHash,
         webflowId: existing.id,
         lastQty: qty,
         vertical,
@@ -2319,6 +2397,7 @@ async function syncSingleProduct(product, cache, options = {}) {
     webflowLog("info", { event: "sync_product.skip_no_changes", shopifyProductId, productTitle: name, webflowId: existing.id });
     cache[shopifyProductId] = {
       hash: currentHash,
+      contentHash: currentContentHash,
       webflowId: existing.id,
       lastQty: qty,
       vertical,
@@ -2384,7 +2463,7 @@ async function syncSingleProduct(product, cache, options = {}) {
       const existingFD = existingFromGuard.fieldData || {};
       if (fieldDataEffectivelyEqual(fieldData, existingFD)) {
         webflowLog("info", { event: "sync_product.skip_webflow_unchanged", shopifyProductId, productTitle: name, webflowId: existingFromGuard.id, message: "Existing item matches; not touching" });
-        cache[shopifyProductId] = { hash: currentHash, webflowId: existingFromGuard.id, lastQty: qty, vertical: detectedVertical };
+        cache[shopifyProductId] = { hash: currentHash, contentHash: currentContentHash, webflowId: existingFromGuard.id, lastQty: qty, vertical: detectedVertical };
         webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "skip", webflowId: existingFromGuard.id, vertical: detectedVertical });
         return { operation: "skip", id: existingFromGuard.id };
       }
@@ -2404,7 +2483,7 @@ async function syncSingleProduct(product, cache, options = {}) {
           }
         );
       }
-      cache[shopifyProductId] = { hash: currentHash, webflowId: existingFromGuard.id, lastQty: qty, vertical: detectedVertical };
+      cache[shopifyProductId] = { hash: currentHash, contentHash: currentContentHash, webflowId: existingFromGuard.id, lastQty: qty, vertical: detectedVertical };
       webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "update", webflowId: existingFromGuard.id, vertical: detectedVertical });
       return { operation: "update", id: existingFromGuard.id };
     }
@@ -2550,6 +2629,7 @@ async function syncSingleProduct(product, cache, options = {}) {
     }
     cache[shopifyProductId] = {
       hash: currentHash,
+      contentHash: currentContentHash,
       webflowId: newId,
       lastQty: qty,
       vertical: detectedVertical,
@@ -2727,6 +2807,17 @@ app.post("/sync-all", async (req, res) => {
   syncStartTime = Date.now();
   webflowLog("info", { event: "sync-all.entry", message: "sync-all started" });
   try {
+    // Optional: force LLM reclassification for this run. "all" = every product; or array of Shopify product IDs.
+    const reclassify = req.body?.reclassify;
+    const reclassifyAll = reclassify === "all" || reclassify === true;
+    const reclassifyIdsSet =
+      Array.isArray(reclassify) && reclassify.length > 0
+        ? new Set(reclassify.map((id) => String(id)))
+        : null;
+    if (reclassifyAll || reclassifyIdsSet) {
+      webflowLog("info", { event: "sync-all.reclassify", reclassifyAll, reclassifyCount: reclassifyIdsSet?.size ?? "all" });
+    }
+
     const products = await fetchAllShopifyProducts();
     webflowLog("info", { event: "sync-all.fetched_shopify", productCount: products?.length ?? 0 });
     const cache = loadCache();
@@ -2843,7 +2934,14 @@ app.post("/sync-all", async (req, res) => {
 
     for (let i = 0; i < products.length; i += concurrency) {
       const chunk = products.slice(i, i + concurrency);
-      const results = await Promise.all(chunk.map((p) => syncSingleProduct(p, cache, { duplicateEmailSentFor })));
+      const results = await Promise.all(
+        chunk.map((p) =>
+          syncSingleProduct(p, cache, {
+            duplicateEmailSentFor,
+            forceReclassify: reclassifyAll || (reclassifyIdsSet != null && reclassifyIdsSet.has(String(p.id))),
+          })
+        )
+      );
 
       for (const result of results) {
         if (result.duplicateCorrected && result.duplicateLog) {
