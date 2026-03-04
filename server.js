@@ -1257,19 +1257,41 @@ function isShoeProduct(title, descriptionHtml) {
   return text && SHOE_KEYWORDS.some((kw) => matchWordBoundary(text, kw));
 }
 
-/** Jewelry keywords — title/type/tags: force Accessories. Checked so jewelry never lands in Other. */
+/** Jewelry and accessory keywords — title + description only: force Accessories. */
 const JEWELRY_KEYWORDS = [
   "jewelry", "jewellery", "jewel", "earring", "earrings", "bracelet", "bracelets",
   "necklace", "necklaces", "ring", "rings", "pendant", "pendants", "brooch", "brooches",
   "barrette", "barrettes", "statement jewelry", "costume jewelry",
 ];
 
-/** True if title, type, or tags indicate jewelry — used to force category Accessories for luxury. */
-function isJewelryProduct(title, productType, tags) {
-  const tagsStr = Array.isArray(tags) ? tags.join(" ") : typeof tags === "string" ? tags : "";
-  const text = [(title || "").trim(), (productType || "").trim(), tagsStr].filter(Boolean).join(" ").toLowerCase();
+/** Accessory-only terms (keychains, key rings, bag charms) — title + description: force Accessories. */
+const ACCESSORY_KEYWORDS = [
+  "keychain", "keychains", "key ring", "key rings", "bag charm", "bag charms",
+];
+
+/** Belt terms — title + description: force Belts (chain belt, belt accessory, etc.). */
+const BELT_KEYWORDS = [
+  "belt", "belts", "chain belt", "belt accessory", "belt accessories", "waist belt", "leather belt",
+];
+
+/** True if title or description indicate a belt — force category Belts. */
+function isBeltProduct(title, descriptionHtml) {
+  const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const desc = stripHtml(descriptionHtml || "").trim();
+  const text = [(title || "").trim(), desc].filter(Boolean).join(" ").toLowerCase();
   if (!text) return false;
-  return JEWELRY_KEYWORDS.some((kw) => matchWordBoundary(text, kw));
+  return BELT_KEYWORDS.some((kw) => matchWordBoundary(text, kw));
+}
+
+/** True if title or description indicate jewelry or accessory (keychain, key ring, bag charm) — force Accessories. */
+function isJewelryOrAccessoryProduct(title, descriptionHtml) {
+  const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const desc = stripHtml(descriptionHtml || "").trim();
+  const text = [(title || "").trim(), desc].filter(Boolean).join(" ").toLowerCase();
+  if (!text) return false;
+  if (JEWELRY_KEYWORDS.some((kw) => matchWordBoundary(text, kw))) return true;
+  if (ACCESSORY_KEYWORDS.some((kw) => matchWordBoundary(text, kw))) return true;
+  return false;
 }
 
 /** Detect luxury category from title/description when product_type is empty or unmatched. Title-first: match on title before description so accessory mentions (e.g. "comes with clutch") don't override the main product. */
@@ -1281,6 +1303,7 @@ function detectLuxuryCategoryFromTitle(title, descriptionHtml) {
   if (!combined) return null;
   if (SHOE_KEYWORDS.some((kw) => matchWordBoundary(combined, kw))) return null;
   if (JEWELRY_KEYWORDS.some((kw) => matchWordBoundary(combined, kw))) return "Accessories";
+  if (ACCESSORY_KEYWORDS.some((kw) => matchWordBoundary(combined, kw))) return "Accessories";
   const tryMatch = (text) => {
     if (!text) return null;
     for (const [category, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
@@ -2029,12 +2052,11 @@ async function syncSingleProduct(product, cache, options = {}) {
         if (isShoeProduct(name, description)) categoryForMetafield = "Other ";
         else {
           const fromTitle = detectLuxuryCategoryFromTitle(name, description);
-          categoryForMetafield = fromTitle != null ? fromTitle : (getLuxuryCategoryFromType(productType, soldNow) ?? "Other ");
+          categoryForMetafield = fromTitle ?? "Other ";
         }
       }
-      if (isJewelryProduct(name, productType, getProductTagsArray(product))) {
-        categoryForMetafield = "Accessories";
-      }
+      if (isJewelryOrAccessoryProduct(name, description)) categoryForMetafield = "Accessories";
+      if (isBeltProduct(name, description)) categoryForMetafield = "Belts";
     }
   }
   const shopifyDepartment = department;

@@ -42,12 +42,13 @@ const FURNITURE_CATEGORIES = [
 ];
 
 const LUXURY_SYSTEM = `You are a retail category classifier for luxury consignment.
-Given a product (title, type, tags, description), choose exactly ONE category. Return only valid JSON.
+Use ONLY the product title and description to choose exactly ONE category. Do not use product type or tags. Return only valid JSON.
 
 Allowed categories: ${LUXURY_CATEGORIES.join(", ")}.
 
 RULES (mandatory):
-- Jewelry, earrings, bracelets, necklaces, rings, pendants, brooches → always "Accessories".
+- Jewelry, earrings, bracelets, necklaces, rings, pendants, brooches, barrettes, hair accessories, clip-on earrings → always "Accessories".
+- Keychains, key rings, bag charms, medallion charms (when worn as key ring or bag charm) → always "Accessories".
 - Shoes, sneakers, boots, heels, sandals, loafers, mules, flats, pumps, footwear → always "Other".
 - Handbags, shoulder bags, satchels, day bags → "Handbags".
 - Totes, carryalls, book totes → "Totes".
@@ -57,8 +58,8 @@ RULES (mandatory):
 - Wallets, cardholders, key pouches, passport holders → "Wallets".
 - Luggage, briefcases, weekender, duffle, keepall → "Luggage".
 - Scarves, shawls, wraps, stoles → "Scarves".
-- Belts → "Belts".
-- PREFER "Accessories" for miscellaneous luxury add-ons that are not bags or pouches: dust bags, straps, bag charms, keychains, sunglass cases, phone cases, decorative accessories, etc.
+- Belts, chain belts, waist belts, belt accessories (including charm bags worn on belt) → always "Belts".
+- PREFER "Accessories" for miscellaneous luxury add-ons that are not bags or pouches: dust bags, straps, bag charms, keychains, key rings, barrettes, clip-on earrings, sunglass cases, phone cases, decorative accessories, etc.
 - Treat agendas, agenda covers, document holders, notebooks, notepads, folios, business card cases and similar stationery/office pieces as "Other" (not Accessories).
 - Use "Other" ONLY for: (1) footwear, or (2) these stationery/office items, or (3) truly uncategorizable/odd items that do not fit anywhere. When in doubt between "Small Bags" and "Accessories" for a pouch-like item, choose "Small Bags"; when in doubt between "Accessories" and "Other", choose "Accessories" except for the stationery/office items above.
 
@@ -85,13 +86,10 @@ RULES (mandatory):
 Output format only: {"category": "<one of allowed>", "confidence": 0-1, "reasoning": "brief"}`;
 
 function buildUserPrompt(product) {
-  const { title, productType, vendor, tagsStr, description } = getProductText(product);
-  return `Classify this product into exactly one category. Return only valid JSON: {"category": "<allowed value>", "confidence": 0-1, "reasoning": "brief"}
+  const { title, description } = getProductText(product);
+  return `Classify this product into exactly one category. Use ONLY the title and description below. Return only valid JSON: {"category": "<allowed value>", "confidence": 0-1, "reasoning": "brief"}
 
 Title: ${title || "(none)"}
-Product type: ${productType || "(none)"}
-Vendor: ${vendor || "(none)"}
-Tags: ${tagsStr || "(none)"}
 Description: ${description ? description.slice(0, 2000) : "(none)"}`;
 }
 
