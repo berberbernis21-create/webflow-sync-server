@@ -1211,6 +1211,10 @@ const TYPE_TO_LUXURY_CATEGORY = {
   "small bag": "Small Bags", "backpack": "Backpacks", "backpacks": "Backpacks", "wallet": "Wallets", "wallets": "Wallets",
   "luggage": "Luggage", "scarf": "Scarves", "scarves": "Scarves", "belt": "Belts", "belts": "Belts",
   "clutch": "Small Bags", "bag": "Handbags", "bags": "Handbags", "fashion accessories": "Accessories", "wearable": "Accessories", "accessories": "Accessories",
+  "jewelry": "Accessories", "jewellery": "Accessories", "earring": "Accessories", "earrings": "Accessories",
+  "bracelet": "Accessories", "bracelets": "Accessories", "necklace": "Accessories", "necklaces": "Accessories",
+  "ring": "Accessories", "rings": "Accessories", "pendant": "Accessories", "pendants": "Accessories",
+  "brooch": "Accessories", "brooches": "Accessories", "barrette": "Accessories", "barrettes": "Accessories",
 };
 
 function getFurnitureCategoryFromType(productType) {
@@ -1253,6 +1257,21 @@ function isShoeProduct(title, descriptionHtml) {
   return text && SHOE_KEYWORDS.some((kw) => matchWordBoundary(text, kw));
 }
 
+/** Jewelry keywords — title/type/tags: force Accessories. Checked so jewelry never lands in Other. */
+const JEWELRY_KEYWORDS = [
+  "jewelry", "jewellery", "jewel", "earring", "earrings", "bracelet", "bracelets",
+  "necklace", "necklaces", "ring", "rings", "pendant", "pendants", "brooch", "brooches",
+  "barrette", "barrettes", "statement jewelry", "costume jewelry",
+];
+
+/** True if title, type, or tags indicate jewelry — used to force category Accessories for luxury. */
+function isJewelryProduct(title, productType, tags) {
+  const tagsStr = Array.isArray(tags) ? tags.join(" ") : typeof tags === "string" ? tags : "";
+  const text = [(title || "").trim(), (productType || "").trim(), tagsStr].filter(Boolean).join(" ").toLowerCase();
+  if (!text) return false;
+  return JEWELRY_KEYWORDS.some((kw) => matchWordBoundary(text, kw));
+}
+
 /** Detect luxury category from title/description when product_type is empty or unmatched. Title-first: match on title before description so accessory mentions (e.g. "comes with clutch") don't override the main product. */
 function detectLuxuryCategoryFromTitle(title, descriptionHtml) {
   const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
@@ -1261,6 +1280,7 @@ function detectLuxuryCategoryFromTitle(title, descriptionHtml) {
   const combined = [titleText, descText].filter(Boolean).join(" ");
   if (!combined) return null;
   if (SHOE_KEYWORDS.some((kw) => matchWordBoundary(combined, kw))) return null;
+  if (JEWELRY_KEYWORDS.some((kw) => matchWordBoundary(combined, kw))) return "Accessories";
   const tryMatch = (text) => {
     if (!text) return null;
     for (const [category, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
@@ -2011,6 +2031,9 @@ async function syncSingleProduct(product, cache, options = {}) {
           const fromTitle = detectLuxuryCategoryFromTitle(name, description);
           categoryForMetafield = fromTitle != null ? fromTitle : (getLuxuryCategoryFromType(productType, soldNow) ?? "Other ");
         }
+      }
+      if (isJewelryProduct(name, productType, getProductTagsArray(product))) {
+        categoryForMetafield = "Accessories";
       }
     }
   }
