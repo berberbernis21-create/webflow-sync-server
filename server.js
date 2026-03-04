@@ -2634,8 +2634,10 @@ function buildWebflowFieldData(opts) {
     return out;
   }
 
-  // Webflow rejects "Other " (trailing space); use "Other" for Luxury CMS. Never send Furniture-only categories (Dining Room, etc.) to Luxury.
-  const luxuryCategory = category && FURNITURE_TAXONOMY.includes(category) ? "Other " : (category ?? "Other ");
+  // Webflow rejects "Other " (trailing space); use "Other" for Luxury CMS.
+  // Only allow known luxury taxonomy values; everything else (including furniture-only categories like "Living Room") becomes "Other ".
+  const isLuxuryCategory = category && LUXURY_TAXONOMY.includes(category);
+  const luxuryCategory = isLuxuryCategory ? category : "Other ";
   const webflowCategory = (luxuryCategory && luxuryCategory.trimEnd() === "Other") ? "Other" : (luxuryCategory ?? "");
   const base = {
     name,
