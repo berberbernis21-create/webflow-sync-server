@@ -1980,11 +1980,14 @@ async function syncSingleProduct(product, cache, options = {}) {
     const llmLogPayload = {};
     const llmResult = await classifyWithLLM(product, llmLogPayload, webflowLog);
     detectedVertical = llmResult.category === "LUXURY" ? "luxury" : "furniture";
-    vertical =
-      cacheEntry?.vertical === "furniture" && detectedVertical === "luxury"
-        ? "luxury"
+    const correctedToLuxury = cacheEntry?.vertical === "furniture" && detectedVertical === "luxury";
+    const correctedToFurniture = cacheEntry?.vertical === "luxury" && detectedVertical === "furniture";
+    vertical = correctedToLuxury
+      ? "luxury"
+      : correctedToFurniture
+        ? "furniture"
         : (cacheEntry?.vertical ?? detectedVertical);
-    verticalCorrected = cacheEntry?.vertical === "furniture" && detectedVertical === "luxury";
+    verticalCorrected = correctedToLuxury;
     webflowLog("info", {
     event: "vertical.resolved",
     shopifyProductId,
@@ -2030,6 +2033,32 @@ async function syncSingleProduct(product, cache, options = {}) {
     delete cache[shopifyProductId];
     const result = await syncSingleProduct(product, cache, options);
     return { ...result, duplicateCorrected: !alreadyArchived, duplicateLog };
+  }
+
+  // When we correct luxury → furniture (e.g. masquerade mask was in Luxury, classifier now says Furniture), remove from Luxury and create in Furniture.
+  if (correctedToFurniture && cacheEntry?.webflowId && vertical === "furniture") {
+    const luxuryConfig = getWebflowConfig("luxury");
+    if (luxuryConfig?.collectionId && luxuryConfig?.token) {
+      try {
+        await deleteWebflowCollectionItem(luxuryConfig.collectionId, cacheEntry.webflowId, luxuryConfig.token);
+        webflowLog("info", { event: "vertical.corrected_luxury_to_furniture.removed", shopifyProductId, webflowId: cacheEntry.webflowId });
+      } catch (err) {
+        webflowLog("error", { event: "vertical.corrected_luxury_to_furniture.delete_failed", shopifyProductId, webflowId: cacheEntry.webflowId, message: err.message });
+      }
+    }
+    delete cache[shopifyProductId];
+    const result = await syncSingleProduct(product, cache, { ...options, forceReclassify: true });
+    return {
+      ...result,
+      duplicateCorrected: true,
+      duplicateLog: {
+        productTitle: product.title || "",
+        shopifyProductId,
+        previousVertical: "luxury",
+        detectedVertical: "furniture",
+        webflowIdArchived: cacheEntry.webflowId,
+      },
+    };
   }
 
   // Cleanup: ensure this product exists only in the current vertical. Remove from the other vertical if found.
