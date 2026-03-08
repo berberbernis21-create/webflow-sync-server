@@ -1618,35 +1618,42 @@ function skuDimensionFields(dimensions) {
 }
 
 /* ======================================================
-   SHOPIFY — FETCH ALL PRODUCTS
+   SHOPIFY — FETCH ALL PRODUCTS (cursor-based pagination)
+   Uses Link header / page_info per Shopify REST docs so all
+   pages are fetched (e.g. 406 products), not just the first 250.
+   https://shopify.dev/docs/api/usage/pagination-rest
 ====================================================== */
+function parseNextPageUrl(linkHeader) {
+  if (!linkHeader || typeof linkHeader !== "string") return null;
+  const parts = linkHeader.split(",");
+  for (const part of parts) {
+    const trimmed = part.trim();
+    if (!/rel=(\s*)?["']?next["']?/i.test(trimmed)) continue;
+    const match = trimmed.match(/<([^>]+)>/);
+    if (match && match[1]) return match[1].trim();
+  }
+  return null;
+}
+
 async function fetchAllShopifyProducts() {
   const store = process.env.SHOPIFY_STORE;
   const token = process.env.SHOPIFY_ACCESS_TOKEN;
+  const headers = {
+    "X-Shopify-Access-Token": token,
+    "Content-Type": "application/json",
+  };
 
-  let allProducts = [];
-  let lastId = 0;
+  const allProducts = [];
+  let url = `https://${store}.myshopify.com/admin/api/2024-01/products.json?limit=250`;
 
-  while (true) {
-    const url =
-      lastId === 0
-        ? `https://${store}.myshopify.com/admin/api/2024-01/products.json?limit=250`
-        : `https://${store}.myshopify.com/admin/api/2024-01/products.json?limit=250&since_id=${lastId}`;
-
-    const response = await axios.get(url, {
-      headers: {
-        "X-Shopify-Access-Token": token,
-        "Content-Type": "application/json",
-      },
-    });
-
+  while (url) {
+    const response = await axios.get(url, { headers });
     const products = response.data.products || [];
-    if (!products.length) break;
+    if (products.length) allProducts.push(...products);
 
-    allProducts.push(...products);
-    lastId = products[products.length - 1].id;
-
-    if (products.length < 250) break;
+    const link = response.headers.link || response.headers.Link;
+    const nextUrl = parseNextPageUrl(link);
+    url = nextUrl || null;
   }
 
   return allProducts;
