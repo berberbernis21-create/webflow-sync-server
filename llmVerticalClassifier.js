@@ -35,6 +35,9 @@ const STRONG_LUXURY_SIGNALS = [
   "sandal", "sandals", "pump", "pumps", "heel", "heels", "sneaker", "sneakers", "loafer", "loafers", "flat", "flats", "slide", "slides",
 ];
 
+/** Decorative/costume masks (masquerade, wall, feathered mask) → Furniture & Home Accessories, not LUXURY. */
+const DECOR_MASK_INDICATORS = ["masquerade", "feathered mask", "decorative mask", "wall mask", "costume mask"];
+
 function stripHtml(html) {
   if (!html || typeof html !== "string") return "";
   return html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
@@ -67,6 +70,7 @@ Important rules:
 - Designer style furniture is not LUXURY.
 - Wearable branded prestige goods are LUXURY.
 - A Rolex wall clock is HOME_INTERIOR (decor); a Rolex wristwatch is LUXURY.
+- Decorative or costume masks (e.g. masquerade masks, feathered masks) are HOME_INTERIOR (decor/accessories), not LUXURY.
 - If uncertain, choose HOME_INTERIOR.
 - Never output anything except valid JSON.`;
 
@@ -215,9 +219,25 @@ export async function classifyWithLLM(product, logPayload = {}, logFn = null) {
     return defaultResult;
   }
 
-  // Strong wearable/footwear in title/type/tags → always LUXURY (backpack, boots, handbag, etc. are never furniture)
   const { title, productType, tagsStr } = getProductText(product);
   const nameAndTypeAndTags = `${title} ${productType} ${tagsStr}`.toLowerCase();
+
+  // Decorative/costume masks (masquerade, feathered mask, etc.) → Furniture & Home Accessories
+  if (DECOR_MASK_INDICATORS.some((term) => nameAndTypeAndTags.includes(term))) {
+    const decorMaskResult = {
+      category: "HOME_INTERIOR",
+      confidence: 1,
+      reasoning: "Decorative or costume mask (e.g. masquerade); Furniture & Home Accessories.",
+    };
+    logPayload.raw = null;
+    logPayload.parsed = null;
+    logPayload.final = decorMaskResult;
+    logPayload.override = "decor_mask";
+    if (logFn) logFn("info", { event: "llm_vertical.decor_mask", category: "HOME_INTERIOR", reason: "masquerade/decor mask" });
+    return decorMaskResult;
+  }
+
+  // Strong wearable/footwear in title/type/tags → always LUXURY (backpack, boots, handbag, etc. are never furniture)
   if (hasAnyWord(nameAndTypeAndTags, STRONG_LUXURY_SIGNALS)) {
     const strongLuxuryResult = {
       category: "LUXURY",
