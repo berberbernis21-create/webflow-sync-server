@@ -5,6 +5,7 @@ import crypto from "crypto";
 import dotenv from "dotenv";
 import fs from "fs";
 import nodemailer from "nodemailer";
+import twilio from "twilio";
 import { CATEGORY_KEYWORDS } from "./categoryKeywords.js";
 import { CATEGORY_KEYWORDS_FURNITURE, CATEGORY_KEYWORDS_FURNITURE_WEAK } from "./categoryKeywordsFurniture.js";
 import { detectBrandFromProduct } from "./brand.js";
@@ -220,6 +221,98 @@ function getWebflowConfig(vertical) {
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+/* ======================================================
+   SHOPIFY ORDER WEBHOOK — Twilio SMS to all 3 team numbers
+   Env: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE
+====================================================== */
+const twilioClient =
+  process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN
+    ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
+    : null;
+
+const teamNumbers = ["+14807727004", "+14802098133", "+14807726962"];
+
+async function sendTestSMS() {
+  if (!twilioClient || !process.env.TWILIO_PHONE) {
+    console.log("Twilio not configured (missing TWILIO_* env); skipping test SMS.");
+    return;
+  }
+  try {
+    await twilioClient.messages.create({
+      body: "Test SMS from Lost and Found order alert system.",
+      from: process.env.TWILIO_PHONE,
+      to: "+14807727004",
+    });
+    console.log("Test SMS sent successfully");
+  } catch (err) {
+    console.error("Test SMS failed:", err.message);
+  }
+}
+
+// Manual test: GET /shopify/order/test — send SMS to all 3 team numbers to confirm Twilio
+app.get("/shopify/order/test", async (req, res) => {
+  if (!twilioClient || !process.env.TWILIO_PHONE) {
+    res.status(503).send("Twilio not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE.");
+    return;
+  }
+  const body = "Test SMS from Lost and Found order alert system.";
+  const results = [];
+  for (const number of teamNumbers) {
+    try {
+      await twilioClient.messages.create({
+        body,
+        from: process.env.TWILIO_PHONE,
+        to: number,
+      });
+      results.push(`${number}: ok`);
+    } catch (err) {
+      results.push(`${number}: failed (${err.message})`);
+    }
+  }
+  res.send(`Test SMS sent to all 3 numbers:\n${results.join("\n")}`);
+});
+
+app.post("/shopify/order", async (req, res) => {
+  res.status(200).send("Webhook received");
+
+  const order = req.body;
+  if (!order || typeof order !== "object") return;
+
+  const orderName = order.name ?? "";
+  const productTitle = order.line_items?.[0]?.title ?? "(no item)";
+  const totalPrice = order.total_price ?? "";
+  const firstName = order.customer?.first_name ?? "";
+  const lastName = order.customer?.last_name ?? "";
+
+  const message = [
+    "NEW ORDER RECEIVED",
+    "",
+    `Item: ${productTitle}`,
+    `Order: ${orderName}`,
+    `Price: $${totalPrice}`,
+    "",
+    "Review email for additional information.",
+    "Verify customer identity and collect ID before releasing item.",
+  ].join("\n");
+
+  if (!twilioClient || !process.env.TWILIO_PHONE) {
+    console.warn("Twilio not configured; order SMS not sent.", { orderName });
+    return;
+  }
+
+  for (const number of teamNumbers) {
+    try {
+      await twilioClient.messages.create({
+        body: message,
+        from: process.env.TWILIO_PHONE,
+        to: number,
+      });
+    } catch (err) {
+      console.error(`Twilio SMS failed to ${number}:`, err.message);
+    }
+  }
+});
 
 /* ======================================================
    PATHS / CACHE SETUP
@@ -3068,8 +3161,15 @@ app.post("/sync-all", async (req, res) => {
    SERVER
 ====================================================== */
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   console.log(`🔥 Sync server running on ${PORT}`);
+  const host = process.env.RENDER_EXTERNAL_HOSTNAME || `localhost:${PORT}`;
+  const scheme = process.env.RENDER_EXTERNAL_HOSTNAME ? "https" : "http";
+  console.log("Shopify webhook URL:");
+  console.log(`${scheme}://${host}/shopify/order`);
+  console.log("Copy this URL into Shopify Webhooks:");
+  console.log(`${scheme}://${host}/shopify/order`);
+  await sendTestSMS();
 });
 
 
