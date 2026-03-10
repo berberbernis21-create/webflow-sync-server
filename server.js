@@ -279,22 +279,41 @@ app.post("/shopify/order", async (req, res) => {
   const order = req.body;
   if (!order || typeof order !== "object") return;
 
+  // From Shopify Order webhook payload (see https://shopify.dev/docs/api/admin-rest/latest/resources/order)
   const orderName = order.name ?? "";
-  const productTitle = order.line_items?.[0]?.title ?? "(no item)";
   const totalPrice = order.total_price ?? "";
-  const firstName = order.customer?.first_name ?? "";
-  const lastName = order.customer?.last_name ?? "";
+  const contactEmail = order.email ?? order.contact_email ?? order.customer?.email ?? "";
+  const firstName = order.customer?.first_name ?? order.shipping_address?.first_name ?? "";
+  const lastName = order.customer?.last_name ?? order.shipping_address?.last_name ?? "";
+  const lineItems = order.line_items ?? [];
+  const firstItem = lineItems[0];
+  const firstItemTitle = firstItem?.title ?? "(no item)";
+  const firstItemSku = firstItem?.sku ?? "";
+  const itemLine = firstItemSku ? `${firstItemTitle} (SKU: ${firstItemSku})` : firstItemTitle;
+  const moreItems = lineItems.length > 1 ? ` +${lineItems.length - 1} more — see email` : "";
+  const shippingAddr = order.shipping_address;
+  const shippingLine = shippingAddr
+    ? [shippingAddr.address1, shippingAddr.city, shippingAddr.province_code || shippingAddr.province, shippingAddr.zip].filter(Boolean).join(", ")
+    : "";
+  const sourceName = order.source_name ?? "";
 
   const message = [
-    "NEW ORDER RECEIVED",
+    "NEW ONLINE ORDER",
     "",
-    `Item: ${productTitle}`,
     `Order: ${orderName}`,
-    `Price: $${totalPrice}`,
+    `Items: ${itemLine}${moreItems}`,
+    `Customer: ${[firstName, lastName].filter(Boolean).join(" ").trim() || "(see email)"}`,
+    `Email: ${contactEmail || "—"}`,
+    shippingLine ? `Ship to: ${shippingLine}` : "",
+    `Total: $${totalPrice}`,
+    sourceName ? `Channel: ${sourceName}` : "",
     "",
-    "Review email for additional information.",
-    "Verify customer identity and collect ID before releasing item.",
-  ].join("\n");
+    "Review Shopify and the Flow email for full details (shipping type, pickup vs ship, etc.). Confirm requirements and process ASAP.",
+    "",
+    "Validate customer ID and legitimacy before releasing. Do not ship or release until validation is complete. Questions: Jill 480-209-8133",
+  ]
+    .filter(Boolean)
+    .join("\n");
 
   if (!twilioClient || !process.env.TWILIO_PHONE) {
     console.warn("Twilio not configured; order SMS not sent.", { orderName });
