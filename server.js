@@ -1389,9 +1389,11 @@ const JEWELRY_KEYWORDS = [
   "barrette", "barrettes", "statement jewelry", "costume jewelry",
 ];
 
-/** Accessory-only terms (keychains, key rings, bag charms) — title + description: force Accessories. */
+/** Accessory-only terms (keychains, purse hooks, bag charms) — title + description: force Accessories. */
 const ACCESSORY_KEYWORDS = [
   "keychain", "keychains", "key ring", "key rings", "bag charm", "bag charms",
+  "purse hook", "purse hooks", "bag hook", "bag hooks",
+  "attache purse hook", "attache hook",
 ];
 
 /** Belt terms — title + description: force Belts (chain belt, belt accessory, etc.). */
@@ -1445,6 +1447,10 @@ function detectLuxuryCategoryFromTitle(title, descriptionHtml) {
   if (SHOE_KEYWORDS.some((kw) => matchWordBoundary(combined, kw))) return null;
   if (JEWELRY_KEYWORDS.some((kw) => matchWordBoundary(combined, kw))) return "Accessories";
   if (ACCESSORY_KEYWORDS.some((kw) => matchWordBoundary(combined, kw))) return "Accessories";
+  // Document holders, agendas, folios, business card cases → Other (stationery/office, not handbags).
+  if (matchWordBoundary(combined, "document holder") || matchWordBoundary(combined, "agenda") || matchWordBoundary(combined, "folio") || matchWordBoundary(combined, "business card case")) {
+    return "Other ";
+  }
   const tryMatch = (text) => {
     if (!text) return null;
     for (const [category, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
