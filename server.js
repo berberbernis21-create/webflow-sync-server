@@ -340,6 +340,10 @@ app.post("/shopify/order", async (req, res) => {
 const DATA_DIR = process.env.DATA_DIR || "./data";
 const CACHE_FILE = `${DATA_DIR}/lastSync.json`;
 const DUPLICATE_EMAIL_SENT_FILE = `${DATA_DIR}/duplicate_placement_emails_sent.json`;
+const WEIGHT_MISSING_EMAIL_SENT_FILE = `${DATA_DIR}/weight_missing_emails_sent.json`;
+
+/** Appended to Shopify/Webflow description when Furniture product has no weight in Shopify. */
+const WEIGHT_VALIDATE_NOTE_HTML = '<br><br><em>(Please validate weight if weight is ever missing.)</em>';
 
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) {
@@ -367,6 +371,93 @@ function saveDuplicatePlacementSentId(id) {
     fs.writeFileSync(DUPLICATE_EMAIL_SENT_FILE, JSON.stringify([...set], null, 2), "utf8");
   } catch (err) {
     webflowLog("error", { event: "duplicate_placement_sent.save_failed", message: err.message });
+  }
+}
+
+function loadWeightMissingEmailSentIds() {
+  try {
+    if (!fs.existsSync(WEIGHT_MISSING_EMAIL_SENT_FILE)) return new Set();
+    const raw = fs.readFileSync(WEIGHT_MISSING_EMAIL_SENT_FILE, "utf8");
+    const arr = JSON.parse(raw);
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveWeightMissingEmailSentIds(set) {
+  try {
+    ensureDataDir();
+    fs.writeFileSync(WEIGHT_MISSING_EMAIL_SENT_FILE, JSON.stringify([...set], null, 2), "utf8");
+  } catch (err) {
+    webflowLog("error", { event: "weight_missing_sent.save_failed", message: err.message });
+  }
+}
+
+function clearWeightMissingEmailSentId(shopifyProductId) {
+  const set = loadWeightMissingEmailSentIds();
+  if (set.delete(String(shopifyProductId))) saveWeightMissingEmailSentIds(set);
+}
+
+/** One email per product until weight is added; uses same Gmail SMTP as duplicate-placement alerts. */
+async function sendMissingWeightAlertEmail(product, dimensions, verticalLabel) {
+  const shopifyProductId = String(product?.id ?? "");
+  if (!shopifyProductId) return;
+  const sent = loadWeightMissingEmailSentIds();
+  if (sent.has(shopifyProductId)) return;
+
+  const user = process.env.GMAIL_SMTP_USER;
+  const pass = process.env.GMAIL_SMTP_PASSWORD;
+  if (!user || !pass) {
+    webflowLog("warn", { event: "weight_missing.email_skipped", reason: "missing_smtp", shopifyProductId });
+    return;
+  }
+
+  const store = process.env.SHOPIFY_STORE || "";
+  const adminUrl = store ? `https://admin.shopify.com/store/${store}/products/${shopifyProductId}` : "";
+  const title = product?.title || "(no title)";
+  const dims = dimensions || {};
+  const dimSummary = ["width", "height", "length", "weight"]
+    .map((k) => (dims[k] != null && !Number.isNaN(dims[k]) ? `${k}: ${dims[k]}` : null))
+    .filter(Boolean)
+    .join(", ");
+
+  const label = verticalLabel || "Product";
+  const recipients = ["info@lostandfoundresale.com", "berberbernis21@gmail.com"];
+  const body = [
+    `A ${label} product is missing weight in Shopify (variant weight / tags / metafields).`,
+    "Please add weight (variant or tags, e.g. Weight: 2 lb) so Webflow sync and listings stay complete.",
+    "",
+    `Product: ${title}`,
+    `Shopify product ID: ${shopifyProductId}`,
+    adminUrl ? `Admin: ${adminUrl}` : "",
+    dimSummary ? `Parsed dimensions: ${dimSummary}` : "Parsed dimensions: (none or incomplete)",
+    "",
+    "The product description will include: (Please validate weight if weight is ever missing.) until weight is set.",
+    "",
+    "— Lost & Found Webflow Sync",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  try {
+    const transporter = nodemailer.createTransport({
+      host: "smtp.gmail.com",
+      port: 587,
+      secure: false,
+      auth: { user, pass },
+    });
+    await transporter.sendMail({
+      from: user,
+      to: recipients.join(", "),
+      subject: `[Webflow Sync] Missing weight — ${title.slice(0, 60)}${title.length > 60 ? "…" : ""}`,
+      text: body,
+    });
+    sent.add(shopifyProductId);
+    saveWeightMissingEmailSentIds(sent);
+    webflowLog("info", { event: "weight_missing.email_sent", shopifyProductId, to: recipients });
+  } catch (err) {
+    webflowLog("error", { event: "weight_missing.email_failed", shopifyProductId, message: err.message });
   }
 }
 
@@ -538,6 +629,19 @@ function sanitizeCategoryForWebflow(fieldData) {
   return out;
 }
 
+/** Webflow rejects null for sku.fieldData.weight (and other dimension numbers); omit invalid values. */
+function sanitizeSkuNumericFields(fieldData) {
+  if (!fieldData || typeof fieldData !== "object") return fieldData;
+  const out = { ...fieldData };
+  for (const key of ["weight", "width", "height", "length"]) {
+    const v = out[key];
+    if (v === null || v === undefined || (typeof v === "number" && Number.isNaN(v))) {
+      delete out[key];
+    }
+  }
+  return out;
+}
+
 async function updateWebflowEcommerceProduct(siteId, productId, fieldData, token, existingProduct = null) {
   const url = `https://api.webflow.com/v2/sites/${siteId}/products/${productId}`;
   let data = sanitizeCategoryForWebflow({ ...fieldData });
@@ -547,13 +651,13 @@ async function updateWebflowEcommerceProduct(siteId, productId, fieldData, token
     const full = await getWebflowEcommerceProductById(siteId, productId, token);
     skuFieldData = full?.skus?.[0]?.fieldData ?? {};
   }
-  skuFieldData = sanitizeCategoryForWebflow({ ...skuFieldData });
+  skuFieldData = sanitizeSkuNumericFields(sanitizeCategoryForWebflow({ ...skuFieldData }));
   const body = {
     product: { fieldData: data },
     sku: { fieldData: skuFieldData },
   };
   body.product.fieldData = sanitizeCategoryForWebflow(body.product.fieldData);
-  body.sku.fieldData = sanitizeCategoryForWebflow(body.sku.fieldData);
+  body.sku.fieldData = sanitizeSkuNumericFields(sanitizeCategoryForWebflow(body.sku.fieldData));
   webflowLog("info", { event: "product.patch.calling", method: "PATCH", url, productId, bodyKeys: ["product", "sku"] });
   await axios.patch(url, body, {
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -570,7 +674,7 @@ async function updateWebflowEcommerceSku(siteId, productId, skuId, fieldData, to
     return;
   }
   const url = `https://api.webflow.com/v2/sites/${siteId}/products/${productId}/skus/${skuId}`;
-  const body = { sku: { fieldData } };
+  const body = { sku: { fieldData: sanitizeSkuNumericFields(fieldData) } };
   webflowLog("info", { event: "sku.patch.calling", method: "PATCH", url, productId, skuId, bodyKeys: ["sku"] });
   await axios.patch(url, body, {
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -1331,6 +1435,10 @@ const TYPE_TO_FURNITURE_CATEGORY = {
 
 // Existing taxonomy: Luxury Goods metafield values (exact)
 const LUXURY_TAXONOMY = ["Handbags", "Totes", "Crossbody", "Small Bags", "Backpacks", "Wallets", "Luggage", "Scarves", "Belts", "Accessories", "Other ", "Recently Sold"];
+/** Luxury categories where we email + note description if weight is missing (handbags & accessories; not luggage/backpacks/sold). */
+const LUXURY_WEIGHT_ALERT_CATEGORIES = new Set(
+  LUXURY_TAXONOMY.filter((c) => !["Recently Sold", "Backpacks", "Luggage"].includes(c))
+);
 const TYPE_TO_LUXURY_CATEGORY = {
   "handbag": "Handbags", "handbags": "Handbags", "tote": "Totes", "totes": "Totes", "crossbody": "Crossbody",
   "small bag": "Small Bags", "backpack": "Backpacks", "backpacks": "Backpacks", "wallet": "Wallets", "wallets": "Wallets",
@@ -1722,6 +1830,14 @@ function stripExistingDimensions(descriptionHtml) {
     s = s.replace(/(<br\s*\/?>\s*)+Weight:\s*[\d.]+?\s*lb\.?$/i, "").trim();
   }
   return s.trim();
+}
+
+/** Remove the sync-appended weight validation note so we can replace it cleanly. */
+function stripWeightValidateNote(descriptionHtml) {
+  if (!descriptionHtml || typeof descriptionHtml !== "string") return "";
+  return descriptionHtml
+    .replace(/(?:<br\s*\/?>\s*)*<em>\s*\(\s*Please validate weight if weight is ever missing\.\s*\)\s*<\/em>/gi, "")
+    .trim();
 }
 
 /** Webflow SKU dimension fields must be numbers; omit keys when value is null/NaN. */
@@ -2346,8 +2462,8 @@ async function syncSingleProduct(product, cache, options = {}) {
   if (hasAnyDimensions(dimensions)) {
     const dimStr = formatDimensionsForDescription(dimensions);
     if (dimStr) {
-      // Strip any existing dimensions block to prevent duplication
-      const body = stripExistingDimensions(description || "").trim();
+      // Strip any existing dimensions block to prevent duplication; strip weight note so it can be re-appended after furniture block
+      const body = stripWeightValidateNote(stripExistingDimensions(description || "")).trim();
       // Both luxury and furniture: dimensions at end, on own line(s), weight underneath
       const newDescription = (body + "<br><br>" + dimStr).trim();
       
@@ -2355,6 +2471,44 @@ async function syncSingleProduct(product, cache, options = {}) {
       if (newDescription !== originalDescription) {
         description = newDescription;
         descriptionChanged = true;
+      }
+    }
+  }
+
+  // Furniture + luxury (handbags & accessories): missing weight — email once per product; append validation note to description.
+  // Sold / Recently Sold: no weight emails or description note (doesn't matter for sold).
+  const weightMissing =
+    dimensions.weight == null || Number.isNaN(dimensions.weight) || dimensions.weight <= 0;
+  const luxuryNeedsWeight =
+    vertical === "luxury" && LUXURY_WEIGHT_ALERT_CATEGORIES.has(shopifyCategoryValue);
+  const notSold = !soldNow && shopifyCategoryValue !== "Recently Sold";
+  const trackMissingWeight = notSold && (vertical === "furniture" || luxuryNeedsWeight);
+
+  if (soldNow || shopifyCategoryValue === "Recently Sold") {
+    const cleaned = stripWeightValidateNote(description || "").trimEnd();
+    if (cleaned !== (description || "")) {
+      description = cleaned;
+      descriptionChanged = cleaned !== originalDescription;
+    }
+  }
+
+  if (trackMissingWeight) {
+    const weightLabel =
+      vertical === "furniture" ? "Furniture & Home" : "Luxury Goods (handbags & accessories)";
+    if (weightMissing) {
+      await sendMissingWeightAlertEmail(product, dimensions, weightLabel);
+      const withoutNote = stripWeightValidateNote(description || "").trimEnd();
+      const withNote = withoutNote + WEIGHT_VALIDATE_NOTE_HTML;
+      if (withNote !== (description || "")) {
+        description = withNote;
+        descriptionChanged = withNote !== originalDescription;
+      }
+    } else {
+      clearWeightMissingEmailSentId(shopifyProductId);
+      const cleaned = stripWeightValidateNote(description || "").trimEnd();
+      if (cleaned !== (description || "")) {
+        description = cleaned;
+        descriptionChanged = cleaned !== originalDescription;
       }
     }
   }
