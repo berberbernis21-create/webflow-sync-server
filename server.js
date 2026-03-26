@@ -1169,7 +1169,7 @@ async function removeConditionOptionIfFurniture(product) {
 
 /* ======================================================
    HASH FOR CHANGE DETECTION
-   Includes dimensions (variant + metafields + tags) so dimension changes trigger an update.
+   Includes dimensions (variant + metafields + tag lines) and Shopify tag list so dimension/tag changes trigger an update (not skipped by the name/description fast path).
    body_html is normalized (collapse whitespace) so Shopify formatting drift doesn't cause false "changed".
    taxonomyVersion: bump this when category/vertical logic changes so all items resync once.
 ====================================================== */
@@ -1180,6 +1180,10 @@ function normalizeHtmlForHash(html) {
 
 function shopifyHash(product) {
   const dimensions = getDimensionsFromProduct(product);
+  const tagsSignature = getProductTagsArray(product)
+    .map((t) => String(t).trim())
+    .filter(Boolean)
+    .sort();
   return {
     title: product.title,
     vendor: product.vendor,
@@ -1189,6 +1193,7 @@ function shopifyHash(product) {
     images: (product.images || []).map((i) => i.src),
     slug: product.handle,
     dimensions: { width: dimensions.width, height: dimensions.height, length: dimensions.length, weight: dimensions.weight },
+    tagsSignature,
     taxonomyVersion: 2,
   };
 }
@@ -1435,10 +1440,6 @@ const TYPE_TO_FURNITURE_CATEGORY = {
 
 // Existing taxonomy: Luxury Goods metafield values (exact)
 const LUXURY_TAXONOMY = ["Handbags", "Totes", "Crossbody", "Small Bags", "Backpacks", "Wallets", "Luggage", "Scarves", "Belts", "Accessories", "Other ", "Recently Sold"];
-/** Luxury categories where we email + note description if weight is missing (handbags & accessories; not luggage/backpacks/sold). */
-const LUXURY_WEIGHT_ALERT_CATEGORIES = new Set(
-  LUXURY_TAXONOMY.filter((c) => !["Recently Sold", "Backpacks", "Luggage"].includes(c))
-);
 const TYPE_TO_LUXURY_CATEGORY = {
   "handbag": "Handbags", "handbags": "Handbags", "tote": "Totes", "totes": "Totes", "crossbody": "Crossbody",
   "small bag": "Small Bags", "backpack": "Backpacks", "backpacks": "Backpacks", "wallet": "Wallets", "wallets": "Wallets",
@@ -1810,6 +1811,22 @@ function formatDimensionsForDescription(dims) {
   return sizeLine || weightLine || "";
 }
 
+function escapeHtmlText(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** Appended after dimensions: merged Shopify tags (department + category + custom), HTML-safe. */
+function formatTagsForDescription(mergedTags) {
+  if (!mergedTags || mergedTags.length === 0) return "";
+  const parts = mergedTags.map((t) => escapeHtmlText(String(t).trim())).filter(Boolean);
+  if (!parts.length) return "";
+  return `Tags: ${parts.join(", ")}`;
+}
+
 /** Strip existing dimensions/weight block(s) from description to prevent duplication.
  * Must match BOTH formats we emit:
  * 1) Dimensions: ... Weight: ... (furniture with size + weight)
@@ -1838,6 +1855,19 @@ function stripWeightValidateNote(descriptionHtml) {
   return descriptionHtml
     .replace(/(?:<br\s*\/?>\s*)*<em>\s*\(\s*Please validate weight if weight is ever missing\.\s*\)\s*<\/em>/gi, "")
     .trim();
+}
+
+/** Strip sync-appended footer: weight note, then Tags: line, then dimensions/weight block(s). */
+function stripAppendedSyncFooter(descriptionHtml) {
+  let s = descriptionHtml || "";
+  if (typeof s !== "string") return "";
+  s = stripWeightValidateNote(s);
+  for (let prev = ""; prev !== s; ) {
+    prev = s;
+    s = s.replace(/(<br\s*\/?>\s*){2,}Tags:[\s\S]*$/i, "").trim();
+  }
+  s = stripExistingDimensions(s);
+  return s.trim();
 }
 
 /** Webflow SKU dimension fields must be numbers; omit keys when value is null/NaN. */
@@ -2147,6 +2177,10 @@ async function syncSingleProduct(product, cache, options = {}) {
   const currentHash = shopifyHash(product);
   const currentContentHash = contentHashForLLM(product);
   const previousContentHash = cacheEntry?.contentHash ?? null;
+  const previousHashForEarlyExit = cacheEntry?.hash ?? null;
+  const shopifyDataUnchangedForCache =
+    previousHashForEarlyExit != null &&
+    JSON.stringify(currentHash) === JSON.stringify(previousHashForEarlyExit);
   const previousQty = cacheEntry?.lastQty ?? null;
   const qty = product.variants?.[0]?.inventory_quantity ?? null;
   // Skip LLM only when: (1) we have same name/description as last time, OR (2) we have a cached webflowId but no contentHash (legacy) — treat as unchanged to avoid cost.
@@ -2162,7 +2196,13 @@ async function syncSingleProduct(product, cache, options = {}) {
     webflowLog("info", { event: "sync_product.skip_llm_sold_already_classified", shopifyProductId, vertical: cacheEntry.vertical, message: "Cache has vertical and qty 0; skipping LLM" });
   }
 
-  if (!recoveredFromWebflow && nameOrDescriptionUnchanged && cacheEntry?.webflowId && !forceReclassify) {
+  if (
+    !recoveredFromWebflow &&
+    nameOrDescriptionUnchanged &&
+    shopifyDataUnchangedForCache &&
+    cacheEntry?.webflowId &&
+    !forceReclassify
+  ) {
     const vertical = cacheEntry.vertical ?? "luxury";
     const config = getWebflowConfig(vertical);
     let existing = null;
@@ -2184,7 +2224,7 @@ async function syncSingleProduct(product, cache, options = {}) {
         return { operation: "sold", id: existing.id };
       }
       cache[shopifyProductId] = { hash: currentHash, contentHash: currentContentHash, webflowId: existing.id, lastQty: qty, vertical };
-      webflowLog("info", { event: "sync_product.skip_unchanged", shopifyProductId, productTitle: product.title, webflowId: existing.id, message: "Name/description unchanged; skipped LLM and write" });
+      webflowLog("info", { event: "sync_product.skip_unchanged", shopifyProductId, productTitle: product.title, webflowId: existing.id, message: "Name/description/dimensions/tags unchanged; skipped LLM and write" });
       return { operation: "skip", id: existing.id };
     }
   }
@@ -2462,12 +2502,15 @@ async function syncSingleProduct(product, cache, options = {}) {
   if (hasAnyDimensions(dimensions)) {
     const dimStr = formatDimensionsForDescription(dimensions);
     if (dimStr) {
-      // Strip any existing dimensions block to prevent duplication; strip weight note so it can be re-appended after furniture block
-      const body = stripWeightValidateNote(stripExistingDimensions(description || "")).trim();
-      // Both luxury and furniture: dimensions at end, on own line(s), weight underneath
-      const newDescription = (body + "<br><br>" + dimStr).trim();
-      
-      // Only update if description actually changed
+      const mergedTagsForDesc = mergeProductTagsForSync(
+        getProductTagsArray(product),
+        shopifyDepartment,
+        shopifyCategoryValue
+      );
+      const tagsLine = formatTagsForDescription(mergedTagsForDesc);
+      const body = stripAppendedSyncFooter(description || "").trim();
+      const newDescription = (body + "<br><br>" + dimStr + (tagsLine ? "<br><br>" + tagsLine : "")).trim();
+
       if (newDescription !== originalDescription) {
         description = newDescription;
         descriptionChanged = true;
@@ -2475,14 +2518,12 @@ async function syncSingleProduct(product, cache, options = {}) {
     }
   }
 
-  // Furniture + luxury (handbags & accessories): missing weight — email once per product; append validation note to description.
-  // Sold / Recently Sold: no weight emails or description note (doesn't matter for sold).
+  // Furniture only: missing weight — email once per product; append validation note to Shopify/Webflow description.
+  // Luxury: no missing-weight emails or notes; strip any legacy note and clear dedupe id so a future furniture sync can alert if reclassified.
   const weightMissing =
     dimensions.weight == null || Number.isNaN(dimensions.weight) || dimensions.weight <= 0;
-  const luxuryNeedsWeight =
-    vertical === "luxury" && LUXURY_WEIGHT_ALERT_CATEGORIES.has(shopifyCategoryValue);
   const notSold = !soldNow && shopifyCategoryValue !== "Recently Sold";
-  const trackMissingWeight = notSold && (vertical === "furniture" || luxuryNeedsWeight);
+  const trackMissingWeight = notSold && vertical === "furniture";
 
   if (soldNow || shopifyCategoryValue === "Recently Sold") {
     const cleaned = stripWeightValidateNote(description || "").trimEnd();
@@ -2492,11 +2533,18 @@ async function syncSingleProduct(product, cache, options = {}) {
     }
   }
 
+  if (vertical === "luxury") {
+    clearWeightMissingEmailSentId(shopifyProductId);
+    const cleanedLux = stripWeightValidateNote(description || "").trimEnd();
+    if (cleanedLux !== (description || "")) {
+      description = cleanedLux;
+      descriptionChanged = cleanedLux !== originalDescription || descriptionChanged;
+    }
+  }
+
   if (trackMissingWeight) {
-    const weightLabel =
-      vertical === "furniture" ? "Furniture & Home" : "Luxury Goods (handbags & accessories)";
     if (weightMissing) {
-      await sendMissingWeightAlertEmail(product, dimensions, weightLabel);
+      await sendMissingWeightAlertEmail(product, dimensions, "Furniture & Home");
       const withoutNote = stripWeightValidateNote(description || "").trimEnd();
       const withNote = withoutNote + WEIGHT_VALIDATE_NOTE_HTML;
       if (withNote !== (description || "")) {
