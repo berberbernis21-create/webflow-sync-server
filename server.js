@@ -1129,7 +1129,7 @@ async function removeConditionOptionIfFurniture(product) {
 
 /* ======================================================
    HASH FOR CHANGE DETECTION
-   Includes dimensions (variant + metafields + tag lines) and Shopify tag list so dimension/tag changes trigger an update (not skipped by the name/description fast path).
+   Includes dimensions (variant + metafields + tag lines) so dimension changes still invalidate the fast path.
    body_html is normalized (collapse whitespace) so Shopify formatting drift doesn't cause false "changed".
    taxonomyVersion: bump this when category/vertical logic changes so all items resync once.
 ====================================================== */
@@ -1140,10 +1140,6 @@ function normalizeHtmlForHash(html) {
 
 function shopifyHash(product) {
   const dimensions = getDimensionsFromProduct(product);
-  const tagsSignature = getProductTagsArray(product)
-    .map((t) => String(t).trim())
-    .filter(Boolean)
-    .sort();
   return {
     title: product.title,
     vendor: product.vendor,
@@ -1153,7 +1149,6 @@ function shopifyHash(product) {
     images: (product.images || []).map((i) => i.src),
     slug: product.handle,
     dimensions: { width: dimensions.width, height: dimensions.height, length: dimensions.length, weight: dimensions.weight },
-    tagsSignature,
     taxonomyVersion: 2,
   };
 }
@@ -1801,15 +1796,26 @@ function stripWeightValidateNote(descriptionHtml) {
     .trim();
 }
 
-/** Strip sync-appended footer: weight note, then Tags: line, then dimensions/weight block(s). */
+/**
+ * Strip trailing "Tags: …" blocks mistakenly auto-appended to descriptions (never re-add; tags live on Shopify only).
+ * Runs for every vertical so furniture/luxury listings clean up even when dimensions are not rebuilt.
+ */
+function stripLegacyAutomatedTagsParagraph(descriptionHtml) {
+  let s = descriptionHtml || "";
+  if (typeof s !== "string") return "";
+  for (let prev = ""; prev !== s; ) {
+    prev = s;
+    s = s.replace(/(<br\s*\/?>\s*)+\s*Tags:\s*[\s\S]*$/i, "").trim();
+  }
+  return s.trim();
+}
+
+/** Strip sync-appended footer: weight note, automated Tags: line, dimensions/weight block(s). */
 function stripAppendedSyncFooter(descriptionHtml) {
   let s = descriptionHtml || "";
   if (typeof s !== "string") return "";
   s = stripWeightValidateNote(s);
-  for (let prev = ""; prev !== s; ) {
-    prev = s;
-    s = s.replace(/(<br\s*\/?>\s*){2,}Tags:[\s\S]*$/i, "").trim();
-  }
+  s = stripLegacyAutomatedTagsParagraph(s);
   s = stripExistingDimensions(s);
   return s.trim();
 }
@@ -2168,7 +2174,7 @@ async function syncSingleProduct(product, cache, options = {}) {
         return { operation: "sold", id: existing.id };
       }
       cache[shopifyProductId] = { hash: currentHash, contentHash: currentContentHash, webflowId: existing.id, lastQty: qty, vertical };
-      webflowLog("info", { event: "sync_product.skip_unchanged", shopifyProductId, productTitle: product.title, webflowId: existing.id, message: "Name/description/dimensions/tags unchanged; skipped LLM and write" });
+      webflowLog("info", { event: "sync_product.skip_unchanged", shopifyProductId, productTitle: product.title, webflowId: existing.id, message: "Name/description/shopify snapshot unchanged; skipped LLM and write" });
       return { operation: "skip", id: existing.id };
     }
   }
@@ -2436,10 +2442,16 @@ async function syncSingleProduct(product, cache, options = {}) {
   const showOnWebflow = vertical === "luxury" ? !soldNow : true;
   const shopifyUrl = `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${slug}`;
 
-  // Dimensions status + append to description when present
+  // Dimensions status + append to description when present (never append Shopify tag lists — Tags: legacy is stripped below always).
   const originalDescription = product.body_html || "";
   let descriptionChanged = false;
-  
+
+  const descWithoutLegacyTags = stripLegacyAutomatedTagsParagraph(description || "");
+  if (descWithoutLegacyTags !== (description || "")) {
+    description = descWithoutLegacyTags;
+    descriptionChanged = true;
+  }
+
   if (vertical === "furniture") {
     dimensionsStatus = hasAnyDimensions(dimensions) ? "present" : "missing";
   }
