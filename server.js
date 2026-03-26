@@ -233,46 +233,6 @@ const twilioClient =
 
 const teamNumbers = ["+14807727004", "+14802098133", "+14807726962"];
 
-async function sendTestSMS() {
-  if (!twilioClient || !process.env.TWILIO_PHONE) {
-    console.log("Twilio not configured (missing TWILIO_* env); skipping test SMS.");
-    return;
-  }
-  try {
-    await twilioClient.messages.create({
-      body: "Test SMS from Lost and Found order alert system.",
-      from: process.env.TWILIO_PHONE,
-      to: "+14807727004",
-    });
-    console.log("Test SMS sent successfully");
-  } catch (err) {
-    console.error("Test SMS failed:", err.message);
-  }
-}
-
-// Manual test: GET /shopify/order/test — send SMS to all 3 team numbers to confirm Twilio
-app.get("/shopify/order/test", async (req, res) => {
-  if (!twilioClient || !process.env.TWILIO_PHONE) {
-    res.status(503).send("Twilio not configured. Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE.");
-    return;
-  }
-  const body = "Test SMS from Lost and Found order alert system.";
-  const results = [];
-  for (const number of teamNumbers) {
-    try {
-      await twilioClient.messages.create({
-        body,
-        from: process.env.TWILIO_PHONE,
-        to: number,
-      });
-      results.push(`${number}: ok`);
-    } catch (err) {
-      results.push(`${number}: failed (${err.message})`);
-    }
-  }
-  res.send(`Test SMS sent to all 3 numbers:\n${results.join("\n")}`);
-});
-
 app.post("/shopify/order", async (req, res) => {
   res.status(200).send("Webhook received");
 
@@ -1811,22 +1771,6 @@ function formatDimensionsForDescription(dims) {
   return sizeLine || weightLine || "";
 }
 
-function escapeHtmlText(s) {
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-/** Appended after dimensions: merged Shopify tags (department + category + custom), HTML-safe. */
-function formatTagsForDescription(mergedTags) {
-  if (!mergedTags || mergedTags.length === 0) return "";
-  const parts = mergedTags.map((t) => escapeHtmlText(String(t).trim())).filter(Boolean);
-  if (!parts.length) return "";
-  return `Tags: ${parts.join(", ")}`;
-}
-
 /** Strip existing dimensions/weight block(s) from description to prevent duplication.
  * Must match BOTH formats we emit:
  * 1) Dimensions: ... Weight: ... (furniture with size + weight)
@@ -2502,14 +2446,8 @@ async function syncSingleProduct(product, cache, options = {}) {
   if (hasAnyDimensions(dimensions)) {
     const dimStr = formatDimensionsForDescription(dimensions);
     if (dimStr) {
-      const mergedTagsForDesc = mergeProductTagsForSync(
-        getProductTagsArray(product),
-        shopifyDepartment,
-        shopifyCategoryValue
-      );
-      const tagsLine = formatTagsForDescription(mergedTagsForDesc);
       const body = stripAppendedSyncFooter(description || "").trim();
-      const newDescription = (body + "<br><br>" + dimStr + (tagsLine ? "<br><br>" + tagsLine : "")).trim();
+      const newDescription = (body + "<br><br>" + dimStr).trim();
 
       if (newDescription !== originalDescription) {
         description = newDescription;
@@ -3388,15 +3326,11 @@ app.post("/sync-all", async (req, res) => {
    SERVER
 ====================================================== */
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, async () => {
+app.listen(PORT, () => {
   console.log(`🔥 Sync server running on ${PORT}`);
   const host = process.env.RENDER_EXTERNAL_HOSTNAME || `localhost:${PORT}`;
   const scheme = process.env.RENDER_EXTERNAL_HOSTNAME ? "https" : "http";
-  console.log("Shopify webhook URL:");
-  console.log(`${scheme}://${host}/shopify/order`);
-  console.log("Copy this URL into Shopify Webhooks:");
-  console.log(`${scheme}://${host}/shopify/order`);
-  await sendTestSMS();
+  console.log(`Shopify order webhook: ${scheme}://${host}/shopify/order`);
 });
 
 
