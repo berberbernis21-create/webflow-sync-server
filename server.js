@@ -2116,6 +2116,130 @@ async function markAsSold(existing, vertical, config) {
   );
 }
 
+function webflowListingLooksSold(existing, vertical) {
+  const fd = existing?.fieldData || {};
+  if (vertical === "furniture") return fd.sold === true;
+  if (fd["show-on-webflow"] === false) return true;
+  const cat = fd.category;
+  if (typeof cat === "string" && cat.replace(/\s+$/, "") === "Recently Sold") return true;
+  return false;
+}
+
+/**
+ * Webflow has shopify-product-id set, but that ID is not in this run's Shopify catalog fetch.
+ * Confirm status with Shopify (same rules as disappeared); if gone/archived/draft, mark sold in Webflow.
+ * Covers listings never in sync cache or cache-cleared, not only "disappeared" cache keys.
+ */
+async function sweepWebflowOrphansAgainstShopifyCatalog(products, cache) {
+  const inCatalog = new Set((products || []).map((p) => String(p.id)));
+  /** @type {{ shopifyId: string, vertical: string, existing: object }[]} */
+  const jobs = [];
+
+  const pushJob = (shopifyId, vertical, existing) => {
+    const id = shopifyId != null ? String(shopifyId).trim() : "";
+    if (!id || !existing?.id) return;
+    if (inCatalog.has(id)) return;
+    if (webflowListingLooksSold(existing, vertical)) return;
+    jobs.push({ shopifyId: id, vertical, existing });
+  };
+
+  if (furnitureProductIndex?.byShopifyId) {
+    for (const [sid, entry] of furnitureProductIndex.byShopifyId) {
+      pushJob(sid, "furniture", entry);
+    }
+  }
+  if (luxuryItemIndex?.byShopifyId) {
+    for (const [sid, item] of luxuryItemIndex.byShopifyId) {
+      pushJob(sid, "luxury", item);
+    }
+  }
+
+  if (jobs.length === 0) {
+    webflowLog("info", { event: "sync-all.webflow_orphan_sweep", candidates: 0, markedSold: 0 });
+    return 0;
+  }
+
+  webflowLog("info", {
+    event: "sync-all.webflow_orphan_sweep",
+    candidates: jobs.length,
+    message: "Webflow shopify ids not in this run's product list; verifying in Shopify",
+  });
+
+  const sweepConc = Math.min(10, Math.max(3, jobs.length));
+  let markedSold = 0;
+
+  for (let i = 0; i < jobs.length; i += sweepConc) {
+    const chunk = jobs.slice(i, i + sweepConc);
+    const results = await Promise.all(
+      chunk.map(async ({ shopifyId, vertical, existing }) => {
+        const confirmed = await fetchShopifyProductStatus(shopifyId);
+        if (confirmed == null) {
+          webflowLog("info", {
+            event: "sync-all.webflow_orphan_skip_unconfirmed",
+            shopifyProductId: shopifyId,
+            vertical,
+            webflowId: existing.id,
+            reason: "fetch_failed_or_unknown",
+          });
+          return 0;
+        }
+        if (confirmed.status === "active") {
+          webflowLog("info", {
+            event: "sync-all.webflow_orphan_skip_still_active",
+            shopifyProductId: shopifyId,
+            vertical,
+            webflowId: existing.id,
+            reason: "product_still_active_in_shopify",
+          });
+          return 0;
+        }
+        if (confirmed.status !== "gone" && confirmed.status !== "archived" && confirmed.status !== "draft") {
+          webflowLog("info", {
+            event: "sync-all.webflow_orphan_skip_unconfirmed",
+            shopifyProductId: shopifyId,
+            vertical,
+            webflowId: existing.id,
+            status: confirmed.status,
+          });
+          return 0;
+        }
+        const config = getWebflowConfig(vertical);
+        try {
+          webflowLog("info", {
+            event: "sync-all.webflow_orphan_mark_sold",
+            shopifyProductId: shopifyId,
+            webflowId: existing.id,
+            vertical,
+            shopifyStatus: confirmed.status,
+          });
+          await markAsSold(existing, vertical, config);
+          delete cache[shopifyId];
+          webflowLog("info", {
+            event: "cache.mutated",
+            shopifyProductId: shopifyId,
+            op: "deleted",
+            reason: "webflow_orphan_shopify_inactive",
+          });
+          return 1;
+        } catch (err) {
+          webflowLog("error", {
+            event: "sync-all.webflow_orphan_mark_sold_failed",
+            shopifyProductId: shopifyId,
+            webflowId: existing.id,
+            vertical,
+            message: err.message,
+          });
+          return 0;
+        }
+      })
+    );
+    markedSold += results.reduce((a, b) => a + b, 0);
+  }
+
+  webflowLog("info", { event: "sync-all.webflow_orphan_sweep_done", candidates: jobs.length, markedSold });
+  return markedSold;
+}
+
 /* ======================================================
    ⭐ CORE SYNC LOGIC — DUAL PIPELINE, NO DUPLICATES ⭐
 ====================================================== */
@@ -2139,12 +2263,10 @@ async function syncSingleProduct(product, cache, options = {}) {
     (cacheEntry?.webflowId && previousContentHash == null);
   const forceReclassify = options.forceReclassify === true;
 
-  // Sold item we already classified (cache has vertical, no webflowId, qty 0): skip LLM and will hit skip_create_sold later.
+  // Do NOT lock vertical from cache when webflowId is missing and qty is 0 — wrong vertical (e.g. luxury) blocked
+  // Webflow index lookup + sold heuristic, causing skip_create_sold while the live listing stays on Furniture unpublished/sold.
+
   let recoveredFromWebflow = null;
-  if (nameOrDescriptionUnchanged && cacheEntry?.vertical && qty !== null && qty <= 0 && !cacheEntry?.webflowId && !forceReclassify) {
-    recoveredFromWebflow = { vertical: cacheEntry.vertical };
-    webflowLog("info", { event: "sync_product.skip_llm_sold_already_classified", shopifyProductId, vertical: cacheEntry.vertical, message: "Cache has vertical and qty 0; skipping LLM" });
-  }
 
   if (
     !recoveredFromWebflow &&
@@ -2190,13 +2312,49 @@ async function syncSingleProduct(product, cache, options = {}) {
     webflowLog("info", { event: "sync_product.skip_llm_cache_missing_found_in_webflow", shopifyProductId, vertical: recoveredFromWebflow.vertical, message: "Cache missing but item exists in Webflow; skipping LLM" });
   }
 
-  // Sold items (qty 0): never call the LLM — use a simple heuristic for vertical so we can write cache at skip_create_sold.
+  // Sold items (qty 0): never call the LLM — use product type + title hints for vertical (index lookup above may already have set it).
   if (!recoveredFromWebflow && qty !== null && qty <= 0 && !forceReclassify) {
     const pt = (product.product_type ?? "").toLowerCase();
     const title = (product.title ?? "").toLowerCase();
-    const soldVertical = (pt.includes("furniture") || pt.includes("home") || title.includes("dresser") || title.includes("chair") || title.includes("table") || title.includes("cabinet") || title.includes("bed")) ? "furniture" : "luxury";
+    const furnitureTitleHints = [
+      "dresser",
+      "chair",
+      "table",
+      "cabinet",
+      "bed",
+      "console",
+      "sectional",
+      "sofa",
+      "loveseat",
+      "ottoman",
+      "credenza",
+      "buffet",
+      "nightstand",
+      "desk",
+      "hutch",
+      "recliner",
+      "bookcase",
+      "bench",
+      "chaise",
+      "sideboard",
+      "armoire",
+      "wardrobe",
+      "etagere",
+      "headboard",
+      "footboard",
+      "vanity",
+      "stool",
+    ];
+    const titleLooksFurniture = furnitureTitleHints.some((w) => title.includes(w));
+    const soldVertical =
+      pt.includes("furniture") || pt.includes("home") || titleLooksFurniture ? "furniture" : "luxury";
     recoveredFromWebflow = { vertical: soldVertical, soldNoLlm: true };
-    webflowLog("info", { event: "sync_product.skip_llm_sold", shopifyProductId, vertical: soldVertical, message: "Sold item (qty 0); skipping LLM, using heuristic vertical" });
+    webflowLog("info", {
+      event: "sync_product.skip_llm_sold",
+      shopifyProductId,
+      vertical: soldVertical,
+      message: "Sold item (qty 0); skipping LLM, using heuristic vertical",
+    });
   }
 
   let vertical, detectedVertical, verticalCorrected;
@@ -3165,7 +3323,8 @@ app.post("/sync-all", async (req, res) => {
     let created = 0,
       updated = 0,
       skipped = 0,
-      sold = 0;
+      sold = 0,
+      orphanMarkedSold = 0;
 
     // Disappeared: in cache but not in this run's product list. Only touch Webflow when we've confirmed in Shopify that the product is not active.
     const previousIds = Object.keys(cache);
@@ -3256,6 +3415,9 @@ app.post("/sync-all", async (req, res) => {
       webflowLog("info", { event: "cache.mutated", shopifyProductId: goneId, op: "deleted", reason: "disappeared_confirmed" });
     }
 
+    orphanMarkedSold = await sweepWebflowOrphansAgainstShopifyCatalog(products, cache);
+    sold += orphanMarkedSold;
+
     const duplicateEmailSentFor = new Set();
     const concurrency = Math.min(Math.max(1, parseInt(process.env.SYNC_CONCURRENCY || "3", 10) || 1), 15);
 
@@ -3296,6 +3458,7 @@ app.post("/sync-all", async (req, res) => {
       updated,
       skipped,
       sold,
+      orphanMarkedSold,
       total: products.length,
       durationMs,
     });
@@ -3306,6 +3469,7 @@ app.post("/sync-all", async (req, res) => {
       updated,
       skipped,
       sold,
+      orphanMarkedSold,
       durationMs,
     });
   } catch (err) {
