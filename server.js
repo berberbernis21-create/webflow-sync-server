@@ -2102,6 +2102,12 @@ async function syncFurnitureSku(product, webflowProductId, config) {
   }
 }
 
+/** Furniture ecommerce DateTime slug for “sold at” (retention + UI). Override with FURNITURE_SOLD_SINCE_FIELD_SLUG. */
+function getFurnitureSoldSinceFieldSlug() {
+  const t = (process.env.FURNITURE_SOLD_SINCE_FIELD_SLUG || "date-sold").trim();
+  return t || "date-sold";
+}
+
 /* ======================================================
    MARK AS SOLD — per vertical
    Luxury: CMS PATCH. Furniture: ecommerce PATCH (siteId).
@@ -2116,11 +2122,17 @@ async function markAsSold(existing, vertical, config) {
       : { ...base, category: "Recently Sold", "show-on-webflow": false };
 
   const luxurySoldSinceSlug = process.env.LUXURY_SOLD_SINCE_FIELD_SLUG;
-  const furnitureSoldSinceSlug = process.env.FURNITURE_SOLD_SINCE_FIELD_SLUG;
-  if (!alreadySoldInWebflow) {
-    const iso = new Date().toISOString();
-    if (vertical === "luxury" && luxurySoldSinceSlug) fieldData[luxurySoldSinceSlug] = iso;
-    if (vertical === "furniture" && furnitureSoldSinceSlug) fieldData[furnitureSoldSinceSlug] = iso;
+  const furnitureSoldSinceSlug = getFurnitureSoldSinceFieldSlug();
+  const iso = new Date().toISOString();
+  if (vertical === "luxury" && luxurySoldSinceSlug && !alreadySoldInWebflow) {
+    fieldData[luxurySoldSinceSlug] = iso;
+  }
+  // Furniture: every sold listing must have `date-sold` (default slug) for retention; keep existing timestamp if already set.
+  if (vertical === "furniture" && furnitureSoldSinceSlug) {
+    const prev = fieldData[furnitureSoldSinceSlug];
+    if (prev == null || String(prev).trim() === "") {
+      fieldData[furnitureSoldSinceSlug] = iso;
+    }
   }
 
   if (vertical === "furniture" && config.siteId) {
@@ -2192,10 +2204,11 @@ function parseSoldTimestampMsFromWebflowField(fieldData, slug) {
   return Number.isNaN(t) ? null : t;
 }
 
+/** Anchor instant for “how long has this been sold”. Furniture: only Webflow `date-sold` (default slug) — no cache fallback so retention matches the field you set in Webflow. */
 function getSoldInstantMs(webflowEntity, cacheEntry, vertical) {
   const fd = webflowEntity?.fieldData || {};
   const luxSlug = process.env.LUXURY_SOLD_SINCE_FIELD_SLUG;
-  const furnSlug = process.env.FURNITURE_SOLD_SINCE_FIELD_SLUG;
+  const furnSlug = getFurnitureSoldSinceFieldSlug();
   if (vertical === "luxury" && luxSlug) {
     const ms = parseSoldTimestampMsFromWebflowField(fd, luxSlug);
     if (ms != null) return ms;
@@ -2203,6 +2216,7 @@ function getSoldInstantMs(webflowEntity, cacheEntry, vertical) {
   if (vertical === "furniture" && furnSlug) {
     const ms = parseSoldTimestampMsFromWebflowField(fd, furnSlug);
     if (ms != null) return ms;
+    return null;
   }
   if (cacheEntry?.soldMarkedAt) {
     const ms = Date.parse(cacheEntry.soldMarkedAt);
@@ -2241,8 +2255,8 @@ function webflowEntityAnchorMs(entity) {
 }
 
 /**
- * For backfill: sold-since field + cache first, else Webflow item timestamps (lastUpdated, etc.).
- * Ongoing retention (SOLD_RETENTION_DAYS) still uses getSoldInstantMs + clock only (stricter).
+ * For backfill: getSoldInstantMs first (furniture: date-sold only; luxury: optional slug; other: cache soldMarkedAt),
+ * else Webflow item timestamps (lastUpdated, etc.). Ongoing retention uses getSoldInstantMs only for furniture.
  */
 function getSoldRetentionAnchorMs(entity, cacheEntry, vertical) {
   const explicit = getSoldInstantMs(entity, cacheEntry, vertical);
@@ -2272,7 +2286,7 @@ async function archiveWebflowCollectionItem(collectionId, itemId, token) {
  * (1) One-time backfill: archive sold **furniture** (ecommerce) where anchor ≤ SOLD_BACKFILL_BEFORE_DATE (default 2026-04-02).
  *     Runs once until SOLD_BACKFILL_DONE_FILE exists (delete file to re-run).
  *     Luxury is not archived here — sold luxury stays in Recently Sold (CMS category + hidden).
- * (2) Ongoing: furniture sold ≥ SOLD_RETENTION_DAYS via getSoldInstantMs + cache clock.
+ * (2) Ongoing: furniture sold ≥ SOLD_RETENTION_DAYS from Webflow date-sold only (see getSoldInstantMs); if missing from index, skip this run (touchSoldClock primes cache only).
  */
 async function archiveLongSoldWebflowListings(cache) {
   if (process.env.SOLD_RETENTION_DISABLE === "1" || process.env.SOLD_RETENTION_DISABLE === "true") {
@@ -2308,7 +2322,7 @@ async function archiveLongSoldWebflowListings(cache) {
     webflowLog("info", {
       event: "sold_retention.no_cache_skip_clock",
       shopifyProductId: idStr,
-      message: "No cache row yet; retention waits until sync writes soldMarkedAt or Webflow date field",
+      message: "No cache row yet; furniture retention needs date-sold on Webflow (and next index load)",
     });
   };
 
@@ -3293,6 +3307,7 @@ async function syncSingleProduct(product, cache, options = {}) {
         dimensionsStatus,
         existingSlug: existing.fieldData?.slug,
         newSlug: slug,
+        existingFieldData: existing.fieldData || null,
       });
       const existingFD = existing.fieldData || {};
       if (fieldDataEffectivelyEqual(fieldData, existingFD)) {
@@ -3446,6 +3461,7 @@ async function syncSingleProduct(product, cache, options = {}) {
         dimensionsStatus,
         existingSlug: existingFromGuard.fieldData?.slug,
         newSlug: slug,
+        existingFieldData: existingFromGuard.fieldData || null,
       });
       const existingFD = existingFromGuard.fieldData || {};
       if (fieldDataEffectivelyEqual(fieldData, existingFD)) {
@@ -3563,6 +3579,7 @@ async function syncSingleProduct(product, cache, options = {}) {
       dimensionsStatus,
       existingSlug: null,
       newSlug: slug,
+      existingFieldData: null,
     });
 
     let newId;
@@ -3677,6 +3694,11 @@ function fieldDataEffectivelyEqual(newFD, existingFD) {
       if (nRef && eRef && n === e) continue;
       if ((nRef && typeof e === "string" && e.trim()) || (eRef && typeof n === "string" && n.trim())) continue;
     }
+    if (key === getFurnitureSoldSinceFieldSlug()) {
+      const tn = Date.parse(String(n));
+      const te = Date.parse(String(e));
+      if (!Number.isNaN(tn) && !Number.isNaN(te) && Math.abs(tn - te) < 2000) continue;
+    }
     if (String(n) === String(e)) continue;
     return false;
   }
@@ -3710,6 +3732,7 @@ function buildWebflowFieldData(opts) {
     dimensionsStatus,
     existingSlug,
     newSlug,
+    existingFieldData,
   } = opts;
 
   const slug = existingSlug ?? newSlug ?? "";
@@ -3733,6 +3756,20 @@ function buildWebflowFieldData(opts) {
       shippable: true,
     };
     if (categoryRef != null && WEBFLOW_ITEM_REF_REGEX.test(String(categoryRef))) out.category = categoryRef;
+    const soldDateSlug = getFurnitureSoldSinceFieldSlug();
+    const ex = existingFieldData && typeof existingFieldData === "object" ? existingFieldData : null;
+    if (soldDateSlug) {
+      if (soldNow) {
+        const wasSold = ex?.sold === true;
+        const prev = ex?.[soldDateSlug];
+        const missingDate = prev == null || String(prev).trim() === "";
+        if (!wasSold || missingDate) {
+          out[soldDateSlug] = new Date().toISOString();
+        }
+      } else if (ex != null && ex[soldDateSlug] != null && String(ex[soldDateSlug]).trim() !== "") {
+        out[soldDateSlug] = null;
+      }
+    }
     return out;
   }
 
