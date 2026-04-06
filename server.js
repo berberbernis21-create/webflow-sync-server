@@ -605,23 +605,34 @@ function sanitizeSkuNumericFields(fieldData) {
   return out;
 }
 
-async function updateWebflowEcommerceProduct(siteId, productId, fieldData, token, existingProduct = null) {
+async function updateWebflowEcommerceProduct(siteId, productId, fieldData, token, _existingProduct = null) {
   const url = `https://api.webflow.com/v2/sites/${siteId}/products/${productId}`;
   let data = sanitizeCategoryForWebflow({ ...fieldData });
-  let skuFieldData = existingProduct?.skus?.[0]?.fieldData;
+  // Always load current product before PATCH: list/index payloads can omit isArchived, and a body without
+  // isArchived can clear archive / disturb publish state when Webflow merges the update.
+  webflowLog("info", { event: "product.patch.prefetch", productId, reason: "authoritative sku + isArchived" });
+  const current = await getWebflowEcommerceProductById(siteId, productId, token);
+  let skuFieldData = current?.skus?.[0]?.fieldData;
   if (skuFieldData == null || typeof skuFieldData !== "object") {
-    webflowLog("info", { event: "product.patch.skuRefetch", productId, reason: "existingProduct had no skus or sku.fieldData" });
-    const full = await getWebflowEcommerceProductById(siteId, productId, token);
-    skuFieldData = full?.skus?.[0]?.fieldData ?? {};
+    webflowLog("info", { event: "product.patch.sku_empty_after_prefetch", productId });
+    skuFieldData = {};
   }
   skuFieldData = sanitizeSkuNumericFields(sanitizeCategoryForWebflow({ ...skuFieldData }));
+  const preserveArchived = current?.isArchived === true;
   const body = {
-    product: { fieldData: data },
+    product: { fieldData: data, ...(preserveArchived ? { isArchived: true } : {}) },
     sku: { fieldData: skuFieldData },
   };
   body.product.fieldData = sanitizeCategoryForWebflow(body.product.fieldData);
   body.sku.fieldData = sanitizeSkuNumericFields(sanitizeCategoryForWebflow(body.sku.fieldData));
-  webflowLog("info", { event: "product.patch.calling", method: "PATCH", url, productId, bodyKeys: ["product", "sku"] });
+  webflowLog("info", {
+    event: "product.patch.calling",
+    method: "PATCH",
+    url,
+    productId,
+    bodyKeys: ["product", "sku"],
+    preserveArchived,
+  });
   await axios.patch(url, body, {
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
   });
@@ -652,6 +663,10 @@ async function syncFurnitureEcommerceSku(product, webflowProductId, config) {
     return;
   }
   const full = await getWebflowEcommerceProductById(config.siteId, webflowProductId, config.token);
+  if (full?.isArchived === true) {
+    webflowLog("info", { event: "syncFurnitureEcommerceSku.skipped", reason: "product_archived", webflowProductId });
+    return;
+  }
   const skus = full?.skus ?? [];
   const defaultSku = skus[0];
   if (!defaultSku?.id) {
@@ -679,6 +694,10 @@ async function archiveWebflowEcommerceProduct(siteId, productId, token) {
   if (!siteId || !productId || !token) return;
   const full = await getWebflowEcommerceProductById(siteId, productId, token);
   if (!full) return;
+  if (full.isArchived === true) {
+    webflowLog("info", { event: "archive.ecommerce_skip_already_archived", productId });
+    return;
+  }
   const productFieldData = full.fieldData || {};
   const skuFieldData = full?.skus?.[0]?.fieldData ?? {};
   const url = `https://api.webflow.com/v2/sites/${siteId}/products/${productId}`;
@@ -2114,6 +2133,27 @@ function getFurnitureSoldSinceFieldSlug() {
 ====================================================== */
 async function markAsSold(existing, vertical, config) {
   if (!existing || !config?.token) return;
+  if (vertical === "furniture" && config?.siteId) {
+    if (existing.isArchived === true) {
+      webflowLog("info", {
+        event: "markAsSold.skip_archived_furniture",
+        webflowId: existing.id,
+        source: "existing_flag",
+      });
+      return;
+    }
+    if (!Object.prototype.hasOwnProperty.call(existing, "isArchived")) {
+      const live = await getWebflowEcommerceProductById(config.siteId, existing.id, config.token);
+      if (live?.isArchived === true) {
+        webflowLog("info", {
+          event: "markAsSold.skip_archived_furniture",
+          webflowId: existing.id,
+          source: "prefetch",
+        });
+        return;
+      }
+    }
+  }
   const alreadySoldInWebflow = webflowListingLooksSold(existing, vertical);
   const base = { ...(existing.fieldData || {}) };
   const fieldData =
@@ -2321,6 +2361,7 @@ async function archiveWebflowCollectionItem(collectionId, itemId, token) {
  *     Runs once until SOLD_BACKFILL_DONE_FILE exists (delete file to re-run).
  *     Luxury is not archived here — sold luxury stays in Recently Sold (CMS category + hidden).
  * (2) Ongoing: furniture sold ≥ SOLD_RETENTION_DAYS from date-sold on each product via GET /products/{id} (list payloads are often incomplete).
+ *     Never skip a row because the *list* says isArchived — that can block re-archiving after a wrongful unarchive; only GET /products/{id} decides.
  */
 async function archiveLongSoldWebflowListings(cache) {
   if (process.env.SOLD_RETENTION_DISABLE === "1" || process.env.SOLD_RETENTION_DISABLE === "true") {
@@ -2381,7 +2422,6 @@ async function archiveLongSoldWebflowListings(cache) {
         const pid = product?.id;
         if (!pid || seenBf.has(pid)) continue;
         seenBf.add(pid);
-        if (product.isArchived) continue;
         if (!webflowListingLooksSold(product, "furniture")) continue;
         let entityBf = product;
         try {
@@ -2395,6 +2435,8 @@ async function archiveLongSoldWebflowListings(cache) {
             message: err.message,
           });
         }
+        // Do not trust list `isArchived` — stale true skipped re-archive after wrongful unarchive.
+        if (entityBf.isArchived) continue;
         if (!webflowListingLooksSold(entityBf, "furniture")) continue;
         const cacheEntry = getCacheEntry(cache, shopifyId);
         const anchorMs = getSoldRetentionAnchorMs(entityBf, cacheEntry, "furniture");
@@ -2463,7 +2505,6 @@ async function archiveLongSoldWebflowListings(cache) {
       const pid = product?.id;
       if (!pid || seenProd.has(pid)) continue;
       seenProd.add(pid);
-      if (product.isArchived) continue;
       if (skipRetentionFurnitureIds.has(String(pid))) continue;
       if (!webflowListingLooksSold(product, "furniture")) continue;
 
@@ -2479,6 +2520,7 @@ async function archiveLongSoldWebflowListings(cache) {
           message: err.message,
         });
       }
+      if (entityForRetention.isArchived) continue;
       if (!webflowListingLooksSold(entityForRetention, "furniture")) continue;
 
       const cacheEntry = getCacheEntry(cache, shopifyId);
@@ -2770,6 +2812,24 @@ async function syncSingleProduct(product, cache, options = {}) {
       existing = await getWebflowItemById(cacheEntry.webflowId, config);
     }
     if (existing) {
+      if (vertical === "furniture" && existing.isArchived === true) {
+        cache[shopifyProductId] = {
+          hash: currentHash,
+          contentHash: currentContentHash,
+          webflowId: existing.id,
+          lastQty: qty,
+          vertical,
+          ...soldMarkedAtPayload(cacheEntry, qty),
+        };
+        webflowLog("info", {
+          event: "sync_product.skip_unchanged_archived",
+          shopifyProductId,
+          productTitle: product.title,
+          webflowId: existing.id,
+          message: "Furniture listing is archived; no Webflow PATCH",
+        });
+        return { operation: "skip", id: existing.id };
+      }
       const repairSold = needsWebflowSoldRepair(existing, vertical, qty);
       const mustMarkSold = shouldMarkSoldTransition(previousQty, qty) || repairSold;
       if (mustMarkSold) {
@@ -3336,6 +3396,31 @@ async function syncSingleProduct(product, cache, options = {}) {
   if (existing) {
     webflowLog("info", { event: "sync_product.linked", shopifyProductId, productTitle: name, webflowId: existing.id });
 
+    if (vertical === "furniture" && config?.siteId) {
+      if (!Object.prototype.hasOwnProperty.call(existing, "isArchived")) {
+        const live = await getWebflowEcommerceProductById(config.siteId, existing.id, config.token);
+        if (live) existing = live;
+      }
+      if (existing.isArchived === true) {
+        cache[shopifyProductId] = {
+          hash: currentHash,
+          contentHash: currentContentHash,
+          webflowId: existing.id,
+          lastQty: qty,
+          vertical,
+          ...soldMarkedAtPayload(cacheEntry, qty),
+        };
+        webflowLog("info", {
+          event: "sync_product.skip_archived_furniture",
+          shopifyProductId,
+          productTitle: name,
+          webflowId: existing.id,
+          message: "Listing archived; skipping mark-sold and product updates",
+        });
+        return { operation: "skip", id: existing.id };
+      }
+    }
+
     const repairSold = needsWebflowSoldRepair(existing, vertical, qty);
     const mustMarkSold =
       shouldMarkSoldTransition(previousQty, qty) || repairSold;
@@ -3498,7 +3583,32 @@ async function syncSingleProduct(product, cache, options = {}) {
         message: "Item already exists; updating instead of creating. Will only PATCH if data differs.",
       });
       const guardConfig = getWebflowConfig(detectedVertical);
-      const guardRepair = needsWebflowSoldRepair(existingFromGuard, detectedVertical, qty);
+      let guardExisting = existingFromGuard;
+      if (detectedVertical === "furniture" && guardConfig?.siteId) {
+        if (!Object.prototype.hasOwnProperty.call(guardExisting, "isArchived")) {
+          const live = await getWebflowEcommerceProductById(guardConfig.siteId, guardExisting.id, guardConfig.token);
+          if (live) guardExisting = live;
+        }
+        if (guardExisting.isArchived === true) {
+          cache[shopifyProductId] = {
+            hash: currentHash,
+            contentHash: currentContentHash,
+            webflowId: guardExisting.id,
+            lastQty: qty,
+            vertical: detectedVertical,
+            ...soldMarkedAtPayload(cacheEntry, qty),
+          };
+          webflowLog("info", {
+            event: "sync_product.skip_create_guard_archived",
+            shopifyProductId,
+            productTitle: name,
+            webflowId: guardExisting.id,
+            message: "Furniture listing is archived; no create-guard PATCH",
+          });
+          return { operation: "skip", id: guardExisting.id };
+        }
+      }
+      const guardRepair = needsWebflowSoldRepair(guardExisting, detectedVertical, qty);
       const guardMustSold = shouldMarkSoldTransition(previousQty, qty) || guardRepair;
       if (guardMustSold) {
         const fromQtyDrop =
@@ -3510,27 +3620,27 @@ async function syncSingleProduct(product, cache, options = {}) {
           event: guardRepair ? "sync_product.repair_sold" : "sync_product.newly_sold",
           shopifyProductId,
           productTitle: name,
-          webflowId: existingFromGuard.id,
+          webflowId: guardExisting.id,
           vertical: detectedVertical,
           source: "create_guard",
           previousQty,
           currentQty: qty,
           ...(fromQtyDrop ? { reason: "inventory_1_to_0_or_in_stock_to_sold" } : {}),
         });
-        await markAsSold(existingFromGuard, detectedVertical, guardConfig);
+        await markAsSold(guardExisting, detectedVertical, guardConfig);
         if (detectedVertical === "furniture" && guardConfig.siteId) {
-          await syncFurnitureEcommerceSku(product, existingFromGuard.id, guardConfig);
+          await syncFurnitureEcommerceSku(product, guardExisting.id, guardConfig);
         }
         cache[shopifyProductId] = {
           hash: currentHash,
           contentHash: currentContentHash,
-          webflowId: existingFromGuard.id,
+          webflowId: guardExisting.id,
           lastQty: qty,
           vertical: detectedVertical,
           ...soldMarkedAtPayload(cacheEntry, qty),
         };
-        webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "sold", webflowId: existingFromGuard.id, vertical: detectedVertical });
-        return { operation: "sold", id: existingFromGuard.id };
+        webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "sold", webflowId: guardExisting.id, vertical: detectedVertical });
+        return { operation: "sold", id: guardExisting.id };
       }
       const fieldData = buildWebflowFieldData({
         vertical: detectedVertical,
@@ -3549,31 +3659,31 @@ async function syncSingleProduct(product, cache, options = {}) {
         soldNow,
         dimensions,
         dimensionsStatus,
-        existingSlug: existingFromGuard.fieldData?.slug,
+        existingSlug: guardExisting.fieldData?.slug,
         newSlug: slug,
-        existingFieldData: existingFromGuard.fieldData || null,
+        existingFieldData: guardExisting.fieldData || null,
       });
-      const existingFD = existingFromGuard.fieldData || {};
+      const existingFD = guardExisting.fieldData || {};
       if (fieldDataEffectivelyEqual(fieldData, existingFD)) {
-        webflowLog("info", { event: "sync_product.skip_webflow_unchanged", shopifyProductId, productTitle: name, webflowId: existingFromGuard.id, message: "Existing item matches; not touching" });
+        webflowLog("info", { event: "sync_product.skip_webflow_unchanged", shopifyProductId, productTitle: name, webflowId: guardExisting.id, message: "Existing item matches; not touching" });
         cache[shopifyProductId] = {
           hash: currentHash,
           contentHash: currentContentHash,
-          webflowId: existingFromGuard.id,
+          webflowId: guardExisting.id,
           lastQty: qty,
           vertical: detectedVertical,
           ...soldMarkedAtPayload(cacheEntry, qty),
         };
-        webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "skip", webflowId: existingFromGuard.id, vertical: detectedVertical });
-        return { operation: "skip", id: existingFromGuard.id };
+        webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "skip", webflowId: guardExisting.id, vertical: detectedVertical });
+        return { operation: "skip", id: guardExisting.id };
       }
-      webflowLog("info", { event: "sync_product.updating", shopifyProductId, productTitle: name, webflowId: existingFromGuard.id, reason: "shopify_changed_and_webflow_differs" });
+      webflowLog("info", { event: "sync_product.updating", shopifyProductId, productTitle: name, webflowId: guardExisting.id, reason: "shopify_changed_and_webflow_differs" });
       if (detectedVertical === "furniture" && guardConfig.siteId) {
-        await updateWebflowEcommerceProduct(guardConfig.siteId, existingFromGuard.id, fieldData, guardConfig.token, existingFromGuard);
-        await syncFurnitureEcommerceSku(product, existingFromGuard.id, guardConfig);
+        await updateWebflowEcommerceProduct(guardConfig.siteId, guardExisting.id, fieldData, guardConfig.token, guardExisting);
+        await syncFurnitureEcommerceSku(product, guardExisting.id, guardConfig);
       } else {
         await axios.patch(
-          `https://api.webflow.com/v2/collections/${guardConfig.collectionId}/items/${existingFromGuard.id}`,
+          `https://api.webflow.com/v2/collections/${guardConfig.collectionId}/items/${guardExisting.id}`,
           { fieldData },
           {
             headers: {
@@ -3586,13 +3696,13 @@ async function syncSingleProduct(product, cache, options = {}) {
       cache[shopifyProductId] = {
         hash: currentHash,
         contentHash: currentContentHash,
-        webflowId: existingFromGuard.id,
+        webflowId: guardExisting.id,
         lastQty: qty,
         vertical: detectedVertical,
         ...soldMarkedAtPayload(cacheEntry, qty),
       };
-      webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "update", webflowId: existingFromGuard.id, vertical: detectedVertical });
-      return { operation: "update", id: existingFromGuard.id };
+      webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "update", webflowId: guardExisting.id, vertical: detectedVertical });
+      return { operation: "update", id: guardExisting.id };
     }
 
     // Sweep: if we're creating in Furniture, remove from Luxury so we never have the same Shopify ID in both.
