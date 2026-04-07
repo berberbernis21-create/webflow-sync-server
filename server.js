@@ -2362,7 +2362,7 @@ function shouldMarkSoldTransition(previousQty, qty) {
   return pq > 0;
 }
 
-/** Persist when listing is sold (qty <= 0) for SOLD_RETENTION_DAYS archive sweep; omit when back in stock. */
+/** Persist when listing is sold (qty <= 0) for SOLD_RETENTION_DAYS furniture removal sweep; omit when back in stock. */
 function soldMarkedAtPayload(cacheEntry, lastQty) {
   if (shopifyQtySaysSold(lastQty)) {
     return { soldMarkedAt: cacheEntry?.soldMarkedAt || new Date().toISOString() };
@@ -2371,8 +2371,8 @@ function soldMarkedAtPayload(cacheEntry, lastQty) {
 }
 
 function getSoldRetentionMs() {
-  const n = parseInt(process.env.SOLD_RETENTION_DAYS || "3", 10);
-  return Math.max(1, Number.isFinite(n) ? n : 3) * 86400000;
+  const n = parseInt(process.env.SOLD_RETENTION_DAYS || "4", 10);
+  return Math.max(1, Number.isFinite(n) ? n : 4) * 86400000;
 }
 
 /** Webflow DateTime fields may be ISO strings or nested objects (`date`, `value`, etc.). */
@@ -2492,11 +2492,11 @@ async function archiveWebflowCollectionItem(collectionId, itemId, token) {
 }
 
 /**
- * (1) One-time backfill: archive sold **furniture** (ecommerce) where anchor ≤ SOLD_BACKFILL_BEFORE_DATE (default 2026-04-02).
- *     Runs once until SOLD_BACKFILL_DONE_FILE exists (delete file to re-run).
- *     Luxury is not archived here — sold luxury stays in Recently Sold (CMS category + hidden).
- * (2) Ongoing: furniture sold ≥ SOLD_RETENTION_DAYS from date-sold on each product via GET /products/{id} (list payloads are often incomplete).
- *     Never skip a row because the *list* says isArchived — that can block re-archiving after a wrongful unarchive; only GET /products/{id} decides.
+ * (1) One-time backfill: **delete** sold **furniture** (ecommerce) where anchor ≤ SOLD_BACKFILL_BEFORE_DATE (default 2026-04-02).
+ *     Runs once until SOLD_BACKFILL_DONE_FILE exists (delete file to re-run). Archive only if DELETE fails (same as duplicate cleanup).
+ *     Luxury is not touched here — sold luxury stays in Recently Sold (CMS category + hidden).
+ * (2) Ongoing: furniture sold ≥ SOLD_RETENTION_DAYS from date-sold — **delete** ecommerce product; archive only as fallback.
+ *     Never skip a row because the *list* says isArchived — only GET /products/{id} decides.
  */
 async function archiveLongSoldWebflowListings(cache) {
   if (process.env.SOLD_RETENTION_DISABLE === "1" || process.env.SOLD_RETENTION_DISABLE === "true") {
@@ -2548,7 +2548,7 @@ async function archiveLongSoldWebflowListings(cache) {
       cutoffEndMs,
       cutoffLabel: new Date(cutoffEndMs).toISOString(),
       doneFile: SOLD_BACKFILL_DONE_FILE,
-      message: "One-time archive: sold furniture only (luxury uses Recently Sold; not archived)",
+      message: "One-time removal: sold furniture only (delete, archive fallback; luxury unchanged)",
     });
 
     if (furnitureProductIndex?.byShopifyId && furnitureConfig?.siteId && furnitureConfig?.token) {
@@ -2586,21 +2586,22 @@ async function archiveLongSoldWebflowListings(cache) {
         }
         if (anchorMs > cutoffEndMs) continue;
         try {
-          await archiveWebflowEcommerceProduct(furnitureConfig.siteId, pid, furnitureConfig.token);
+          await deleteWebflowEcommerceProduct(furnitureConfig.siteId, pid, furnitureConfig.token);
           delete cache[shopifyId];
           skipRetentionFurnitureIds.add(String(pid));
           soldBackfillArchived++;
           archived++;
           webflowLog("info", {
-            event: "sold_retention.backfill_archived",
+            event: "sold_retention.backfill_removed",
             vertical: "furniture",
             shopifyProductId: shopifyId,
             webflowId: pid,
             anchorMs,
+            message: "delete first, archive if delete unsupported",
           });
         } catch (err) {
           webflowLog("error", {
-            event: "sold_retention.backfill_archive_failed",
+            event: "sold_retention.backfill_remove_failed",
             vertical: "furniture",
             shopifyProductId: shopifyId,
             webflowId: pid,
@@ -2667,18 +2668,19 @@ async function archiveLongSoldWebflowListings(cache) {
       if (now - soldAtMs < retentionMs) continue;
 
       try {
-        await archiveWebflowEcommerceProduct(furnitureConfig.siteId, pid, furnitureConfig.token);
+        await deleteWebflowEcommerceProduct(furnitureConfig.siteId, pid, furnitureConfig.token);
         delete cache[shopifyId];
         archived++;
         webflowLog("info", {
-          event: "sold_retention.archived",
+          event: "sold_retention.removed",
           vertical: "furniture",
           shopifyProductId: shopifyId,
           webflowId: pid,
+          message: "delete first, archive if delete unsupported",
         });
       } catch (err) {
         webflowLog("error", {
-          event: "sold_retention.archive_failed",
+          event: "sold_retention.remove_failed",
           vertical: "furniture",
           shopifyProductId: shopifyId,
           webflowId: pid,
