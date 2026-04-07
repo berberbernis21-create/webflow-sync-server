@@ -679,12 +679,40 @@ async function syncFurnitureEcommerceSku(product, webflowProductId, config) {
   const allImages = (product.images || []).map((img) => img.src);
   const mainImageUrl = allImages[0] || null;
   const moreImagesUrls = allImages.slice(1);
+
+  const existingFd = defaultSku.fieldData || {};
+  const previousPriceCents = webflowSkuMoneyFieldToCents(existingFd.price);
+  const compareSlug = getFurnitureSkuCompareAtSlug();
+
   const fieldData = {
     price: priceCents != null ? { value: priceCents, unit: "USD" } : null,
     ...skuDimensionFields(dimensions),
     "main-image": mainImageUrl ? { url: mainImageUrl } : null,
     "more-images": moreImagesUrls.length > 0 ? moreImagesUrls.slice(0, 10).map((url) => (url ? { url } : null)).filter(Boolean) : null,
   };
+
+  if (priceCents != null && previousPriceCents != null && previousPriceCents > 0) {
+    if (priceCents < previousPriceCents) {
+      fieldData[compareSlug] = { value: previousPriceCents, unit: "USD" };
+      webflowLog("info", {
+        event: "syncFurnitureEcommerceSku.price_drop_compare_at",
+        webflowProductId,
+        shopifyProductId: product?.id,
+        previousPriceCents,
+        newPriceCents: priceCents,
+      });
+    } else if (priceCents > previousPriceCents) {
+      fieldData[compareSlug] = null;
+      webflowLog("info", {
+        event: "syncFurnitureEcommerceSku.price_increase_clear_compare_at",
+        webflowProductId,
+        shopifyProductId: product?.id,
+        previousPriceCents,
+        newPriceCents: priceCents,
+      });
+    }
+  }
+
   await updateWebflowEcommerceSku(config.siteId, webflowProductId, defaultSku.id, { ...defaultSku.fieldData, ...fieldData }, config.token);
   webflowLog("info", { event: "syncFurnitureEcommerceSku.exit", webflowProductId, skuId: defaultSku.id });
 }
@@ -2125,6 +2153,20 @@ async function syncFurnitureSku(product, webflowProductId, config) {
 function getFurnitureSoldSinceFieldSlug() {
   const t = (process.env.FURNITURE_SOLD_SINCE_FIELD_SLUG || "date-sold").trim();
   return t || "date-sold";
+}
+
+/** Webflow ecommerce SKU slug for compare-at (API: `compare-at-price`). Override if your site renamed the field. */
+function getFurnitureSkuCompareAtSlug() {
+  const t = (process.env.FURNITURE_SKU_COMPARE_AT_SLUG || "compare-at-price").trim();
+  return t || "compare-at-price";
+}
+
+/** Cents from Webflow SKU `price` / `compare-at-price` object `{ value, unit }`. */
+function webflowSkuMoneyFieldToCents(field) {
+  if (field == null || typeof field !== "object") return null;
+  const n = Number(field.value);
+  if (!Number.isFinite(n)) return null;
+  return Math.round(n);
 }
 
 /* ======================================================
