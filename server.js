@@ -1283,6 +1283,14 @@ function applyTableDimensionRules(dims, name, descAndTags) {
   const text = (name + " " + (descAndTags || "")).toLowerCase();
   if (!/\btable\b/.test(text)) return null; // only for table-like products
 
+  // "Table lamp" / "desk lamp" contain "table" but are Lighting — shallow depth would wrongly force Living Room
+  if (/\btable lamps?\b/.test(text) || /\bdesk lamps?\b/.test(text)) return null;
+
+  // Books: "coffee table book", encyclopedia copy, or "table of contents" are not case-goods tables
+  if (/\bcoffee table books?\b/.test(text)) return null;
+  if (/\btable of contents\b/.test(text)) return null;
+  if (/\bencyclopedia\b/.test(text)) return null;
+
   if (h <= 22 || d <= 24) return "LivingRoom"; // cannot be dining
   if (h >= 28 && d >= 30 && w >= 40) return "DiningRoom"; // dining table dimensions
   return null;
@@ -2980,6 +2988,12 @@ async function syncSingleProduct(product, cache, options = {}) {
       "footboard",
       "vanity",
       "stool",
+      "lamp",
+      "lampshade",
+      "chandelier",
+      "sconce",
+      "torchiere",
+      "lighting",
     ];
     const titleLooksFurniture = furnitureTitleHints.some((w) => title.includes(w));
     const soldVertical =

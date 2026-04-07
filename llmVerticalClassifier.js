@@ -32,8 +32,9 @@ const STRONG_LUXURY_SIGNALS = [
   "handbag", "handbags", "bag", "bags", "wallet", "wallets", "clutch", "tote", "totes",
   "belt", "belts", "scarf", "scarves", "satchel", "briefcase", "crossbody", "luggage",
   "earring", "earrings", "bracelet", "bracelets", "necklace", "necklaces", "jewelry", "jewellery",
-  "sandal", "sandals", "pump", "pumps", "heel", "heels", "sneaker", "sneakers", "loafer", "loafers", "flat", "flats", "slide", "slides",
+  "sandal", "sandals", "pump", "pumps", "heel", "heels", "sneaker", "sneakers", "loafer", "loafers", "slide", "slides",
 ];
+// Note: "flat"/"flats" intentionally omitted — matches geometry (e.g. "Flat Oval … Lamp") and home decor; shoe flats still classify via LLM + other shoe terms.
 
 /** Decorative/costume masks (masquerade, wall, feathered mask) → Furniture & Home Accessories, not LUXURY. */
 const DECOR_MASK_INDICATORS = ["masquerade", "feathered mask", "decorative mask", "wall mask", "costume mask"];
@@ -71,6 +72,7 @@ Important rules:
 - Wearable branded prestige goods are LUXURY.
 - A Rolex wall clock is HOME_INTERIOR (decor); a Rolex wristwatch is LUXURY.
 - Decorative or costume masks (e.g. masquerade masks, feathered masks) are HOME_INTERIOR (decor/accessories), not LUXURY.
+- Table lamps, floor lamps, chandeliers, sconces, and other lighting — including premium or ceramic lamps — are HOME_INTERIOR. The word "flat" describing shape (e.g. "flat oval lamp base") is not footwear.
 - If uncertain, choose HOME_INTERIOR.
 - Never output anything except valid JSON.`;
 

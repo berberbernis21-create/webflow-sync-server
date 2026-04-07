@@ -74,14 +74,20 @@ Allowed categories: ${FURNITURE_CATEGORIES.join(", ")}.
 RULES (mandatory):
 - Paintings, art prints, framed art, photographs, framed photos, canvas art, sculpture, statues, figurines, mirrors, wall art, lithographs → "ArtMirrors".
 - Umbrellas, umbrella stand, patio umbrella, outdoor umbrella, patio furniture, outdoor seating, garden, deck, adirondack, hammock, fire pit → "OutdoorPatio".
+- Patio / porch / deck dining — including **patio dining table**, outdoor dining table, mosaic or tile **patio** tables — is **"OutdoorPatio"**, not "DiningRoom". Use "DiningRoom" only for **indoor** dining when there is no patio/outdoor/deck/porch context.
 - Sofas, chairs, tables, coffee table, console, ottoman, sectional, loveseat → "LivingRoom".
+- Wall units, shelving units, etageres, modular/media walls, large room dividers with shelves — case goods for living spaces → "LivingRoom" (never "Accessories" just because they hold decor).
+- Trays alone (butler tray, butlers tray, serving tray, decorative tray, ottoman tray — removable tray or tray-with-stand sold as a tray) → "Accessories". Tray **table** (explicit tray+table furniture, TV tray table, folding tray table meant as a small table) → "LivingRoom".
 - Dining table, dining chairs, buffet, sideboard, bar cart, hutch → "DiningRoom".
 - Desk, office chair, filing cabinet, bookshelf (office) → "OfficeDen".
 - Game tables (shuffleboard, pool table, ping pong, foosball), exercise/workout/fitness equipment (dumbbells, treadmill, home gym), play equipment, game room furniture → "OfficeDen".
 - Rug, runner, area rug → "Rugs".
 - Bed, headboard, nightstand, dresser, armoire, vanity → "Bedroom".
-- Lamp, chandelier, sconce, pendant light → "Lighting".
-- Vases, trays, bowls, decorative boxes, pillows, clocks, picture frames (empty), trinkets → "Accessories".
+- Lamp, chandelier, sconce, pendant light → "Lighting". **Table lamp** and **desk lamp** are "Lighting", not "LivingRoom" (they are not coffee/side tables).
+- Freestanding **candlesticks**, taper holders, and tabletop **candle holders** (pewter, brass, glass hurricanes, etc.) → "Accessories", not "Lighting" (Lighting is electric / wired fixtures and lamps).
+- Vases, trays, bowls / **pedestal bowl**, **fruit bowl**, compotes, wood or ceramic decorative bowls, **scroll box** / document box, lidded vanity boxes, pillows, clocks, picture frames (empty), trinkets, **home decor** tabletop pieces → "Accessories" (small decor only — not wall storage furniture). Pedestal != pedestal **dining table**. Copy about dining or living **rooms** does **not** recategorize a bowl to DiningRoom or LivingRoom.
+- **Books** (including encyclopedias, hardcovers, **coffee table books**, art/illustrated books, tomes) → "Accessories", not LivingRoom — "coffee table" in marketing copy refers to display style, not furniture.
+- **Decanters**, wine decanters, crystal or glass pour carafes for serving → "Accessories" (tabletop serveware), not DiningRoom case goods; luxury branding in copy does not change this.
 - If unclear, prefer the most specific match; default "Accessories" only when nothing else fits.
 
 Output format only: {"category": "<one of allowed>", "confidence": 0-1, "reasoning": "brief"}`;

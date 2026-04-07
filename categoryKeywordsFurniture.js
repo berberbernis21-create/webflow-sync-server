@@ -19,9 +19,15 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
     "bookshelf", "bookshelves", "bookcase", "bookcases",
     "entertainment center", "credenza", "cabinet", "cabinets", "ottoman", "ottomans",
     "drawer", "drawers", "case goods",
+    "wall unit", "wall units", "wall shelf", "wall shelves",
+    "shelving unit", "shelving units", "shelving wall",
+    "shelving", "modular shelving", "modular wall", "media wall",
+    "etagere", "étagère", "room divider", "room dividers", "display wall",
     "settee", "settees", "canape", "divan", "chesterfield",
     "nesting tables", "drink table", "cocktail table", "lift top table",
-    "hall tree", "hall table", "sofa table"
+    "hall tree", "hall table", "sofa table",
+    "tray table", "tray tables", "tv tray table", "folding tray table",
+    "butler tray table", "butlers tray table", "butler's tray table"
   ],
 
   DiningRoom: [
@@ -80,21 +86,37 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
   ],
 
   Accessories: [
-    "vase", "vases", "tray", "trays", "decor",
-    "bowl", "bowls", "jar", "jars", "planter", "planters",
-    "box", "boxes", "trinket box", "storage box", "decorative box", "keepsake box",
+    "vase", "vases",
+    "tray", "trays",
+    "butler tray", "butlers tray", "butler's tray",
+    "serving tray", "serving trays", "decorative tray", "ottoman tray",
+    "decor",
+    "bowl", "bowls",
+    "pedestal bowl", "pedestal bowls", "fruit bowl", "fruit bowls", "decorative bowl", "decorative bowls",
+    "compote", "compotes", "center bowl",
+    "jar", "jars", "planter", "planters",
+    "decanter", "decanters", "wine decanter", "wine decanters", "carafe", "carafes",
+    "box", "boxes", "scroll box", "scroll boxes", "document box", "document boxes",
+    "trinket box", "storage box", "decorative box", "keepsake box", "jewelry box", "jewellery box",
     "basket", "baskets", "bookend", "bookends",
-    "centerpiece", "centerpieces", "candlestick", "candlesticks",
+    "centerpiece", "centerpieces",
+    "candlestick", "candlesticks", "candle stick", "candle sticks",
+    "candle holder", "candle holders", "taper holder", "hurricane candle",
     "picture frame", "frames", "clock", "clocks", "mantel", "mantle",
     "throw pillow", "pillow", "pillows", "cushion", "blanket", "throw",
     "curtain", "curtains", "drapery", "draperies", "valance",
     "door knocker", "door hardware", "hardware", "knob", "pull",
     "coat rack", "hat rack", "luggage rack", "magazine rack", "wine rack", "key holder",
-    "trinket", "objet", "ornament", "decorative", "accent piece"
+    "trinket", "objet", "ornament", "decorative", "accent piece",
+    "encyclopedia", "encyclopedias", "coffee table book", "coffee table books",
+    "hardcover book", "hardcover books", "art book", "art books", "illustrated book", "tome",
+    "book", "books"
   ],
 
   OutdoorPatio: [
     "outdoor", "patio", "wicker", "rattan", "bamboo",
+    "patio furniture", "patio table", "patio tables", "patio dining", "patio dining table",
+    "outdoor dining", "outdoor dining table", "porch furniture", "deck furniture",
     "outdoor chair", "outdoor chairs", "outdoor sofa", "outdoor sofas",
     "outdoor table", "outdoor tables", "garden", "garden furniture",
     "adirondack", "chaise lounge", "lounger", "sun lounger",
@@ -110,7 +132,7 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
     "sconce", "sconces", "light fixture", "light fixtures",
     "ceiling light", "flush mount", "semi-flush", "track light",
     "desk lamp", "task lamp", "reading lamp", "torchiere",
-    "lantern", "lanterns", "candelabra", "candle holder"
+    "lantern", "lanterns", "candelabra"
   ]
 };
 
