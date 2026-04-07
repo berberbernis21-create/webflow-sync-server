@@ -56,10 +56,10 @@ async function sendDuplicatePlacementEmail(conflictLog, duplicateEmailSentFor) {
         : "This item looked like it was on the wrong site. We removed the extra listing so it only shows where we think it belongs.";
   const confirmLine =
     prev === "luxury"
-      ? "Please look this item up in the backend / Webflow (Handbags / Luxury). Make sure the old listing is gone: deleted is best, or archived if delete did not work. It should not still be live on Handbags. Use the ID below or the product name to search."
+      ? "Please look this item up in the backend / Webflow (Handbags / Luxury) by product name. Make sure the old listing is gone: deleted is best, or archived if delete did not work. It should not still be live on Handbags."
       : prev === "furniture"
-        ? "Please look this item up in the backend / Webflow (Furniture store, Products). Make sure the old listing is gone: deleted is best, or archived if delete did not work. It should not still be live on Furniture. Use the ID below or the product name to search."
-        : "Please look the item up in the backend / Webflow on the site it used to be on. Make sure that copy is deleted or archived and not still live.";
+        ? "Please look this item up in the backend / Webflow (Furniture store, Products) by product name. Make sure the old listing is gone: deleted is best, or archived if delete did not work. It should not still be live on Furniture."
+        : "Please look the item up in the backend / Webflow on the site it used to be on (search by product name). Make sure that copy is deleted or archived and not still live.";
   const wrongGuess =
     "If we got it wrong: update the product in Traxia. Change the title so it clearly says what the item is (lamp, vase, tray, handbag, wallet, etc.). Fix tags and product type if they do not match. Then run your next sync so we can place it correctly.";
   const mixups =
@@ -80,7 +80,7 @@ async function sendDuplicatePlacementEmail(conflictLog, duplicateEmailSentFor) {
     `  Store product ID: ${shopifyProductId}`,
     `  Used to be on: ${previousVertical}`,
     `  We think it belongs on: ${detectedVertical}`,
-    `  Backend / Webflow ID we removed: ${removedId || "n/a"}`,
+    `  Backend / Webflow ID we removed (for support logs only, search by name): ${removedId || "n/a"}`,
     "",
     confirmLine,
     "",
