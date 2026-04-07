@@ -258,7 +258,46 @@ function getWebflowConfig(vertical) {
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(
+  express.json({
+    verify: (req, res, buf) => {
+      req.rawBody = buf;
+    },
+  })
+);
+
+/**
+ * When SHOPIFY_WEBHOOK_SECRET is set (Custom app → API secret key), enforces Shopify HMAC.
+ * If unset, requests are accepted and a warn is logged — fine for first-time wiring; set the secret for production.
+ */
+function verifyShopifyHmac(req, res, next) {
+  const secret = process.env.SHOPIFY_WEBHOOK_SECRET?.trim();
+  if (!secret) {
+    webflowLog("warn", {
+      event: "shopify.webhook.hmac_skipped",
+      path: req.path,
+      message: "Set SHOPIFY_WEBHOOK_SECRET to enforce verification",
+    });
+    return next();
+  }
+  const hmacHeader = req.get("X-Shopify-Hmac-Sha256");
+  const raw = req.rawBody;
+  if (!raw || !Buffer.isBuffer(raw)) {
+    webflowLog("error", { event: "shopify.webhook.bad_body", path: req.path });
+    return res.status(400).send("Bad request");
+  }
+  if (!hmacHeader) {
+    return res.status(401).send("Unauthorized");
+  }
+  const digest = crypto.createHmac("sha256", secret).update(raw).digest("base64");
+  const a = Buffer.from(digest, "utf8");
+  const b = Buffer.from(String(hmacHeader), "utf8");
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    webflowLog("warn", { event: "shopify.webhook.hmac_invalid", path: req.path });
+    return res.status(401).send("Unauthorized");
+  }
+  next();
+}
 
 /* ======================================================
    SHOPIFY ORDER WEBHOOK — Twilio SMS to all 3 team numbers
@@ -330,6 +369,39 @@ app.post("/shopify/order", async (req, res) => {
     }
   }
 });
+
+/* ======================================================
+   SHOPIFY PRODUCT WEBHOOKS — creation / update → full syncSingleProduct path (same as sync-all per SKU)
+   HTTP 200 first (Shopify timeout); work continues in background.
+====================================================== */
+function scheduleProductWebhookSync(req, res) {
+  res.status(200).send("ok");
+  const id = req.body?.id != null ? String(req.body.id) : null;
+  const topic = req.get("X-Shopify-Topic") ?? "";
+  const shop = req.get("X-Shopify-Shop-Domain") ?? "";
+  if (!id) {
+    webflowLog("warn", {
+      event: "shopify.webhook.product",
+      path: req.path,
+      topic,
+      shop,
+      reason: "missing_product_id",
+    });
+    return;
+  }
+  webflowLog("info", {
+    event: "shopify.webhook.product",
+    path: req.path,
+    topic,
+    shop,
+    shopifyProductId: id,
+    productTitle: req.body?.title != null ? String(req.body.title).slice(0, 200) : null,
+  });
+  void runWebhookSingleProductSync(id, req.path);
+}
+
+app.post("/webhook/products", verifyShopifyHmac, scheduleProductWebhookSync);
+app.post("/webhook/products/update", verifyShopifyHmac, scheduleProductWebhookSync);
 
 /* ======================================================
    PATHS / CACHE SETUP
@@ -2063,6 +2135,33 @@ async function fetchShopifyProductStatus(productId) {
   }
 }
 
+/** Full Admin API product shape for syncSingleProduct (same as fetchAllShopifyProducts list items). */
+async function fetchShopifyProductById(productId) {
+  const store = process.env.SHOPIFY_STORE;
+  const token = process.env.SHOPIFY_ACCESS_TOKEN;
+  if (!store || !token) return null;
+  const id = String(productId).trim();
+  if (!id) return null;
+  const url = `https://${store}.myshopify.com/admin/api/2024-01/products/${id}.json`;
+  try {
+    const response = await axios.get(url, {
+      headers: {
+        "X-Shopify-Access-Token": token,
+        "Content-Type": "application/json",
+      },
+    });
+    return response.data?.product ?? null;
+  } catch (err) {
+    webflowLog("info", {
+      event: "shopify.fetch_product.failed",
+      shopifyProductId: id,
+      status: err.response?.status,
+      message: err.message,
+    });
+    return null;
+  }
+}
+
 /* ======================================================
    WEBFLOW — STRONG MATCHER (ID / URL / SLUG)
    Uses config (collectionId + token) for target collection.
@@ -2333,6 +2432,93 @@ async function markAsSold(existing, vertical, config) {
       },
     }
   );
+}
+
+/**
+ * Same path as sync-all "disappeared" handling: confirm Shopify is not active, mark Webflow sold, remove cache.
+ * @param {string} goneId - Shopify product id
+ * @param {Record<string, any>} cache - mutable cache from loadCache()
+ * @param {{ trigger?: string }} [options]
+ * @returns {Promise<"marked_sold"|"no_webflow"|"skip_unconfirmed"|"skip_still_active"|"skip_unknown_status">}
+ */
+async function processDisappearedShopifyProduct(goneId, cache, options = {}) {
+  const trigger = options.trigger || "sync-all.disappeared";
+  const confirmed = await fetchShopifyProductStatus(goneId);
+  if (confirmed === null || confirmed === undefined) {
+    webflowLog("info", {
+      event: "sync-all.disappeared_skip_unconfirmed",
+      shopifyProductId: goneId,
+      reason: "fetch_failed_or_unknown",
+      trigger,
+    });
+    return "skip_unconfirmed";
+  }
+  if (confirmed.status === "active") {
+    webflowLog("info", {
+      event: "sync-all.disappeared_skip_still_active",
+      shopifyProductId: goneId,
+      reason: "product_still_active_in_shopify",
+      trigger,
+    });
+    return "skip_still_active";
+  }
+  if (confirmed.status !== "gone" && confirmed.status !== "archived" && confirmed.status !== "draft") {
+    webflowLog("info", {
+      event: "sync-all.disappeared_skip_unconfirmed",
+      shopifyProductId: goneId,
+      reason: "shopify_status_unknown",
+      status: confirmed.status,
+      trigger,
+    });
+    return "skip_unknown_status";
+  }
+  const entry = getCacheEntry(cache, goneId);
+  const vertical = entry?.vertical ?? "luxury";
+  const config = getWebflowConfig(vertical);
+  let existing = null;
+
+  if (entry?.webflowId) {
+    if (vertical === "furniture" && config.siteId) {
+      existing = await getWebflowEcommerceProductById(config.siteId, entry.webflowId, config.token);
+    } else {
+      existing = await getWebflowItemById(entry.webflowId, config);
+    }
+  }
+  if (!existing) {
+    if (vertical === "furniture" && config.siteId) {
+      existing = await findExistingWebflowEcommerceProduct(goneId, null, config);
+    } else {
+      existing = await findExistingWebflowItem(goneId, null, null, config);
+    }
+  }
+
+  if (existing) {
+    webflowLog("info", {
+      event: "sync-all.disappeared_mark_sold_confirmed",
+      shopifyProductId: goneId,
+      webflowId: existing.id,
+      vertical,
+      shopifyStatus: confirmed.status,
+      trigger,
+    });
+    await markAsSold(existing, vertical, config);
+  } else {
+    webflowLog("info", {
+      event: "sync-all.disappeared_no_webflow",
+      shopifyProductId: goneId,
+      trigger,
+    });
+  }
+
+  delete cache[goneId];
+  webflowLog("info", {
+    event: "cache.mutated",
+    shopifyProductId: goneId,
+    op: "deleted",
+    reason: "disappeared_confirmed",
+    trigger,
+  });
+  return existing ? "marked_sold" : "no_webflow";
 }
 
 function webflowListingLooksSold(existing, vertical) {
@@ -4016,6 +4202,66 @@ async function syncSingleProduct(product, cache, options = {}) {
   return { operation: "skip", id: null };
 }
 
+/**
+ * One-product sync with the same indexes + cache as sync-all (webhooks: create/update).
+ * ACK HTTP before calling; this can take tens of seconds (LLM, Webflow).
+ */
+async function runWebhookSingleProductSync(shopifyProductId, triggerPath) {
+  const id = String(shopifyProductId ?? "").trim();
+  if (!id) return;
+  syncRequestId = crypto.randomUUID().slice(0, 8);
+  syncStartTime = Date.now();
+  try {
+    await loadFurnitureCategoryMap();
+    luxuryItemIndex = null;
+    furnitureProductIndex = null;
+    furnitureSkuIndex = null;
+    await Promise.all([
+      loadLuxuryItemIndex(),
+      loadFurnitureProductIndex(),
+      loadFurnitureSkuIndex(),
+    ]);
+    const product = await fetchShopifyProductById(id);
+    if (!product) {
+      webflowLog("warn", {
+        event: "shopify.webhook.sync_skip",
+        path: triggerPath,
+        shopifyProductId: id,
+        reason: "product_not_found_or_fetch_failed",
+      });
+      return;
+    }
+    const cache = loadCache();
+    const duplicateEmailSentFor = new Set();
+    const result = await syncSingleProduct(product, cache, { duplicateEmailSentFor });
+    saveCache(cache);
+    if (result?.duplicateCorrected && result?.duplicateLog) {
+      await sendDuplicatePlacementEmail(result.duplicateLog, duplicateEmailSentFor);
+    }
+    webflowLog("info", {
+      event: "shopify.webhook.sync_done",
+      path: triggerPath,
+      shopifyProductId: id,
+      operation: result?.operation ?? null,
+      webflowId: result?.id ?? null,
+      ...(result?.duplicateCorrected && { duplicateCorrected: true }),
+    });
+  } catch (err) {
+    webflowLog("error", {
+      event: "shopify.webhook.sync_error",
+      path: triggerPath,
+      shopifyProductId: id,
+      message: err.message,
+    });
+  } finally {
+    syncRequestId = null;
+    syncStartTime = null;
+    luxuryItemIndex = null;
+    furnitureProductIndex = null;
+    furnitureSkuIndex = null;
+  }
+}
+
 /* ======================================================
    COMPARE FIELD DATA — skip PATCH when nothing actually changed
    Avoids touching Webflow (no Modified bump, no unpublished changes).
@@ -4196,6 +4442,44 @@ app.post("/clear-cache", (req, res) => {
   }
 });
 
+/**
+ * POST /webhook/products/delete — Same path as sync-all “disappeared”: confirm Shopify not active, Webflow sold, cache row removed.
+ */
+app.post("/webhook/products/delete", verifyShopifyHmac, async (req, res) => {
+  res.status(200).send("ok");
+  try {
+    const id = req.body?.id != null ? String(req.body.id) : null;
+    if (!id) {
+      webflowLog("warn", {
+        event: "shopify.webhook.product_delete",
+        path: "/webhook/products/delete",
+        reason: "missing_product_id",
+      });
+      return;
+    }
+    webflowLog("info", {
+      event: "shopify.webhook.product_delete",
+      path: "/webhook/products/delete",
+      shopifyProductId: id,
+      topic: req.get("X-Shopify-Topic") ?? "",
+      shop: req.get("X-Shopify-Shop-Domain") ?? "",
+    });
+    const cache = loadCache();
+    const outcome = await processDisappearedShopifyProduct(id, cache, { trigger: "webhook.products_delete" });
+    saveCache(cache);
+    webflowLog("info", {
+      event: "shopify.webhook.product_delete.done",
+      shopifyProductId: id,
+      outcome,
+    });
+  } catch (err) {
+    webflowLog("error", {
+      event: "shopify.webhook.product_delete.error",
+      message: err.message,
+    });
+  }
+});
+
 app.post("/sync-all", async (req, res) => {
   syncRequestId = crypto.randomUUID().slice(0, 8);
   syncStartTime = Date.now();
@@ -4288,42 +4572,8 @@ app.post("/sync-all", async (req, res) => {
         });
         continue;
       }
-      const entry = getCacheEntry(cache, goneId);
-      const vertical = entry?.vertical ?? "luxury";
-      const config = getWebflowConfig(vertical);
-      let existing = null;
-
-      if (entry?.webflowId) {
-        if (vertical === "furniture" && config.siteId) {
-          existing = await getWebflowEcommerceProductById(config.siteId, entry.webflowId, config.token);
-        } else {
-          existing = await getWebflowItemById(entry.webflowId, config);
-        }
-      }
-      if (!existing) {
-        if (vertical === "furniture" && config.siteId) {
-          existing = await findExistingWebflowEcommerceProduct(goneId, null, config);
-        } else {
-          existing = await findExistingWebflowItem(goneId, null, null, config);
-        }
-      }
-
-      if (existing) {
-        webflowLog("info", {
-          event: "sync-all.disappeared_mark_sold_confirmed",
-          shopifyProductId: goneId,
-          webflowId: existing.id,
-          vertical,
-          shopifyStatus: confirmed.status,
-        });
-        await markAsSold(existing, vertical, config);
-        sold++;
-      } else {
-        webflowLog("info", { event: "sync-all.disappeared_no_webflow", shopifyProductId: goneId });
-      }
-
-      delete cache[goneId];
-      webflowLog("info", { event: "cache.mutated", shopifyProductId: goneId, op: "deleted", reason: "disappeared_confirmed" });
+      const outcome = await processDisappearedShopifyProduct(goneId, cache, { trigger: "sync-all.disappeared" });
+      if (outcome === "marked_sold") sold++;
     }
 
     orphanMarkedSold = await sweepWebflowOrphansAgainstShopifyCatalog(products, cache);
@@ -4426,6 +4676,9 @@ app.listen(PORT, () => {
   const host = process.env.RENDER_EXTERNAL_HOSTNAME || `localhost:${PORT}`;
   const scheme = process.env.RENDER_EXTERNAL_HOSTNAME ? "https" : "http";
   console.log(`Shopify order webhook: ${scheme}://${host}/shopify/order`);
+  console.log(
+    `Shopify product webhooks: ${scheme}://${host}/webhook/products (create), ${scheme}://${host}/webhook/products/update (update), ${scheme}://${host}/webhook/products/delete (delete)`
+  );
 });
 
 
