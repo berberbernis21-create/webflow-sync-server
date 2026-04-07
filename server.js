@@ -1209,7 +1209,7 @@ function shopifyHash(product) {
     images: (product.images || []).map((i) => i.src),
     slug: product.handle,
     dimensions: { width: dimensions.width, height: dimensions.height, length: dimensions.length, weight: dimensions.weight },
-    taxonomyVersion: 7,
+    taxonomyVersion: 8,
   };
 }
 
@@ -1218,7 +1218,7 @@ function contentHashForLLM(product) {
   return {
     title: product.title || "",
     body_html: normalizeHtmlForHash(product.body_html),
-    taxonomyVersion: 7,
+    taxonomyVersion: 8,
   };
 }
 
@@ -1305,13 +1305,27 @@ function applyTableDimensionRules(dims, name, descAndTags) {
 }
 
 /**
+ * Collapse Shopify typography so accessory title overrides still match (ZWSP, fancy hyphens, accented Latin).
+ */
+function normalizeTitleForFurnitureAccessoryMatch(raw) {
+  return (raw || "")
+    .trim()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/[\u2010-\u2015\u2212\uFF0D]/g, "-")
+    .toLowerCase();
+}
+
+/**
  * Furniture subcategory: LLM often returns LivingRoom when copy mentions dining/coffee tables or “living space”.
  * When title is unambiguous, override LLM so keyword truth wins (we still call LLM for audit; cost already paid).
  */
 function furnitureAccessoryCategoryOverrideTitle(title) {
-  const t = (title || "").trim().toLowerCase();
+  const t = normalizeTitleForFurnitureAccessoryMatch(title);
   if (!t) return null;
-  if (/\bcandlesticks?\b/.test(t) || /\bcandle sticks?\b/.test(t)) return "Accessories";
+  // candlestick(s), candle stick(s), candle-stick(s); NFKC typography handled above
+  if (/\bcandle[\s-]*sticks?\b/.test(t)) return "Accessories";
   if (/\bcandle-?holders?\b/.test(t) || /\bcandle holders?\b/.test(t)) return "Accessories";
   if (/\bpedestal bowls?\b/.test(t)) return "Accessories";
   const bowlIsChair = /\bbowl chairs?\b/.test(t);
