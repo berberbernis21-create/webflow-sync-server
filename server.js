@@ -373,7 +373,41 @@ app.post("/shopify/order", async (req, res) => {
 /* ======================================================
    SHOPIFY PRODUCT WEBHOOKS — creation / update → full syncSingleProduct path (same as sync-all per SKU)
    HTTP 200 first (Shopify timeout); work continues in background.
+   Debounce: Shopify sends products/create and products/update back-to-back for new SKUs; one wait collapses them
+   into a single sync so we do not run two full passes (major cause of duplicate Webflow rows).
+   WEBHOOK_PRODUCT_DEBOUNCE_MS: default 3500; set 0 to disable debounce.
 ====================================================== */
+const WEBHOOK_PRODUCT_DEBOUNCE_MS = Math.max(
+  0,
+  parseInt(process.env.WEBHOOK_PRODUCT_DEBOUNCE_MS || "3500", 10) || 3500
+);
+const productWebhookDebounceTimers = new Map();
+
+function scheduleDebouncedProductWebhookSync(shopifyProductId, triggerPath) {
+  const id = String(shopifyProductId ?? "").trim();
+  if (!id) return;
+  if (WEBHOOK_PRODUCT_DEBOUNCE_MS <= 0) {
+    void runWebhookSingleProductSync(id, triggerPath);
+    return;
+  }
+  const prev = productWebhookDebounceTimers.get(id);
+  if (prev?.timer) clearTimeout(prev.timer);
+  const paths = prev?.paths ? [...prev.paths, triggerPath] : [triggerPath];
+  const timer = setTimeout(() => {
+    productWebhookDebounceTimers.delete(id);
+    const uniquePaths = [...new Set(paths)];
+    const pathLabel = uniquePaths.length > 1 ? uniquePaths.join("+") : uniquePaths[0];
+    webflowLog("info", {
+      event: "shopify.webhook.product_debounced",
+      shopifyProductId: id,
+      paths: uniquePaths,
+      waitMs: WEBHOOK_PRODUCT_DEBOUNCE_MS,
+    });
+    void runWebhookSingleProductSync(id, pathLabel);
+  }, WEBHOOK_PRODUCT_DEBOUNCE_MS);
+  productWebhookDebounceTimers.set(id, { timer, paths });
+}
+
 function scheduleProductWebhookSync(req, res) {
   res.status(200).send("ok");
   const id = req.body?.id != null ? String(req.body.id) : null;
@@ -397,7 +431,7 @@ function scheduleProductWebhookSync(req, res) {
     shopifyProductId: id,
     productTitle: req.body?.title != null ? String(req.body.title).slice(0, 200) : null,
   });
-  void runWebhookSingleProductSync(id, req.path);
+  scheduleDebouncedProductWebhookSync(id, req.path);
 }
 
 app.post("/webhook/products", verifyShopifyHmac, scheduleProductWebhookSync);
