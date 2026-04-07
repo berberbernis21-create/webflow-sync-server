@@ -916,6 +916,8 @@ async function updateShopifyMetafields(productId, { department, category, vertic
    We decide vertical/category; we WRITE that to Shopify so Shopify matches Webflow. Tags = department + category.
 ====================================================== */
 const SYNC_DEPARTMENT_TAGS = ["Furniture & Home", "Luxury Goods"];
+/** Shorthand tags merchants or old setups use — we strip these whenever we rewrite department/category so they do not fight automation (e.g. "Luxury" vs "Luxury Goods"). */
+const LEGACY_VERTICAL_SHORTHAND_TAGS = ["Luxury", "Furniture"];
 const SYNC_CATEGORY_TAGS = [
   "Living Room", "Dining Room", "Office Den", "Rugs", "Art / Mirrors", "Bedroom", "Accessories", "Outdoor / Patio", "Lighting",
   "Handbags", "Totes", "Crossbody", "Wallets", "Backpacks", "Luggage", "Scarves", "Belts", "Small Bags", "Other ", "Other",
@@ -924,7 +926,13 @@ const SYNC_CATEGORY_TAGS = [
 function mergeProductTagsForSync(existingTags, department, category) {
   const existing = Array.isArray(existingTags) ? existingTags : (typeof existingTags === "string" ? existingTags.split(",").map((s) => s.trim()).filter(Boolean) : []);
   const toRemove = new Set([...SYNC_DEPARTMENT_TAGS, ...SYNC_CATEGORY_TAGS].map((t) => t.trim()).filter(Boolean));
-  const kept = existing.filter((t) => !toRemove.has(String(t).trim()));
+  const shorthandRemoveLower = new Set(LEGACY_VERTICAL_SHORTHAND_TAGS.map((t) => String(t).trim().toLowerCase()).filter(Boolean));
+  const kept = existing.filter((t) => {
+    const s = String(t).trim();
+    if (toRemove.has(s)) return false;
+    if (shorthandRemoveLower.has(s.toLowerCase())) return false;
+    return true;
+  });
   const toAdd = [department, category].filter((v) => v != null && String(v).trim() !== "");
   const combined = [...kept];
   for (const tag of toAdd) {
