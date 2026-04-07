@@ -58,6 +58,31 @@ function getProductText(product) {
   return { title, productType, vendor, tagsStr, description };
 }
 
+/** Same typography normalization as furniture accessory title overrides (Shopify en dashes, ZWSP, Latin accents). */
+function normalizeForVerticalMatch(raw) {
+  return (raw || "")
+    .trim()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .replace(/[\u2010-\u2015\u2212\uFF0D]/g, "-")
+    .toLowerCase();
+}
+
+/**
+ * Title / type / tags clearly indicate a lighting fixture — always HOME_INTERIOR (Furniture & Home), never LUXURY.
+ * Runs before STRONG_LUXURY so mis-tagged "bag"/etc. cannot send a lamp to Luxury.
+ */
+function titleTypeTagsLookLikeLighting(product) {
+  const { title, productType, tagsStr } = getProductText(product);
+  const t = normalizeForVerticalMatch(`${title} ${productType} ${tagsStr}`);
+  if (!t.trim()) return false;
+  if (/\b(table|floor|desk|bedside|torchiere)\s+lamps?\b/.test(t)) return true;
+  if (/\b(lampshades?|chandeliers?|sconces?|torchieres?)\b/.test(t)) return true;
+  if (/\blamps?\b/.test(t)) return true;
+  return false;
+}
+
 const SYSTEM_PROMPT = `You are a high-precision retail classification engine.
 Classify products as either:
 
@@ -239,8 +264,42 @@ export async function classifyWithLLM(product, logPayload = {}, logFn = null) {
     return decorMaskResult;
   }
 
-  // Strong wearable/footwear in title/type/tags → always LUXURY (backpack, boots, handbag, etc. are never furniture)
+  if (titleTypeTagsLookLikeLighting(product)) {
+    const lightingResult = {
+      category: "HOME_INTERIOR",
+      confidence: 1,
+      reasoning: "Lighting fixture in title, product type, or tags (lamp/chandelier/sconce/etc.); Furniture & Home.",
+    };
+    logPayload.raw = null;
+    logPayload.parsed = null;
+    logPayload.final = lightingResult;
+    logPayload.override = "lighting_title_type_tags";
+    if (logFn) logFn("info", { event: "llm_vertical.lighting", category: "HOME_INTERIOR", reason: "lamp/lighting in name or type" });
+    return lightingResult;
+  }
+
+  // Strong wearable/footwear in title/type/tags → LUXURY unless title/description clearly furniture (e.g. lamp + stray "bag" tag)
   if (hasAnyWord(nameAndTypeAndTags, STRONG_LUXURY_SIGNALS)) {
+    const afterFurnitureSafety = applyFurnitureSafetyOverride(product, "LUXURY");
+    if (afterFurnitureSafety === "HOME_INTERIOR") {
+      const overrideResult = {
+        category: "HOME_INTERIOR",
+        confidence: 1,
+        reasoning:
+          "Wearable keyword in type/tags but title/description indicate furniture/home (e.g. table lamp); Furniture & Home.",
+      };
+      logPayload.raw = null;
+      logPayload.parsed = null;
+      logPayload.final = overrideResult;
+      logPayload.override = "furniture_safety_over_strong_luxury";
+      if (logFn)
+        logFn("info", {
+          event: "llm_vertical.strong_luxury_overridden",
+          category: "HOME_INTERIOR",
+          reason: "furniture cue in title/description",
+        });
+      return overrideResult;
+    }
     const strongLuxuryResult = {
       category: "LUXURY",
       confidence: 1,
