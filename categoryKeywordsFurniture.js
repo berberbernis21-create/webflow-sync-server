@@ -101,6 +101,7 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
     "basket", "baskets", "bookend", "bookends",
     "centerpiece", "centerpieces",
     "candlestick", "candlesticks", "candle stick", "candle sticks",
+    "candleholder", "candleholders",
     "candle holder", "candle holders", "taper holder", "hurricane candle",
     "picture frame", "frames", "clock", "clocks", "mantel", "mantle",
     "throw pillow", "pillow", "pillows", "cushion", "blanket", "throw",
@@ -112,7 +113,8 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
     "hardcover book", "hardcover books", "art book", "art books", "illustrated book", "tome",
     "book", "books",
     "lance", "lances", "beaded lance", "skin lance", "deer skin lance",
-    "ceremonial lance", "decorative lance"
+    "ceremonial lance", "decorative lance",
+    "table lamp", "table lamps", "desk lamp", "desk lamps", "bedside lamp", "bedside lamps"
   ],
 
   OutdoorPatio: [
@@ -129,11 +131,11 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
   ],
 
   Lighting: [
-    "lamp", "lamps", "floor lamp", "floor lamps", "table lamp", "table lamps",
+    "lamp", "lamps", "floor lamp", "floor lamps",
     "chandelier", "chandeliers", "pendant", "pendants", "pendant light",
     "sconce", "sconces", "light fixture", "light fixtures",
     "ceiling light", "flush mount", "semi-flush", "track light",
-    "desk lamp", "task lamp", "reading lamp", "torchiere",
+    "task lamp", "reading lamp", "torchiere",
     "lantern", "lanterns", "candelabra"
   ]
 };

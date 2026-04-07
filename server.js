@@ -1209,7 +1209,7 @@ function shopifyHash(product) {
     images: (product.images || []).map((i) => i.src),
     slug: product.handle,
     dimensions: { width: dimensions.width, height: dimensions.height, length: dimensions.length, weight: dimensions.weight },
-    taxonomyVersion: 5,
+    taxonomyVersion: 6,
   };
 }
 
@@ -1218,7 +1218,7 @@ function contentHashForLLM(product) {
   return {
     title: product.title || "",
     body_html: normalizeHtmlForHash(product.body_html),
-    taxonomyVersion: 5,
+    taxonomyVersion: 6,
   };
 }
 
@@ -1312,8 +1312,17 @@ function furnitureAccessoryCategoryOverrideTitle(title) {
   const t = (title || "").trim().toLowerCase();
   if (!t) return null;
   if (/\bcandlesticks?\b/.test(t) || /\bcandle sticks?\b/.test(t)) return "Accessories";
+  if (/\bcandle-?holders?\b/.test(t) || /\bcandle holders?\b/.test(t)) return "Accessories";
   if (/\bpedestal bowls?\b/.test(t)) return "Accessories";
   if (/\bvases?\b/.test(t)) return "Accessories";
+  if (/\btable lamps?\b/.test(t) || /\bdesk lamps?\b/.test(t) || /\bbedside lamps?\b/.test(t)) return "Accessories";
+  const trayIsFurnitureTable =
+    /\btray tables?\b/.test(t) ||
+    /\btv tray tables?\b/.test(t) ||
+    /\bfolding tray tables?\b/.test(t) ||
+    /\bbutlers? trays? tables?\b/.test(t) ||
+    /\bbutler'?s trays? tables?\b/.test(t);
+  if (!trayIsFurnitureTable && /\btrays?\b/.test(t)) return "Accessories";
   return null;
 }
 
