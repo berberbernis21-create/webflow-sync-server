@@ -1209,7 +1209,7 @@ function shopifyHash(product) {
     images: (product.images || []).map((i) => i.src),
     slug: product.handle,
     dimensions: { width: dimensions.width, height: dimensions.height, length: dimensions.length, weight: dimensions.weight },
-    taxonomyVersion: 6,
+    taxonomyVersion: 7,
   };
 }
 
@@ -1218,7 +1218,7 @@ function contentHashForLLM(product) {
   return {
     title: product.title || "",
     body_html: normalizeHtmlForHash(product.body_html),
-    taxonomyVersion: 6,
+    taxonomyVersion: 7,
   };
 }
 
@@ -1314,6 +1314,8 @@ function furnitureAccessoryCategoryOverrideTitle(title) {
   if (/\bcandlesticks?\b/.test(t) || /\bcandle sticks?\b/.test(t)) return "Accessories";
   if (/\bcandle-?holders?\b/.test(t) || /\bcandle holders?\b/.test(t)) return "Accessories";
   if (/\bpedestal bowls?\b/.test(t)) return "Accessories";
+  const bowlIsChair = /\bbowl chairs?\b/.test(t);
+  if (!bowlIsChair && /\bbowls?\b/.test(t)) return "Accessories";
   if (/\bvases?\b/.test(t)) return "Accessories";
   if (/\btable lamps?\b/.test(t) || /\bdesk lamps?\b/.test(t) || /\bbedside lamps?\b/.test(t)) return "Accessories";
   const trayIsFurnitureTable =
