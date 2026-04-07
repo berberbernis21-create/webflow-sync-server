@@ -3102,8 +3102,30 @@ async function sweepWebflowOrphansAgainstShopifyCatalog(products, cache) {
 
 /* ======================================================
    ⭐ CORE SYNC LOGIC — DUAL PIPELINE, NO DUPLICATES ⭐
+   Per–Shopify-id queue: concurrent webhook + sync-all cannot both CREATE the same Webflow product.
 ====================================================== */
-async function syncSingleProduct(product, cache, options = {}) {
+const shopifyProductSyncChains = new Map();
+
+function runSerializedByShopifyProductId(shopifyProductId, fn) {
+  const id = String(shopifyProductId ?? "").trim();
+  if (!id) return fn();
+  const prev = shopifyProductSyncChains.get(id) ?? Promise.resolve();
+  const next = prev.catch(() => {}).then(() => fn());
+  const tail = next.catch((err) => {
+    webflowLog("error", {
+      event: "serialized_product_sync.failed",
+      shopifyProductId: id,
+      message: err?.message ?? String(err),
+    });
+  });
+  shopifyProductSyncChains.set(id, tail);
+  next.finally(() => {
+    if (shopifyProductSyncChains.get(id) === tail) shopifyProductSyncChains.delete(id);
+  });
+  return next;
+}
+
+async function syncSingleProductCore(product, cache, options = {}) {
   const shopifyProductId = String(product.id);
   const cacheEntry = getCacheEntry(cache, shopifyProductId);
   const duplicateEmailSentFor = options.duplicateEmailSentFor ?? null;
@@ -3355,7 +3377,7 @@ async function syncSingleProduct(product, cache, options = {}) {
       webflowItemIdRemoved: cacheEntry.webflowId,
     };
     delete cache[shopifyProductId];
-    const result = await syncSingleProduct(product, cache, options);
+    const result = await syncSingleProductCore(product, cache, options);
     return { ...result, duplicateCorrected: !alreadyArchived, duplicateLog };
   }
 
@@ -3371,7 +3393,7 @@ async function syncSingleProduct(product, cache, options = {}) {
       }
     }
     delete cache[shopifyProductId];
-    const result = await syncSingleProduct(product, cache, { ...options, forceReclassify: true });
+    const result = await syncSingleProductCore(product, cache, { ...options, forceReclassify: true });
     return {
       ...result,
       duplicateCorrected: true,
@@ -4200,6 +4222,12 @@ async function syncSingleProduct(product, cache, options = {}) {
 
   // Should not reach: existing was non-null but we didn't update/skip/sold
   return { operation: "skip", id: null };
+}
+
+async function syncSingleProduct(product, cache, options = {}) {
+  const id = String(product?.id ?? "").trim();
+  if (!id) return syncSingleProductCore(product, cache, options);
+  return runSerializedByShopifyProductId(id, () => syncSingleProductCore(product, cache, options));
 }
 
 /**
