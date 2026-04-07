@@ -1209,7 +1209,7 @@ function shopifyHash(product) {
     images: (product.images || []).map((i) => i.src),
     slug: product.handle,
     dimensions: { width: dimensions.width, height: dimensions.height, length: dimensions.length, weight: dimensions.weight },
-    taxonomyVersion: 4,
+    taxonomyVersion: 5,
   };
 }
 
@@ -1218,7 +1218,7 @@ function contentHashForLLM(product) {
   return {
     title: product.title || "",
     body_html: normalizeHtmlForHash(product.body_html),
-    taxonomyVersion: 4,
+    taxonomyVersion: 5,
   };
 }
 
@@ -1312,6 +1312,8 @@ function furnitureAccessoryCategoryOverrideTitle(title) {
   const t = (title || "").trim().toLowerCase();
   if (!t) return null;
   if (/\bcandlesticks?\b/.test(t) || /\bcandle sticks?\b/.test(t)) return "Accessories";
+  if (/\bpedestal bowls?\b/.test(t)) return "Accessories";
+  if (/\bvases?\b/.test(t)) return "Accessories";
   return null;
 }
 
