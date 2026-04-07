@@ -21,7 +21,15 @@ dotenv.config();
 ====================================================== */
 /** @param {Set<string>} [duplicateEmailSentFor] - Per-run dedupe: only one email per shopifyProductId per run. We also persist sent IDs so we never send again for the same item unless a significant change happens. */
 async function sendDuplicatePlacementEmail(conflictLog, duplicateEmailSentFor) {
-  const { productTitle, shopifyProductId, previousVertical, detectedVertical, webflowIdArchived, sweep } = conflictLog;
+  const {
+    productTitle,
+    shopifyProductId,
+    previousVertical,
+    detectedVertical,
+    webflowItemIdRemoved,
+    webflowIdArchived,
+  } = conflictLog;
+  const removedId = webflowItemIdRemoved || webflowIdArchived;
   const id = String(shopifyProductId ?? "");
   if (duplicateEmailSentFor && duplicateEmailSentFor.has(id)) {
     webflowLog("info", { event: "duplicate_placement.email_skipped", reason: "already_sent_this_run", shopifyProductId: id });
@@ -38,26 +46,44 @@ async function sendDuplicatePlacementEmail(conflictLog, duplicateEmailSentFor) {
     return;
   }
   const recipients = to.split(",").map((e) => e.trim()).filter(Boolean);
-  const subject = `[Webflow Sync] Duplicate placement — item is archived`;
-  const intro = sweep
-    ? "This item was found in the Furniture collection but is classified as Luxury (e.g. bag, clutch, scarf). It is archived; we created it in Luxury."
-    : "This item was previously synced to one collection but is now detected as belonging to another. It is archived.";
+  const subject = `[Webflow Sync] Duplicate placement — wrong listing removed (deleted)`;
+  /** What we deleted: luxury = CMS collection item; furniture = ecommerce product on the furniture site. */
+  const prev = String(previousVertical || "").toLowerCase();
+  const intro =
+    prev === "luxury"
+      ? "Shopify says this SKU belongs on Furniture & Home. The sync issued a DELETE on the duplicate Luxury (handbags) CMS item so the same product is not offered in both channels."
+      : prev === "furniture"
+        ? "Shopify says this SKU belongs in Luxury Goods. The sync issued a DELETE on the duplicate Furniture & Home ecommerce product so the same product is not offered in both channels."
+        : "The sync removed a duplicate listing in the wrong Webflow channel (see details below).";
+  const confirmLine =
+    prev === "luxury"
+      ? "Please confirm in Webflow (Luxury / handbags CMS collection): open the collection, search by the Webflow ID below or by product title, and verify the duplicate CMS item is gone. It should have been deleted—not left archived—by the sync."
+      : prev === "furniture"
+        ? "Please confirm in Webflow (Furniture ecommerce): Designer → Products, search by Shopify ID or title, and verify that duplicate ecommerce product is gone. It should have been deleted—not archived—by the sync."
+        : "Please confirm in Webflow that the duplicate record for this Shopify product is gone in the channel listed under “Was in”.";
   const body = [
     intro,
     "",
     "Details (from sync logs):",
     `  Product title: ${productTitle || "(none)"}`,
     `  Shopify product ID: ${shopifyProductId}`,
-    `  Was in: ${previousVertical}`,
-    `  Now detected as: ${detectedVertical}`,
-    `  Webflow item ID (archived): ${webflowIdArchived || "n/a"}`,
+    `  Was in (wrong channel): ${previousVertical}`,
+    `  Now detected as (correct channel): ${detectedVertical}`,
+    `  Webflow record ID removed: ${removedId || "n/a"}`,
     "",
-    "This item is archived. You should go into the backend and delete it (so it does not remain in the wrong collection).",
-    "If a significant change happens again for this item, we will send another email.",
+    confirmLine,
     "",
-    "Please:",
-    "  1. Go into the backend and delete the archived item if it still appears.",
-    "  2. Adjust the product (name, tags, or product type) in Shopify if needed so it classifies consistently in the future.",
+    "How routing works (one Shopify product → one Webflow channel):",
+    "  • The server classifies each product as Luxury (wearable / designer goods CMS) or Furniture & Home (decor, lighting, furniture, ecommerce site).",
+    "  • Only one live Webflow listing should exist per Shopify product ID. If classification changes, the sync deletes the stale listing in the wrong channel.",
+    "  • Furniture category (Living Room, Accessories, etc.) is decided only after the product is classified as Furniture & Home.",
+    "",
+    "Naming & Shopify hygiene (reduces mis-routing):",
+    "  • Put the real product type in the title: e.g. “Ceramic Table Lamp”, “Leather Crossbody Bag”, “Dining Side Chair”—not vague “Designer accessory” for a lamp.",
+    "  • Avoid luxury-only tags (bag, wallet, scarf, …) on home goods; avoid furniture-only cues on true handbags.",
+    "  • Keep product type aligned: e.g. home decor / lighting for lamps; use luxury-oriented types only for actual luxury SKUs.",
+    "",
+    "If the product changes materially in Shopify (title, description, tags, type), we may re-classify and sync again.",
     "",
     "— Lost & Found Webflow Sync",
   ].join("\n");
@@ -729,23 +755,25 @@ async function archiveWebflowEcommerceProduct(siteId, productId, token) {
   });
 }
 
-/** Try to delete an ecommerce product; if the API doesn't support delete (404/405), archive instead. */
-async function deleteOrArchiveWebflowEcommerceProduct(siteId, productId, token) {
+/**
+ * Hard-delete a Furniture ecommerce product (duplicate / wrong-vertical cleanup).
+ * Does not archive. 404 = already removed (treated as success). Other errors propagate.
+ */
+async function deleteWebflowEcommerceProduct(siteId, productId, token) {
   if (!siteId || !productId || !token) return;
   const url = `https://api.webflow.com/v2/sites/${siteId}/products/${productId}`;
   try {
     await axios.delete(url, {
       headers: { Authorization: `Bearer ${token}`, accept: "application/json" },
     });
-    webflowLog("info", { event: "delete.ecommerce_product", productId, message: "Duplicate deleted from Furniture" });
+    webflowLog("info", { event: "delete.ecommerce_product", productId, message: "Furniture ecommerce product deleted" });
   } catch (err) {
     const status = err.response?.status;
-    if (status === 404 || status === 405 || status === 501) {
-      webflowLog("info", { event: "delete.ecommerce_not_supported", productId, status, message: "Falling back to archive" });
-      await archiveWebflowEcommerceProduct(siteId, productId, token);
-    } else {
-      throw err;
+    if (status === 404) {
+      webflowLog("info", { event: "delete.ecommerce_already_gone", productId, message: "Product already deleted or missing" });
+      return;
     }
+    throw err;
   }
 }
 
@@ -3095,7 +3123,7 @@ async function syncSingleProduct(product, cache, options = {}) {
         saveDuplicatePlacementSentId(shopifyProductId);
       } else {
         try {
-          await deleteOrArchiveWebflowEcommerceProduct(furnitureConfig.siteId, cacheEntry.webflowId, furnitureConfig.token);
+          await deleteWebflowEcommerceProduct(furnitureConfig.siteId, cacheEntry.webflowId, furnitureConfig.token);
           webflowLog("info", { event: "vertical.corrected.removed", shopifyProductId, webflowId: cacheEntry.webflowId });
         } catch (err) {
           webflowLog("error", { event: "vertical.corrected.archive_failed", shopifyProductId, webflowId: cacheEntry.webflowId, message: err.message });
@@ -3107,7 +3135,7 @@ async function syncSingleProduct(product, cache, options = {}) {
       shopifyProductId,
       previousVertical: "furniture",
       detectedVertical: "luxury",
-      webflowIdArchived: cacheEntry.webflowId,
+      webflowItemIdRemoved: cacheEntry.webflowId,
     };
     delete cache[shopifyProductId];
     const result = await syncSingleProduct(product, cache, options);
@@ -3135,7 +3163,7 @@ async function syncSingleProduct(product, cache, options = {}) {
         shopifyProductId,
         previousVertical: "luxury",
         detectedVertical: "furniture",
-        webflowIdArchived: cacheEntry.webflowId,
+        webflowItemIdRemoved: cacheEntry.webflowId,
       },
     };
   }
@@ -3164,7 +3192,7 @@ async function syncSingleProduct(product, cache, options = {}) {
             productTitle: product.title,
           });
           try {
-            await deleteOrArchiveWebflowEcommerceProduct(furnitureConfig.siteId, existingInFurniture.id, furnitureConfig.token);
+            await deleteWebflowEcommerceProduct(furnitureConfig.siteId, existingInFurniture.id, furnitureConfig.token);
             webflowLog("info", { event: "cleanup.removed_from_furniture", shopifyProductId, webflowId: existingInFurniture.id });
             await sendDuplicatePlacementEmail(
               {
@@ -3172,7 +3200,7 @@ async function syncSingleProduct(product, cache, options = {}) {
                 shopifyProductId,
                 previousVertical: "furniture",
                 detectedVertical: "luxury",
-                webflowIdArchived: existingInFurniture.id,
+                webflowItemIdRemoved: existingInFurniture.id,
                 sweep: true,
               },
               duplicateEmailSentFor
@@ -3207,7 +3235,7 @@ async function syncSingleProduct(product, cache, options = {}) {
               shopifyProductId,
               previousVertical: "luxury",
               detectedVertical: "furniture",
-              webflowIdArchived: existingInLuxury.id,
+              webflowItemIdRemoved: existingInLuxury.id,
               sweep: true,
             },
             duplicateEmailSentFor
@@ -3834,7 +3862,7 @@ async function syncSingleProduct(product, cache, options = {}) {
               message: "Archiving from Furniture before creating in Luxury",
             });
             try {
-              await deleteOrArchiveWebflowEcommerceProduct(furnitureConfig.siteId, existingInFurniture.id, furnitureConfig.token);
+              await deleteWebflowEcommerceProduct(furnitureConfig.siteId, existingInFurniture.id, furnitureConfig.token);
               webflowLog("info", { event: "sweep.removed_from_furniture", shopifyProductId, webflowId: existingInFurniture.id });
               await sendDuplicatePlacementEmail(
                 {
@@ -3842,7 +3870,7 @@ async function syncSingleProduct(product, cache, options = {}) {
                   shopifyProductId,
                   previousVertical: "furniture",
                   detectedVertical: "luxury",
-                  webflowIdArchived: existingInFurniture.id,
+                  webflowItemIdRemoved: existingInFurniture.id,
                   sweep: true,
                 },
                 duplicateEmailSentFor
@@ -4288,7 +4316,7 @@ app.post("/sync-all", async (req, res) => {
         if (result.duplicateCorrected && result.duplicateLog) {
           webflowLog("info", {
             event: "sync-all.duplicate_placement",
-            message: "Item was in Furniture but detected as Luxury; archived and re-synced to Luxury. Run continues so cache is saved.",
+            message: "Item was in Furniture but detected as Luxury; furniture listing deleted and re-synced to Luxury. Run continues so cache is saved.",
             ...result.duplicateLog,
           });
           await sendDuplicatePlacementEmail(result.duplicateLog, duplicateEmailSentFor);
