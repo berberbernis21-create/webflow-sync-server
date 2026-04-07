@@ -46,44 +46,43 @@ async function sendDuplicatePlacementEmail(conflictLog, duplicateEmailSentFor) {
     return;
   }
   const recipients = to.split(",").map((e) => e.trim()).filter(Boolean);
-  const subject = `[Webflow Sync] Duplicate placement — wrong listing removed (deleted)`;
-  /** What we deleted: luxury = CMS collection item; furniture = ecommerce product on the furniture site. */
+  const subject = `[Webflow Sync] Product was on the wrong site — we fixed it`;
   const prev = String(previousVertical || "").toLowerCase();
   const intro =
     prev === "luxury"
-      ? "Shopify says this SKU belongs on Furniture & Home. The sync issued a DELETE on the duplicate Luxury (handbags) CMS item so the same product is not offered in both channels."
+      ? "This item used to be listed on Luxury / Handbags, but it really belongs on Furniture & Home. We removed the Handbags copy so the product only appears in one place."
       : prev === "furniture"
-        ? "Shopify says this SKU belongs in Luxury Goods. The sync issued a DELETE on the duplicate Furniture & Home ecommerce product so the same product is not offered in both channels."
-        : "The sync removed a duplicate listing in the wrong Webflow channel (see details below).";
+        ? "This item used to be listed on Furniture & Home, but it really belongs on Luxury / Handbags. We removed the Furniture copy so the product only appears in one place."
+        : "This item was showing in the wrong place. We removed the extra listing so it only appears where it belongs.";
   const confirmLine =
     prev === "luxury"
-      ? "Please confirm in Webflow (Luxury / handbags CMS collection): open the collection, search by the Webflow ID below or by product title, and verify the duplicate CMS item is gone. It should have been deleted—not left archived—by the sync."
+      ? "Please open Webflow for the Handbags / Luxury collection and check that the old listing is gone (search by the ID below or the product name). If delete wasn’t possible, it may be archived instead—either way it should not be live on Handbags."
       : prev === "furniture"
-        ? "Please confirm in Webflow (Furniture ecommerce): Designer → Products, search by Shopify ID or title, and verify that duplicate ecommerce product is gone. It should have been deleted—not archived—by the sync."
-        : "Please confirm in Webflow that the duplicate record for this Shopify product is gone in the channel listed under “Was in”.";
+        ? "Please open Webflow for the Furniture store and check that the old product is gone (search by the ID below or the product name). If delete wasn’t possible, it may be archived instead—either way it should not be live on Furniture."
+        : "Please check Webflow on the side it used to be on and confirm the duplicate is gone.";
   const body = [
     intro,
     "",
-    "Details (from sync logs):",
-    `  Product title: ${productTitle || "(none)"}`,
-    `  Shopify product ID: ${shopifyProductId}`,
-    `  Was in (wrong channel): ${previousVertical}`,
-    `  Now detected as (correct channel): ${detectedVertical}`,
-    `  Webflow record ID removed: ${removedId || "n/a"}`,
+    "Details:",
+    `  Product: ${productTitle || "(none)"}`,
+    `  Store product ID: ${shopifyProductId}`,
+    `  Used to be on: ${previousVertical}`,
+    `  Belongs on: ${detectedVertical}`,
+    `  Webflow ID we removed: ${removedId || "n/a"}`,
     "",
     confirmLine,
     "",
-    "How routing works (one Shopify product → one Webflow channel):",
-    "  • The server classifies each product as Luxury (wearable / designer goods CMS) or Furniture & Home (decor, lighting, furniture, ecommerce site).",
-    "  • Only one live Webflow listing should exist per Shopify product ID. If classification changes, the sync deletes the stale listing in the wrong channel.",
-    "  • Furniture category (Living Room, Accessories, etc.) is decided only after the product is classified as Furniture & Home.",
+    "How this works (short version):",
+    "  • Each product should live on only one of your two sites—Handbags or Furniture.",
+    "  • We look at the title, description, and tags and place it where it fits. If we change our mind later, we remove the old listing so you never have two copies.",
+    "  • Room categories (Living Room, Accessories, and so on) only apply to Furniture items.",
     "",
-    "Naming & Shopify hygiene (reduces mis-routing):",
-    "  • Put the real product type in the title: e.g. “Ceramic Table Lamp”, “Leather Crossbody Bag”, “Dining Side Chair”—not vague “Designer accessory” for a lamp.",
-    "  • Avoid luxury-only tags (bag, wallet, scarf, …) on home goods; avoid furniture-only cues on true handbags.",
-    "  • Keep product type aligned: e.g. home decor / lighting for lamps; use luxury-oriented types only for actual luxury SKUs.",
+    "Tips so products land in the right site:",
+    "  • Say what it is in the name—for example “Table Lamp” or “Crossbody Bag”—not something vague like “Designer accessory” for a lamp.",
+    "  • Don’t put handbag-style tags on home decor, or home-decor tags on real bags.",
+    "  • Pick a product type that matches what you’re selling (lighting for lamps, bags for bags, and so on).",
     "",
-    "If the product changes materially in Shopify (title, description, tags, type), we may re-classify and sync again.",
+    "If you change the listing in a big way later, we may move it again and send another note like this.",
     "",
     "— Lost & Found Webflow Sync",
   ].join("\n");
