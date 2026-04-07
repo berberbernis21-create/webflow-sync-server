@@ -84,7 +84,7 @@ RULES (mandatory):
 - Rug, runner, area rug → "Rugs".
 - Bed, headboard, nightstand, dresser, armoire, vanity → "Bedroom".
 - Lamp, chandelier, sconce, pendant light → "Lighting". **Table lamp** and **desk lamp** are "Lighting", not "LivingRoom" (they are not coffee/side tables).
-- Freestanding **candlesticks**, taper holders, and tabletop **candle holders** (pewter, brass, glass hurricanes, etc.) → "Accessories", not "Lighting" (Lighting is electric / wired fixtures and lamps).
+- Freestanding **candlesticks**, taper holders, and tabletop **candle holders** (pewter, brass, glass hurricanes, etc.) → "Accessories", not "Lighting" (Lighting is electric / wired fixtures and lamps). If **candlestick** is in the title, answer **Accessories** — never LivingRoom because of “dining table” / “centerpiece” in the description.
 - Vases, trays, bowls / **pedestal bowl**, **fruit bowl**, compotes, wood or ceramic decorative bowls, **scroll box** / document box, lidded vanity boxes, pillows, clocks, picture frames (empty), trinkets, **home decor** tabletop pieces → "Accessories" (small decor only — not wall storage furniture). Pedestal != pedestal **dining table**. Copy about dining or living **rooms** does **not** recategorize a bowl to DiningRoom or LivingRoom.
 - **Books** (including encyclopedias, hardcovers, **coffee table books**, art/illustrated books, tomes) → "Accessories", not LivingRoom — "coffee table" in marketing copy refers to display style, not furniture.
 - **Decanters**, wine decanters, crystal or glass pour carafes for serving → "Accessories" (tabletop serveware), not DiningRoom case goods; luxury branding in copy does not change this.

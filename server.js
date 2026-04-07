@@ -1209,7 +1209,7 @@ function shopifyHash(product) {
     images: (product.images || []).map((i) => i.src),
     slug: product.handle,
     dimensions: { width: dimensions.width, height: dimensions.height, length: dimensions.length, weight: dimensions.weight },
-    taxonomyVersion: 3,
+    taxonomyVersion: 4,
   };
 }
 
@@ -1218,7 +1218,7 @@ function contentHashForLLM(product) {
   return {
     title: product.title || "",
     body_html: normalizeHtmlForHash(product.body_html),
-    taxonomyVersion: 3,
+    taxonomyVersion: 4,
   };
 }
 
@@ -1301,6 +1301,17 @@ function applyTableDimensionRules(dims, name, descAndTags) {
 
   if (h <= 22 || d <= 24) return "LivingRoom"; // cannot be dining
   if (h >= 28 && d >= 30 && w >= 40) return "DiningRoom"; // dining table dimensions
+  return null;
+}
+
+/**
+ * Furniture subcategory: LLM often returns LivingRoom when copy mentions dining/coffee tables or “living space”.
+ * When title is unambiguous, override LLM so keyword truth wins (we still call LLM for audit; cost already paid).
+ */
+function furnitureAccessoryCategoryOverrideTitle(title) {
+  const t = (title || "").trim().toLowerCase();
+  if (!t) return null;
+  if (/\bcandlesticks?\b/.test(t) || /\bcandle sticks?\b/.test(t)) return "Accessories";
   return null;
 }
 
@@ -3213,7 +3224,8 @@ async function syncSingleProduct(product, cache, options = {}) {
   if (recoveredFromWebflow) {
     // Cache-missing path: no LLM; use keyword-only category.
     if (vertical === "furniture") {
-      const resolved = detectCategoryFurniture(name, description, getProductTagsArray(product), dimensions);
+      const forcedCat = furnitureAccessoryCategoryOverrideTitle(name);
+      const resolved = forcedCat ?? detectCategoryFurniture(name, description, getProductTagsArray(product), dimensions);
       categoryForMetafield = mapFurnitureCategoryForShopify(resolved);
     } else {
       if (soldNow) categoryForMetafield = "Recently Sold";
@@ -3227,7 +3239,9 @@ async function syncSingleProduct(product, cache, options = {}) {
     }
   } else if (vertical === "furniture") {
     const llmCategory = await classifyCategoryWithLLM(product, "furniture", {}, webflowLog);
-    const resolved = llmCategory?.category ?? detectCategoryFurniture(name, description, getProductTagsArray(product), dimensions);
+    let resolved = llmCategory?.category ?? detectCategoryFurniture(name, description, getProductTagsArray(product), dimensions);
+    const forcedCat = furnitureAccessoryCategoryOverrideTitle(name);
+    if (forcedCat) resolved = forcedCat;
     categoryForMetafield = mapFurnitureCategoryForShopify(resolved);
   } else {
     if (soldNow) {
