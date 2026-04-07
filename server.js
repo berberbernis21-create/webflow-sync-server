@@ -625,7 +625,7 @@ async function findExistingWebflowEcommerceProduct(shopifyProductId, slug, confi
   if (!config?.siteId || !config?.token) return null;
   const slugNorm = slug ? String(slug).trim() : null;
 
-  // Use pre-loaded index when available
+  // Use pre-loaded index when available; if Shopify ID not there, still scan API (index can be stale vs other workers / new rows).
   if (furnitureProductIndex) {
     const byId = furnitureProductIndex.byShopifyId?.get(String(shopifyProductId));
     if (byId) return byId;
@@ -641,7 +641,11 @@ async function findExistingWebflowEcommerceProduct(shopifyProductId, slug, confi
         return byName;
       }
     }
-    return null;
+    webflowLog("info", {
+      event: "furniture_find.index_miss_live_scan",
+      shopifyProductId,
+      message: "Shopify ID not in run index; paginating Webflow products API",
+    });
   }
 
   let offset = 0;
@@ -2176,7 +2180,7 @@ async function findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, confi
 
   webflowLog("info", { event: "match_scan.start", shopifyProductId, shopifyUrl: shopifyUrlNorm, slug: slugNorm });
 
-  // Use pre-loaded index when available (avoids N×page API calls per product)
+  // Use pre-loaded index when available; if no hit, still paginate CMS (index can be stale — avoids duplicate creates).
   if (luxuryItemIndex) {
     const byId = luxuryItemIndex.byShopifyId?.get(String(shopifyProductId));
     if (byId) {
@@ -2197,8 +2201,11 @@ async function findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, confi
         return bySlug;
       }
     }
-    webflowLog("info", { event: "match_scan.not_found", shopifyProductId, source: "index" });
-    return null;
+    webflowLog("info", {
+      event: "match_scan.index_miss_live_scan",
+      shopifyProductId,
+      message: "No match in run index; paginating CMS collection",
+    });
   }
 
   let offset = 0;
@@ -3933,8 +3940,21 @@ async function syncSingleProductCore(product, cache, options = {}) {
     });
 
     // RULE: Never create if an item with this Shopify product ID already exists in the TARGET vertical. Update the existing one; only PATCH if something changed.
-    const alreadyInFurniture = furnitureProductIndex?.byShopifyId?.get(String(shopifyProductId));
-    const alreadyInLuxury = luxuryItemIndex?.byShopifyId?.get(String(shopifyProductId));
+    const guardFurnitureCfg = getWebflowConfig("furniture");
+    const guardLuxuryCfg = getWebflowConfig("luxury");
+    let alreadyInFurniture = furnitureProductIndex?.byShopifyId?.get(String(shopifyProductId)) ?? null;
+    let alreadyInLuxury = luxuryItemIndex?.byShopifyId?.get(String(shopifyProductId)) ?? null;
+    if (!alreadyInFurniture && guardFurnitureCfg?.siteId && guardFurnitureCfg?.token) {
+      alreadyInFurniture = await findExistingWebflowEcommerceProduct(
+        shopifyProductId,
+        slug,
+        guardFurnitureCfg,
+        name
+      );
+    }
+    if (!alreadyInLuxury && guardLuxuryCfg?.collectionId && guardLuxuryCfg?.token) {
+      alreadyInLuxury = await findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, guardLuxuryCfg);
+    }
     const existingFromGuard = (detectedVertical === "furniture" && alreadyInFurniture) ? alreadyInFurniture : (detectedVertical === "luxury" && alreadyInLuxury) ? alreadyInLuxury : null;
     if (existingFromGuard) {
       webflowLog("info", {
