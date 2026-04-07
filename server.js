@@ -756,8 +756,9 @@ async function archiveWebflowEcommerceProduct(siteId, productId, token) {
 }
 
 /**
- * Hard-delete a Furniture ecommerce product (duplicate / wrong-vertical cleanup).
- * Does not archive. 404 = already removed (treated as success). Other errors propagate.
+ * Remove a Furniture ecommerce product (duplicate / wrong-vertical cleanup).
+ * Tries DELETE first; on failure (405/501/network, etc.) falls back to archive (known to work on Webflow).
+ * 404 on DELETE = already removed.
  */
 async function deleteWebflowEcommerceProduct(siteId, productId, token) {
   if (!siteId || !productId || !token) return;
@@ -773,7 +774,14 @@ async function deleteWebflowEcommerceProduct(siteId, productId, token) {
       webflowLog("info", { event: "delete.ecommerce_already_gone", productId, message: "Product already deleted or missing" });
       return;
     }
-    throw err;
+    const msg = err.response?.data?.message || err.message || String(err);
+    webflowLog("warn", {
+      event: "delete.ecommerce_fallback_archive",
+      productId,
+      status: status ?? null,
+      message: msg,
+    });
+    await archiveWebflowEcommerceProduct(siteId, productId, token);
   }
 }
 
