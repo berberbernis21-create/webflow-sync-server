@@ -1209,7 +1209,7 @@ function shopifyHash(product) {
     images: (product.images || []).map((i) => i.src),
     slug: product.handle,
     dimensions: { width: dimensions.width, height: dimensions.height, length: dimensions.length, weight: dimensions.weight },
-    taxonomyVersion: 8,
+    taxonomyVersion: 9,
   };
 }
 
@@ -1218,7 +1218,7 @@ function contentHashForLLM(product) {
   return {
     title: product.title || "",
     body_html: normalizeHtmlForHash(product.body_html),
-    taxonomyVersion: 8,
+    taxonomyVersion: 9,
   };
 }
 
@@ -1339,6 +1339,7 @@ function furnitureAccessoryCategoryOverrideTitle(title) {
     /\bbutlers? trays? tables?\b/.test(t) ||
     /\bbutler'?s trays? tables?\b/.test(t);
   if (!trayIsFurnitureTable && /\btrays?\b/.test(t)) return "Accessories";
+  if (/\bdecanters?\b/.test(t) || /\bcarafes?\b/.test(t)) return "Accessories";
   return null;
 }
 
