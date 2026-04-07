@@ -50,37 +50,50 @@ async function sendDuplicatePlacementEmail(conflictLog, duplicateEmailSentFor) {
   const prev = String(previousVertical || "").toLowerCase();
   const intro =
     prev === "luxury"
-      ? "This item used to be listed on Luxury / Handbags, but it really belongs on Furniture & Home. We removed the Handbags copy so the product only appears in one place."
+      ? "This item was listed on Luxury / Handbags, but we think it belongs on Furniture & Home. We removed the Handbags copy so it only shows in one place for now."
       : prev === "furniture"
-        ? "This item used to be listed on Furniture & Home, but it really belongs on Luxury / Handbags. We removed the Furniture copy so the product only appears in one place."
-        : "This item was showing in the wrong place. We removed the extra listing so it only appears where it belongs.";
+        ? "This item was listed on Furniture & Home, but we think it belongs on Luxury / Handbags. We removed the Furniture copy so it only shows in one place for now."
+        : "This item looked like it was on the wrong site. We removed the extra listing so it only shows where we think it belongs.";
   const confirmLine =
     prev === "luxury"
       ? "Please open Webflow for the Handbags / Luxury collection and check that the old listing is gone (search by the ID below or the product name). If delete wasn’t possible, it may be archived instead—either way it should not be live on Handbags."
       : prev === "furniture"
         ? "Please open Webflow for the Furniture store and check that the old product is gone (search by the ID below or the product name). If delete wasn’t possible, it may be archived instead—either way it should not be live on Furniture."
         : "Please check Webflow on the side it used to be on and confirm the duplicate is gone.";
+  const wrongGuess =
+    "If we got it wrong: update the product in your store admin—especially the title/name so it clearly says what the item is (lamp, vase, tray, handbag, wallet, etc.). Fix tags and product type too if they don’t match the item. Then run your next sync so we can place it correctly.";
+  const mixups =
+    "Things that often cause a wrong site or category:\n" +
+    "  • A vague title (e.g. “Designer accessory” or “Gift item”) when the product is really a lamp, bowl, or bag.\n" +
+    "  • Fancy wording in the description (“luxury,” “designer,” “prestige”) on home decor—fine for marketing, but the title should still say lamp, decanter, pillow, etc.\n" +
+    "  • Showroom copy that keeps saying “living room” or “dining” for a small decor piece; that can pull it toward the wrong room category.\n" +
+    "  • Handbag- or jewelry-style tags left on a furniture / decor SKU (or the opposite: “decor” tags on a real bag).\n" +
+    "  • Product type set to something broad (e.g. “Accessories”) when a more specific type fits better.\n" +
+    "  • Tags or product type copied from another listing and never updated for this SKU.";
   const body = [
     intro,
+    "",
+    wrongGuess,
     "",
     "Details:",
     `  Product: ${productTitle || "(none)"}`,
     `  Store product ID: ${shopifyProductId}`,
     `  Used to be on: ${previousVertical}`,
-    `  Belongs on: ${detectedVertical}`,
+    `  We think it belongs on: ${detectedVertical}`,
     `  Webflow ID we removed: ${removedId || "n/a"}`,
     "",
     confirmLine,
     "",
+    mixups,
+    "",
     "How this works (short version):",
     "  • Each product should live on only one of your two sites—Handbags or Furniture.",
-    "  • We look at the title, description, and tags and place it where it fits. If we change our mind later, we remove the old listing so you never have two copies.",
-    "  • Room categories (Living Room, Accessories, and so on) only apply to Furniture items.",
+    "  • We read the name, description, and tags and make our best guess. If that guess changes later, we remove the old listing so you don’t have two copies.",
+    "  • Room labels like Living Room or Accessories only apply after we’ve treated something as Furniture.",
     "",
-    "Tips so products land in the right site:",
-    "  • Say what it is in the name—for example “Table Lamp” or “Crossbody Bag”—not something vague like “Designer accessory” for a lamp.",
-    "  • Don’t put handbag-style tags on home decor, or home-decor tags on real bags.",
-    "  • Pick a product type that matches what you’re selling (lighting for lamps, bags for bags, and so on).",
+    "Quick tips:",
+    "  • Put the item type in the name: “Table Lamp,” “Crossbody Bag,” “Wine Decanter”—not only “Premium accessory.”",
+    "  • Keep tags and product type lined up with what you’re actually selling.",
     "",
     "If you change the listing in a big way later, we may move it again and send another note like this.",
     "",
