@@ -2248,6 +2248,12 @@ function getFurnitureSoldSinceFieldSlug() {
   return t || "date-sold";
 }
 
+/** Luxury CMS DateTime slug for “Date sold”. Matches Webflow field “Date Sold” → `date-sold`. Override with LUXURY_SOLD_SINCE_FIELD_SLUG. */
+function getLuxurySoldSinceFieldSlug() {
+  const t = (process.env.LUXURY_SOLD_SINCE_FIELD_SLUG || "date-sold").trim();
+  return t || "date-sold";
+}
+
 /** Webflow ecommerce SKU slug for compare-at (API: `compare-at-price`). Override if your site renamed the field. */
 function getFurnitureSkuCompareAtSlug() {
   const t = (process.env.FURNITURE_SKU_COMPARE_AT_SLUG || "compare-at-price").trim();
@@ -2296,11 +2302,14 @@ async function markAsSold(existing, vertical, config) {
       ? { ...base, sold: true }
       : { ...base, category: "Recently Sold", "show-on-webflow": false };
 
-  const luxurySoldSinceSlug = process.env.LUXURY_SOLD_SINCE_FIELD_SLUG;
+  const luxurySoldSinceSlug = getLuxurySoldSinceFieldSlug();
   const furnitureSoldSinceSlug = getFurnitureSoldSinceFieldSlug();
   const iso = new Date().toISOString();
-  if (vertical === "luxury" && luxurySoldSinceSlug && !alreadySoldInWebflow) {
-    fieldData[luxurySoldSinceSlug] = iso;
+  // Luxury: fill Date sold when missing or unparsable (same idea as furniture), plus category + show-on-webflow above.
+  if (vertical === "luxury" && luxurySoldSinceSlug) {
+    if (parseSoldTimestampMsFromWebflowField(fieldData, luxurySoldSinceSlug) == null) {
+      fieldData[luxurySoldSinceSlug] = iso;
+    }
   }
   // Furniture: every sold listing must have a parseable `date-sold` for retention; keep existing if coerce succeeds.
   if (vertical === "furniture" && furnitureSoldSinceSlug) {
@@ -2416,7 +2425,7 @@ function parseSoldTimestampMsFromWebflowField(fieldData, slug) {
 /** Anchor instant for “how long has this been sold”. Furniture: only Webflow `date-sold` (default slug) — no cache fallback so retention matches the field you set in Webflow. */
 function getSoldInstantMs(webflowEntity, cacheEntry, vertical) {
   const fd = webflowEntity?.fieldData || {};
-  const luxSlug = process.env.LUXURY_SOLD_SINCE_FIELD_SLUG;
+  const luxSlug = getLuxurySoldSinceFieldSlug();
   const furnSlug = getFurnitureSoldSinceFieldSlug();
   if (vertical === "luxury" && luxSlug) {
     const ms = parseSoldTimestampMsFromWebflowField(fd, luxSlug);
