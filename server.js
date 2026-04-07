@@ -46,7 +46,7 @@ async function sendDuplicatePlacementEmail(conflictLog, duplicateEmailSentFor) {
     return;
   }
   const recipients = to.split(",").map((e) => e.trim()).filter(Boolean);
-  const subject = `[Webflow Sync] Product was on the wrong site — we fixed it`;
+  const subject = `[Backend / Webflow sync] Product was on the wrong site (we fixed it)`;
   const prev = String(previousVertical || "").toLowerCase();
   const intro =
     prev === "luxury"
@@ -56,19 +56,19 @@ async function sendDuplicatePlacementEmail(conflictLog, duplicateEmailSentFor) {
         : "This item looked like it was on the wrong site. We removed the extra listing so it only shows where we think it belongs.";
   const confirmLine =
     prev === "luxury"
-      ? "Please open Webflow for the Handbags / Luxury collection and check that the old listing is gone (search by the ID below or the product name). If delete wasn’t possible, it may be archived instead—either way it should not be live on Handbags."
+      ? "Please look this item up in the backend / Webflow (Handbags / Luxury). Make sure the old listing is gone: deleted is best, or archived if delete did not work. It should not still be live on Handbags. Use the ID below or the product name to search."
       : prev === "furniture"
-        ? "Please open Webflow for the Furniture store and check that the old product is gone (search by the ID below or the product name). If delete wasn’t possible, it may be archived instead—either way it should not be live on Furniture."
-        : "Please check Webflow on the side it used to be on and confirm the duplicate is gone.";
+        ? "Please look this item up in the backend / Webflow (Furniture store, Products). Make sure the old listing is gone: deleted is best, or archived if delete did not work. It should not still be live on Furniture. Use the ID below or the product name to search."
+        : "Please look the item up in the backend / Webflow on the site it used to be on. Make sure that copy is deleted or archived and not still live.";
   const wrongGuess =
-    "If we got it wrong: update the product in your store admin—especially the title/name so it clearly says what the item is (lamp, vase, tray, handbag, wallet, etc.). Fix tags and product type too if they don’t match the item. Then run your next sync so we can place it correctly.";
+    "If we got it wrong: update the product in Traxia. Change the title so it clearly says what the item is (lamp, vase, tray, handbag, wallet, etc.). Fix tags and product type if they do not match. Then run your next sync so we can place it correctly.";
   const mixups =
     "Things that often cause a wrong site or category:\n" +
-    "  • A vague title (e.g. “Designer accessory” or “Gift item”) when the product is really a lamp, bowl, or bag.\n" +
-    "  • Fancy wording in the description (“luxury,” “designer,” “prestige”) on home decor—fine for marketing, but the title should still say lamp, decanter, pillow, etc.\n" +
-    "  • Showroom copy that keeps saying “living room” or “dining” for a small decor piece; that can pull it toward the wrong room category.\n" +
-    "  • Handbag- or jewelry-style tags left on a furniture / decor SKU (or the opposite: “decor” tags on a real bag).\n" +
-    "  • Product type set to something broad (e.g. “Accessories”) when a more specific type fits better.\n" +
+    "  • A vague title (e.g. \"Designer accessory\" or \"Gift item\") when the product is really a lamp, bowl, or bag.\n" +
+    "  • Fancy words in the description (\"luxury,\" \"designer\") on home decor. That is fine for marketing, but the title should still say lamp, decanter, pillow, etc.\n" +
+    "  • Showroom copy that keeps saying \"living room\" or \"dining\" for a small decor piece. That can pull it toward the wrong room category.\n" +
+    "  • Handbag or jewelry tags left on a furniture or decor item (or decor tags on a real bag).\n" +
+    "  • Product type set to something broad (e.g. \"Accessories\") when a more specific type fits better.\n" +
     "  • Tags or product type copied from another listing and never updated for this SKU.";
   const body = [
     intro,
@@ -80,24 +80,24 @@ async function sendDuplicatePlacementEmail(conflictLog, duplicateEmailSentFor) {
     `  Store product ID: ${shopifyProductId}`,
     `  Used to be on: ${previousVertical}`,
     `  We think it belongs on: ${detectedVertical}`,
-    `  Webflow ID we removed: ${removedId || "n/a"}`,
+    `  Backend / Webflow ID we removed: ${removedId || "n/a"}`,
     "",
     confirmLine,
     "",
     mixups,
     "",
     "How this works (short version):",
-    "  • Each product should live on only one of your two sites—Handbags or Furniture.",
-    "  • We read the name, description, and tags and make our best guess. If that guess changes later, we remove the old listing so you don’t have two copies.",
-    "  • Room labels like Living Room or Accessories only apply after we’ve treated something as Furniture.",
+    "  • Each product should live on only one of your two sites: Handbags or Furniture.",
+    "  • We read the name, description, and tags and make our best guess. If that guess changes later, we remove the old listing in the backend / Webflow so you do not have two copies.",
+    "  • Room labels like Living Room or Accessories only apply after we have treated something as Furniture.",
     "",
     "Quick tips:",
-    "  • Put the item type in the name: “Table Lamp,” “Crossbody Bag,” “Wine Decanter”—not only “Premium accessory.”",
-    "  • Keep tags and product type lined up with what you’re actually selling.",
+    "  • Put the item type in the name, for example Table Lamp, Crossbody Bag, Wine Decanter. Do not use only \"Premium accessory.\"",
+    "  • Keep tags and product type lined up with what you are actually selling.",
     "",
     "If you change the listing in a big way later, we may move it again and send another note like this.",
     "",
-    "— Lost & Found Webflow Sync",
+    "Lost & Found (backend / Webflow sync)",
   ].join("\n");
 
   try {
