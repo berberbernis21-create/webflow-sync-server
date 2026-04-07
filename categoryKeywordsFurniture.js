@@ -110,7 +110,9 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
     "trinket", "objet", "ornament", "decorative", "accent piece",
     "encyclopedia", "encyclopedias", "coffee table book", "coffee table books",
     "hardcover book", "hardcover books", "art book", "art books", "illustrated book", "tome",
-    "book", "books"
+    "book", "books",
+    "lance", "lances", "beaded lance", "skin lance", "deer skin lance",
+    "ceremonial lance", "decorative lance"
   ],
 
   OutdoorPatio: [

@@ -88,6 +88,7 @@ RULES (mandatory):
 - Vases, trays, bowls / **pedestal bowl**, **fruit bowl**, compotes, wood or ceramic decorative bowls, **scroll box** / document box, lidded vanity boxes, pillows, clocks, picture frames (empty), trinkets, **home decor** tabletop pieces → "Accessories" (small decor only — not wall storage furniture). Pedestal != pedestal **dining table**. Copy about dining or living **rooms** does **not** recategorize a bowl to DiningRoom or LivingRoom.
 - **Books** (including encyclopedias, hardcovers, **coffee table books**, art/illustrated books, tomes) → "Accessories", not LivingRoom — "coffee table" in marketing copy refers to display style, not furniture.
 - **Decanters**, wine decanters, crystal or glass pour carafes for serving → "Accessories" (tabletop serveware), not DiningRoom case goods; luxury branding in copy does not change this.
+- Beaded or deerskin **lance**, ceremonial/decorative lance, indigenous-style beaded staff (sold as decor or collectible, not athletic equipment) → "Accessories", not LivingRoom or ArtMirrors sculpture.
 - If unclear, prefer the most specific match; default "Accessories" only when nothing else fits.
 
 Output format only: {"category": "<one of allowed>", "confidence": 0-1, "reasoning": "brief"}`;

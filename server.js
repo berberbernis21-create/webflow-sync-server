@@ -1201,7 +1201,7 @@ function shopifyHash(product) {
     images: (product.images || []).map((i) => i.src),
     slug: product.handle,
     dimensions: { width: dimensions.width, height: dimensions.height, length: dimensions.length, weight: dimensions.weight },
-    taxonomyVersion: 2,
+    taxonomyVersion: 3,
   };
 }
 
@@ -1210,7 +1210,7 @@ function contentHashForLLM(product) {
   return {
     title: product.title || "",
     body_html: normalizeHtmlForHash(product.body_html),
-    taxonomyVersion: 2,
+    taxonomyVersion: 3,
   };
 }
 
