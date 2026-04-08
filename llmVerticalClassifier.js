@@ -24,15 +24,27 @@ const WEARABLE_INDICATORS = [
   "bracelet", "bracelets", "earring", "earrings", "necklace", "necklaces",
   "ring", "rings", "clutch", "tote", "totes", "belt", "belts", "scarf", "scarves",
   "backpack", "backpacks", "jewelry", "jewellery", "pendant", "brooch", "barrette",
+  "satchel", "satchels", "mule", "mules", "boot", "boots", "shoe", "shoes",
+  "sandal", "sandals", "loafer", "loafers", "sneaker", "sneakers",
 ];
 
 /** Strong wearable/footwear: if present in title/type/tags, always LUXURY (never furniture). Backpacks, boots, shoes, mules, bags, etc. */
 const STRONG_LUXURY_SIGNALS = [
-  "backpack", "backpacks", "boot", "boots", "shoe", "shoes", "mule", "mules",
+  "backpack", "backpacks", "boot", "boots", "chelsea", "shoe", "shoes", "mule", "mules",
   "handbag", "handbags", "bag", "bags", "wallet", "wallets", "clutch", "tote", "totes",
-  "belt", "belts", "scarf", "scarves", "satchel", "briefcase", "crossbody", "luggage",
+  "belt", "belts", "scarf", "scarves", "satchel", "satchels", "briefcase", "crossbody", "luggage",
   "earring", "earrings", "bracelet", "bracelets", "necklace", "necklaces", "jewelry", "jewellery",
   "sandal", "sandals", "pump", "pumps", "heel", "heels", "sneaker", "sneakers", "loafer", "loafers", "slide", "slides",
+  "oxford", "oxfords", "espadrille", "espadrilles", "wedge", "wedges", "stiletto", "stilettos",
+  "trainer", "trainers", "footwear", "hobo", "woc", "pochette", "minaudiere",
+];
+
+/** If title/vendor/tags hint these brands, allow vision fallback when text model says HOME_INTERIOR. */
+const LUXURY_HOUSE_SIGNALS = [
+  "louboutin", "christian louboutin", "chloe", "chloé", "chanel", "hermes", "hermès", "gucci",
+  "prada", "fendi", "dior", "balenciaga", "valentino", "saint laurent", "ysl", "celine", "céline",
+  "bottega", "givenchy", "burberry", "versace", "jimmy choo", "manolo", "goyard", "moynat",
+  "delvaux", "valextra", "loewe", "bvlgari", "bulgari", "cartier", "van cleef", "tiffany",
 ];
 // Note: "flat"/"flats" intentionally omitted — matches geometry (e.g. "Flat Oval … Lamp") and home decor; shoe flats still classify via LLM + other shoe terms.
 
@@ -132,17 +144,134 @@ function hasAnyWord(text, terms) {
   });
 }
 
+function getProductImageUrls(product, max = 4) {
+  const imgs = product?.images;
+  if (!Array.isArray(imgs)) return [];
+  return imgs.map((i) => (i && i.src ? String(i.src).trim() : "")).filter(Boolean).slice(0, max);
+}
+
+function luxuryBrandInTitleOrVendor(product) {
+  const { title, vendor } = getProductText(product);
+  const blob = normalizeForVerticalMatch(`${title} ${vendor}`);
+  if (!blob) return false;
+  return LUXURY_HOUSE_SIGNALS.some((brand) => {
+    const b = normalizeForVerticalMatch(brand);
+    return b && blob.includes(b);
+  });
+}
+
+/** Footwear / bag shapes in copy — vision fallback when text model wrongly said HOME_INTERIOR. */
+const VISION_FALLBACK_LEXICAL = [
+  "boot", "boots", "mule", "mules", "satchel", "sneaker", "sneakers", "loafer", "loafers",
+  "sandal", "sandals", "heel", "heels", "pump", "pumps", "oxford", "oxfords", "chelsea",
+  "stiletto", "stilettos", "espadrille", "espadrilles", "footwear", "wedge", "wedges",
+  "handbag", "crossbody", "clutch", "tote", "wallet", "backpack",
+];
+
+function shouldRunVisionVerticalFallback(product, textResult) {
+  if (textResult?.category !== "HOME_INTERIOR") return false;
+  if (process.env.LLM_VERTICAL_VISION_FALLBACK === "0" || process.env.LLM_VERTICAL_VISION_FALLBACK === "false") {
+    return false;
+  }
+  if (getProductImageUrls(product).length === 0) return false;
+
+  const { title, productType, tagsStr, description } = getProductText(product);
+  const head = `${title} ${productType} ${tagsStr}`.toLowerCase();
+  if (hasAnyWord(head, STRONG_LUXURY_SIGNALS)) return true;
+  if (luxuryBrandInTitleOrVendor(product)) return true;
+
+  const descBlob = `${title} ${description}`.toLowerCase();
+  if (hasAnyWord(descBlob, VISION_FALLBACK_LEXICAL)) return true;
+
+  const conf = typeof textResult.confidence === "number" ? textResult.confidence : 0;
+  if (conf > 0 && conf < 0.55) return true;
+
+  return false;
+}
+
+/**
+ * Vision-only vertical check (GPT-4o multimodal). Used when text classifier likely wrong for luxury footwear/bags.
+ */
+async function classifyVerticalWithVision(product, openaiKey, logPayload = {}, logFn = null) {
+  const urls = getProductImageUrls(product, 4);
+  if (!urls.length) return null;
+
+  const { title, productType, vendor } = getProductText(product);
+  const system = `You see product photo(s) from a consignment store with two websites:
+- LUXURY: designer shoes, boots, mules, heels, handbags, totes, satchels, clutches, wallets, jewelry, belts, scarves, sunglasses, small leather goods worn/carried.
+- HOME_INTERIOR: furniture, sofas, tables, dressers, lamps, chandeliers, rugs, mirrors as furniture, wall art as decor objects, home decor.
+
+Rules: Footwear and handbags are ALWAYS LUXURY even if shiny or sculptural. A red carpet stiletto is LUXURY. A table lamp or dining chair is HOME_INTERIOR.
+Reply with JSON only: {"category":"LUXURY" or "HOME_INTERIOR","confidence":0-1,"reasoning":"brief"}`;
+
+  const userText = `Title (may be wrong): ${title || "(none)"}\nType: ${productType || "(none)"}\nVendor: ${vendor || "(none)"}\nClassify from the image(s).`;
+
+  const userContent = [{ type: "text", text: userText }];
+  for (const url of urls) {
+    userContent.push({ type: "image_url", image_url: { url, detail: "low" } });
+  }
+
+  try {
+    const res = await axios.post(
+      OPENAI_API_URL,
+      {
+        model: (process.env.OPENAI_VERTICAL_VISION_MODEL || "gpt-4o").trim() || "gpt-4o",
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: userContent },
+        ],
+        temperature: 0,
+        max_tokens: 200,
+      },
+      {
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${openaiKey}`,
+        },
+        timeout: 45000,
+      }
+    );
+    const raw = res.data?.choices?.[0]?.message?.content;
+    if (logPayload) {
+      logPayload.visionRaw = raw;
+    }
+    const parsed = parseModelOutput(raw);
+    if (logPayload) logPayload.visionParsed = parsed;
+    if (!parsed) return null;
+    if (logFn) {
+      logFn("info", {
+        event: "llm_vertical.vision_fallback",
+        category: parsed.category,
+        confidence: parsed.confidence,
+      });
+    }
+    return parsed;
+  } catch (err) {
+    const message = err.response?.data?.error?.message || err.message || String(err);
+    if (logPayload) logPayload.visionError = message;
+    if (logFn) logFn("warn", { event: "llm_vertical.vision_error", message });
+    return null;
+  }
+}
+
 /**
  * Safety: if product has strong furniture indicators and is NOT clearly wearable/jewelry, force HOME_INTERIOR.
+ * Uses whole-word matching for furniture words — substring checks caused false positives ("table" in "vegetable",
+ * "mirror" in "mirrored leather", etc.) and misrouted satchels/boots/mules.
+ * Strong-luxury / wearable checks use title+type+tags only so description phrases like "dust bag included"
+ * on furniture do not block legitimate downgrades.
  */
 function applyFurnitureSafetyOverride(product, category) {
   if (category !== "LUXURY") return category;
-  const { title, description } = getProductText(product);
-  const combined = `${title} ${description}`.toLowerCase();
-  const hasFurniture = FURNITURE_INDICATORS.some((w) => combined.includes(w));
+  const { title, productType, tagsStr, description } = getProductText(product);
+  const nameAndTypeAndTags = `${title} ${productType} ${tagsStr}`.toLowerCase();
+  const combined = `${nameAndTypeAndTags} ${description}`.toLowerCase();
+
+  if (hasAnyWord(nameAndTypeAndTags, STRONG_LUXURY_SIGNALS)) return category;
+  if (hasAnyWord(nameAndTypeAndTags, WEARABLE_INDICATORS)) return category;
+
+  const hasFurniture = hasAnyWord(combined, FURNITURE_INDICATORS);
   if (!hasFurniture) return category;
-  const hasWearable = hasAnyWord(combined, WEARABLE_INDICATORS);
-  if (hasWearable) return category;
   return "HOME_INTERIOR";
 }
 
@@ -372,13 +501,37 @@ export async function classifyWithLLM(product, logPayload = {}, logFn = null) {
       override = override || "furniture_safety_override";
     }
 
-    const final = {
+    let final = {
       category,
       confidence: parsed.confidence,
       reasoning: parsed.reasoning,
     };
     logPayload.final = final;
     if (override) logPayload.override = override;
+
+    if (shouldRunVisionVerticalFallback(product, final)) {
+      const vision = await classifyVerticalWithVision(product, openaiKey, logPayload, logFn);
+      if (vision && vision.category === "LUXURY" && vision.confidence >= 0.5) {
+        final = {
+          category: "LUXURY",
+          confidence: vision.confidence,
+          reasoning: `[vision] ${vision.reasoning || ""}`.trim(),
+        };
+        logPayload.final = final;
+        const prev = logPayload.override;
+        logPayload.override = prev ? `${prev}+vision_luxury` : "vision_luxury";
+        if (logFn) {
+          logFn("info", {
+            event: "llm_vertical.classified",
+            category: final.category,
+            confidence: final.confidence,
+            override: logPayload.override,
+            reasoning: final.reasoning?.slice(0, 150),
+          });
+        }
+        return final;
+      }
+    }
 
     if (logFn) {
       logFn("info", {

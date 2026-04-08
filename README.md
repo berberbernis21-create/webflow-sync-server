@@ -26,7 +26,9 @@ Dual-pipeline sync: **Luxury / Accessories** and **Furniture & Home**. Each vert
 **LLM vertical classifier (required for sync)**  
 `OPENAI_API_KEY` — OpenAI API key for GPT-based LUXURY vs HOME_INTERIOR classification.  
 `OPENAI_VERTICAL_MODEL` — (optional) Model name, default `gpt-4o-mini`.  
-`LLM_VERTICAL_SECOND_PASS` — (optional) Set to `true` or `1` to run a second validation pass; if it disagrees with the first, result is forced to HOME_INTERIOR.
+`LLM_VERTICAL_SECOND_PASS` — (optional) Set to `true` or `1` to run a second validation pass; if it disagrees with the first, result is forced to HOME_INTERIOR.  
+`LLM_VERTICAL_VISION_FALLBACK` — (optional) Set to `0` or `false` to disable. **Default on:** when the text model returns HOME_INTERIOR but the title/tags/vendor/description suggest luxury footwear, bags, or a known luxury house brand **and** the product has images, the server calls **GPT‑4o vision** on up to 4 images and can override to **LUXURY**.  
+`OPENAI_VERTICAL_VISION_MODEL` — (optional) Vision model, default `gpt-4o`.
 
 **Sold retention (optional)** — **Furniture (ecommerce) only.** After listings have been sold for **`SOLD_RETENTION_DAYS`** (default **4**), each `/sync-all` run **deletes** the ecommerce product from Webflow; if DELETE is not supported, it **archives** as fallback (same helper as duplicate cleanup). **Luxury** is never part of retention: sold items stay in the **Recently Sold** category (and hidden from the main grid) via normal sync — no CMS sweep.  
 `SOLD_RETENTION_DAYS` — Default `4` (furniture only).  
@@ -64,7 +66,7 @@ Example: `FURNITURE_CATEGORY_LIVING_ROOM=507f1f77bcf86cd799439011` (use the real
 
 ## Behavior
 
-- **Vertical detection:** LLM-based (GPT): product title, description, vendor, tags, product type → `LUXURY` or `HOME_INTERIOR` (mapped to `luxury` / `furniture`). Uses semantic understanding; confidence < 0.65 or parse failure → HOME_INTERIOR. Strong furniture indicators force HOME_INTERIOR unless clearly wearable/jewelry. Optional second-pass validation can override LUXURY to HOME_INTERIOR on disagreement.
+- **Vertical detection:** LLM-based (GPT): product title, description, vendor, tags, product type → `LUXURY` or `HOME_INTERIOR` (mapped to `luxury` / `furniture`). Furniture-word matching uses **whole words** (avoids “table” inside “vegetable”, “mirror” inside “mirrored leather”). Strong luxury signals in title/type/tags (boots, mules, satchels, etc.) stay **LUXURY**. Optional **vision fallback** (GPT‑4o + product images) upgrades to LUXURY when text classification is wrong for obvious shoes/handbags. Confidence < 0.65 or parse failure → HOME_INTERIOR. Optional second-pass validation can override LUXURY to HOME_INTERIOR on disagreement.
 - **Luxury:** Syncs to Luxury Webflow collection. SOLD → **Recently Sold** + **show-on-webflow: false**, plus **`date-sold`** (or `LUXURY_SOLD_SINCE_FIELD_SLUG`) set to now if the date field is empty or invalid. Category from luxury keywords.
 - **Furniture:** Syncs to Furniture Webflow collection. SOLD → `sold: true`, item stays visible. Category from furniture keywords (fallback: Accessories). Dimensions (weight + optional metafields) and `dimensions_status` (present | missing) written when applicable.
 - **Inventory → sold:** When the **first variant** goes from in stock to **0** (or negative), Webflow is marked sold on the next sync (`shouldMarkSoldTransition` + `shopifyHash` includes qty). String quantities from Shopify are normalized. If Webflow is wrong but cache says 0, `repair_sold` still PATCHes.
