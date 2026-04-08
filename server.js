@@ -3457,7 +3457,12 @@ async function syncSingleProductCore(product, cache, options = {}) {
   if (vertical === "luxury") {
     const furnitureConfig = getWebflowConfig("furniture");
     if (furnitureConfig?.siteId && furnitureConfig?.token) {
-      const existingInFurniture = await findExistingWebflowEcommerceProduct(shopifyProductId, slugForCleanup, furnitureConfig);
+      const existingInFurniture = await findExistingWebflowEcommerceProduct(
+        shopifyProductId,
+        slugForCleanup,
+        furnitureConfig,
+        product.title || null
+      );
       if (existingInFurniture) {
         const full = await getWebflowEcommerceProductById(furnitureConfig.siteId, existingInFurniture.id, furnitureConfig.token);
         const alreadyArchived = full?.isArchived === true;
