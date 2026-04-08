@@ -3418,7 +3418,9 @@ async function syncSingleProductCore(product, cache, options = {}) {
       webflowItemIdRemoved: cacheEntry.webflowId,
     };
     delete cache[shopifyProductId];
-    const result = await syncSingleProductCore(product, cache, options);
+    // Same as luxury→furniture below: must force LLM + skip stale index recovery — otherwise
+    // furnitureProductIndex still has this Shopify id and we re-sync as furniture without creating luxury.
+    const result = await syncSingleProductCore(product, cache, { ...options, forceReclassify: true });
     return { ...result, duplicateCorrected: !alreadyArchived, duplicateLog };
   }
 
