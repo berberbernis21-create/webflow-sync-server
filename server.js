@@ -2530,22 +2530,45 @@ async function processDisappearedShopifyProduct(goneId, cache, options = {}) {
     return "skip_unknown_status";
   }
   const entry = getCacheEntry(cache, goneId);
-  const vertical = entry?.vertical ?? "luxury";
-  const config = getWebflowConfig(vertical);
+  // No cache (or unknown vertical): do not assume luxury — otherwise delete/disappeared only scans the
+  // luxury CMS and misses Furniture ecommerce (match_scan on CMS → not_found → no Webflow sold).
+  let vertical = entry?.vertical ?? null;
+  let config = vertical ? getWebflowConfig(vertical) : null;
   let existing = null;
 
-  if (entry?.webflowId) {
+  if (entry?.webflowId && config) {
     if (vertical === "furniture" && config.siteId) {
       existing = await getWebflowEcommerceProductById(config.siteId, entry.webflowId, config.token);
-    } else {
+    } else if (vertical === "luxury" && config.collectionId) {
       existing = await getWebflowItemById(entry.webflowId, config);
     }
   }
+  if (!existing && vertical === "furniture" && config?.siteId) {
+    existing = await findExistingWebflowEcommerceProduct(goneId, null, config);
+  }
+  if (!existing && vertical === "luxury" && config?.collectionId) {
+    existing = await findExistingWebflowItem(goneId, null, null, config);
+  }
   if (!existing) {
-    if (vertical === "furniture" && config.siteId) {
-      existing = await findExistingWebflowEcommerceProduct(goneId, null, config);
-    } else {
-      existing = await findExistingWebflowItem(goneId, null, null, config);
+    const furn = getWebflowConfig("furniture");
+    if (furn?.siteId && furn?.token && vertical !== "furniture") {
+      const e = await findExistingWebflowEcommerceProduct(goneId, null, furn);
+      if (e) {
+        existing = e;
+        vertical = "furniture";
+        config = furn;
+      }
+    }
+  }
+  if (!existing) {
+    const lux = getWebflowConfig("luxury");
+    if (lux?.collectionId && lux?.token && vertical !== "luxury") {
+      const e = await findExistingWebflowItem(goneId, null, null, lux);
+      if (e) {
+        existing = e;
+        vertical = "luxury";
+        config = lux;
+      }
     }
   }
 
