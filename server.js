@@ -2408,6 +2408,17 @@ function webflowSkuMoneyFieldToCents(field) {
   return Math.round(n);
 }
 
+/** Suffix for furniture ecommerce product name when marked sold (appended once). */
+const FURNITURE_NO_LONGER_AVAILABLE_SUFFIX = " (No Longer Available)";
+
+function appendFurnitureNoLongerAvailableToTitle(currentTitle) {
+  if (currentTitle == null) return null;
+  const s = String(currentTitle);
+  if (!s.trim()) return null;
+  if (s.includes("(No Longer Available)")) return s;
+  return s + FURNITURE_NO_LONGER_AVAILABLE_SUFFIX;
+}
+
 /* ======================================================
    MARK AS SOLD — per vertical
    Luxury: CMS PATCH. Furniture: ecommerce PATCH (siteId).
@@ -2456,6 +2467,11 @@ async function markAsSold(existing, vertical, config) {
     if (parseSoldTimestampMsFromWebflowField(fieldData, furnitureSoldSinceSlug) == null) {
       fieldData[furnitureSoldSinceSlug] = iso;
     }
+  }
+  // Furniture: append "(No Longer Available)" to product name once (same PATCH as sold + date-sold).
+  if (vertical === "furniture") {
+    const withSuffix = appendFurnitureNoLongerAvailableToTitle(fieldData.name);
+    if (withSuffix != null) fieldData.name = withSuffix;
   }
 
   if (vertical === "furniture" && config.siteId) {
