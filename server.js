@@ -4537,6 +4537,7 @@ function buildWebflowFieldData(opts) {
      JSON includes vertical: "luxury" | "furniture" | "shopify" for clients (e.g. Chrome footer).
    Furniture productUrl: LISTING_PRODUCT_URL_PREFIX + /{slug} (default …lostandfoundresale.com/product).
    Optional: ?source=shopify — Shopify Admin GraphQL (SHOPIFY_STORE + SHOPIFY_ACCESS_TOKEN).
+   POST /api/listing-blurb — Facebook-friendly body via OpenAI (OPENAI_API_KEY; optional OPENAI_LISTING_MODEL=gpt-4o-mini).
 ====================================================== */
 function stripListingDescriptionHtml(html) {
   if (!html || typeof html !== "string") return "";
@@ -4998,6 +4999,103 @@ app.get("/api/listing", async (req, res) => {
 });
 
 /**
+ * POST /api/listing-blurb — Facebook-friendly narrative (OpenAI). Key stays on server: OPENAI_API_KEY.
+ * Body JSON: title, price, vertical, productDescription, pickupAddress, pickupHours, contactEmail,
+ *   isLuxury (bool, optional). Returns { text } plain paragraphs only (no URLs); client appends links.
+ * Model: OPENAI_LISTING_MODEL (default gpt-4o-mini).
+ */
+app.post("/api/listing-blurb", async (req, res) => {
+  const key = (process.env.OPENAI_API_KEY || "").trim();
+  if (!key) {
+    return res.status(503).json({
+      error: "OPENAI_API_KEY is not set on this server",
+      code: "openai_missing",
+    });
+  }
+
+  const body = req.body && typeof req.body === "object" ? req.body : {};
+  const title = String(body.title || "").trim();
+  const price = body.price != null ? String(body.price).trim() : "";
+  const vertical = String(body.vertical || "furniture").trim().toLowerCase();
+  const catalog = String(body.productDescription || "").trim().slice(0, 4000);
+  const pickupAddress = String(body.pickupAddress || "").trim();
+  const pickupHours = String(body.pickupHours || "").trim();
+  const contactEmail = String(body.contactEmail || "info@lostandfoundresale.com").trim();
+  const isLuxury = body.isLuxury === true || vertical === "luxury";
+
+  if (!title && !catalog) {
+    return res.status(400).json({ error: "Provide at least title or productDescription" });
+  }
+
+  const model = (process.env.OPENAI_LISTING_MODEL || "gpt-4o-mini").trim();
+  const variationHint = Math.random().toString(36).slice(2, 11);
+
+  const facts = {
+    variationHint,
+    title: title || "(no title)",
+    askingPriceFacebook: price || null,
+    inventoryKind: isLuxury ? "luxury_handbags_accessories" : "furniture_and_home_resale",
+    pickupAddress: pickupAddress || "15530 N Greenway Hayden Loop Suite 100, Scottsdale, AZ 85260",
+    pickupHours: pickupHours || "MON - SAT 10-5, SUN 12-4",
+    contactEmail,
+    catalogDescription: catalog || "(none supplied)",
+    voiceNotes: isLuxury
+      ? "Same small team as Lost & Found Resale; handbag pieces also sell on our handbags-focused site. Same Scottsdale showroom for pickup."
+      : "Lost & Found Resale does furniture and home goods; same Scottsdale showroom for pickup.",
+  };
+
+  const system = `You write the main body copy for Facebook Marketplace listings for Lost & Found Resale (Scottsdale, AZ). Your job is plain text only: no markdown, no bullet lists, no numbered lists, no emojis. Do not include URLs, domains, or "http" (the listing tool adds official links after your text). Sound warm, local, and human—like a shop owner typing on their phone—not corporate or SEO-stuffed. Vary how you open and how you transition; never reuse the same opening phrase as a default template. Weave in pickup (address + hours), that people can shop online, nationwide shipping, and help with freight on large items, and that questions go to the email—naturally, not as a checklist. If the catalog text mentions AS-IS / wear / condition, reflect that honestly in your own words; do not invent defects or guarantees. Stay under about 1100 characters.`;
+
+  const userMsg = `Write the listing description body using only these facts (JSON). Do not invent specs or brands not implied there.\n${JSON.stringify(facts)}`;
+
+  try {
+    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.9,
+        max_tokens: 650,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: userMsg },
+        ],
+      }),
+    });
+
+    const raw = await resp.text();
+    if (!resp.ok) {
+      webflowLog("error", { event: "api.listing_blurb.openai_http", status: resp.status, body: raw.slice(0, 400) });
+      return res.status(502).json({
+        error: `OpenAI request failed (${resp.status})`,
+        detail: raw.slice(0, 200),
+      });
+    }
+
+    let json;
+    try {
+      json = JSON.parse(raw);
+    } catch {
+      return res.status(502).json({ error: "OpenAI returned non-JSON" });
+    }
+
+    const text = String(json?.choices?.[0]?.message?.content || "").trim();
+    if (!text) {
+      return res.status(502).json({ error: "OpenAI returned empty text" });
+    }
+
+    webflowLog("info", { event: "api.listing_blurb.ok", model, titleLen: title.length, catalogLen: catalog.length });
+    return res.json({ text, model });
+  } catch (err) {
+    webflowLog("error", { event: "api.listing_blurb.error", message: err?.message });
+    return res.status(500).json({ error: err?.message || "listing-blurb failed" });
+  }
+});
+
+/**
  * POST /clear-cache — Remove cache entries for given Shopify product IDs so the next sync will
  * re-resolve vertical and create/update in the correct collection (fixes items stuck as wrong vertical or archived).
  * Body: { "shopifyProductIds": ["9319055327491", "9319054213379", ...] }
@@ -5268,6 +5366,7 @@ app.listen(PORT, () => {
   );
   console.log(`Facebook listing helper (Webflow default): ${scheme}://${host}/api/listing?name=...`);
   console.log(`  Shopify mode: ${scheme}://${host}/api/listing?name=...&source=shopify`);
+  console.log(`  Facebook copy (OpenAI): POST ${scheme}://${host}/api/listing-blurb (needs OPENAI_API_KEY)`);
 });
 
 
