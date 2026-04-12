@@ -4531,7 +4531,8 @@ function buildWebflowFieldData(opts) {
 
 /* ======================================================
    FACEBOOK MARKETPLACE — GET /api/listing?name=...
-   Shopify Admin GraphQL (requires read_products). SHOPIFY_STORE + SHOPIFY_ACCESS_TOKEN.
+   Default: Webflow (Luxury CMS + Furniture ecommerce). Env: WEBFLOW_* / RESALE_*.
+   Optional: ?source=shopify — Shopify Admin GraphQL (SHOPIFY_STORE + SHOPIFY_ACCESS_TOKEN).
 ====================================================== */
 function stripListingDescriptionHtml(html) {
   if (!html || typeof html !== "string") return "";
@@ -4565,6 +4566,8 @@ async function searchShopifyProducts(name) {
         edges {
           node {
             title
+            handle
+            onlineStoreUrl
             descriptionHtml
             images(first: 5) {
               edges {
@@ -4626,12 +4629,256 @@ async function searchShopifyProducts(name) {
     }
   }
 
+  const handle = (node.handle || "").trim();
+  const prefix = (process.env.LISTING_PRODUCT_URL_PREFIX || "https://www.lostandfoundresale.com/product")
+    .trim()
+    .replace(/\/$/, "");
+  let shopifyOnlineUrl = typeof node.onlineStoreUrl === "string" ? node.onlineStoreUrl.trim() : "";
+  let productUrl = "";
+  if (shopifyOnlineUrl && /lostandfoundresale\.com/i.test(shopifyOnlineUrl)) {
+    productUrl = shopifyOnlineUrl;
+  } else if (handle) {
+    productUrl = `${prefix}/${handle}`;
+  }
+
   return {
     title: node.title || "",
     price,
     description: stripListingDescriptionHtml(node.descriptionHtml || ""),
     images,
+    handle: handle || null,
+    productUrl: productUrl || null,
+    shopifyOnlineUrl: shopifyOnlineUrl || null,
   };
+}
+
+/** Image field from Webflow CMS or ecommerce SKU: `{ url }` or raw URL string. */
+function webflowListingAssetUrl(field) {
+  if (field == null) return null;
+  if (typeof field === "string") {
+    const t = field.trim();
+    return /^https?:\/\//i.test(t) ? t : null;
+  }
+  if (typeof field === "object" && field.url) {
+    const t = String(field.url).trim();
+    return t || null;
+  }
+  return null;
+}
+
+function formatLuxuryListingPrice(val) {
+  if (val == null || val === "") return "";
+  if (typeof val === "number" && Number.isFinite(val)) return val.toFixed(2);
+  const n = parseFloat(String(val).trim().replace(/[^0-9.]/g, ""));
+  return Number.isFinite(n) ? n.toFixed(2) : String(val).trim();
+}
+
+function formatSkuCentsAsListingPrice(cents) {
+  if (cents == null || !Number.isFinite(cents)) return "";
+  return (cents / 100).toFixed(2);
+}
+
+function listingProductUrlFromSlug(slug) {
+  const s = String(slug || "").trim();
+  if (!s) return null;
+  const prefix = (process.env.LISTING_PRODUCT_URL_PREFIX || "https://www.lostandfoundresale.com/product")
+    .trim()
+    .replace(/\/$/, "");
+  return `${prefix}/${s}`;
+}
+
+/**
+ * Score 0 = no match. Higher = better. 1000 = exact normalized title match.
+ * Used to pick one listing when searching Webflow luxury CMS + furniture ecommerce.
+ */
+function listingTitleSearchScore(rawQuery, rawName) {
+  const q = normalizeProductNameForIndex(rawQuery);
+  const n = normalizeProductNameForIndex(rawName);
+  if (!q || !n) return 0;
+  if (q === n) return 1000;
+  if (n.includes(q) || q.includes(n)) return 850;
+  const qt = q.split(" ").filter(Boolean);
+  if (!qt.length) return 0;
+  let hits = 0;
+  for (const t of qt) {
+    if (n.split(" ").includes(t)) hits += 1;
+    else if (n.includes(t)) hits += 0.75;
+  }
+  if (hits <= 0) return 0;
+  const ratio = hits / qt.length;
+  return Math.round(200 + hits * 100 + ratio * 400);
+}
+
+function luxuryFieldDataImageUrls(fd) {
+  if (!fd || typeof fd !== "object") return [];
+  const urls = [];
+  const u0 = webflowListingAssetUrl(fd["featured-image"]);
+  if (u0) urls.push(u0);
+  for (let i = 1; i <= 5; i++) {
+    const u = webflowListingAssetUrl(fd[`image-${i}`]);
+    if (u) urls.push(u);
+  }
+  return urls;
+}
+
+function furnitureSkuFieldDataImageUrls(skuFd) {
+  if (!skuFd || typeof skuFd !== "object") return [];
+  const urls = [];
+  const main = webflowListingAssetUrl(skuFd["main-image"]);
+  if (main) urls.push(main);
+  const more = skuFd["more-images"];
+  if (Array.isArray(more)) {
+    for (const m of more) {
+      const u = webflowListingAssetUrl(m);
+      if (u) urls.push(u);
+    }
+  }
+  return urls;
+}
+
+function getListingSearchMinScore() {
+  const n = parseInt(process.env.LISTING_SEARCH_MIN_SCORE || "350", 10);
+  return Number.isFinite(n) && n > 0 ? n : 350;
+}
+
+async function scanLuxuryCmsForListingSearch(query) {
+  const config = getWebflowConfig("luxury");
+  if (!config.collectionId || !config.token) return null;
+  let best = null;
+  let offset = 0;
+  const limit = 100;
+  while (true) {
+    const url = `https://api.webflow.com/v2/collections/${config.collectionId}/items?limit=${limit}&offset=${offset}`;
+    const resp = await axios.get(url, {
+      headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
+    });
+    const items = resp.data?.items ?? [];
+    for (const item of items) {
+      if (item.isArchived === true) continue;
+      const fd = item.fieldData || {};
+      if (webflowListingLooksSold({ fieldData: fd }, "luxury")) continue;
+      const name = fd.name ?? "";
+      const score = listingTitleSearchScore(query, name);
+      if (score <= 0) continue;
+      if (!best || score > best.score) best = { score, fd, name };
+      if (score >= 1000) return best;
+    }
+    if (items.length < limit) break;
+    offset += limit;
+  }
+  return best;
+}
+
+async function scanFurnitureEcommerceForListingSearch(query) {
+  const config = getWebflowConfig("furniture");
+  if (!config.siteId || !config.token) return null;
+  let best = null;
+  let offset = 0;
+  const limit = 100;
+  while (true) {
+    const url = `https://api.webflow.com/v2/sites/${config.siteId}/products?limit=${limit}&offset=${offset}`;
+    const resp = await axios.get(url, {
+      headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
+    });
+    const raw = resp.data?.products ?? resp.data?.items ?? [];
+    const list = Array.isArray(raw) ? raw : [];
+    for (const listItem of list) {
+      const product = listItem.product ?? listItem;
+      if (product.isArchived === true) continue;
+      const fd = product.fieldData || {};
+      const skus = listItem.skus ?? product.skus ?? [];
+      const merged = { ...product, fieldData: fd, skus };
+      if (webflowListingLooksSold(merged, "furniture")) continue;
+      const name = fd.name ?? product.name ?? "";
+      const score = listingTitleSearchScore(query, name);
+      if (score <= 0) continue;
+      if (!best || score > best.score) best = { score, product, fd, skus };
+      if (score >= 1000) return best;
+    }
+    if (list.length < limit) break;
+    offset += limit;
+  }
+  return best;
+}
+
+function mapLuxuryListingSearchHit(hit) {
+  const fd = hit.fd;
+  const slug = String(fd.slug || fd["shopify-slug-2"] || "").trim();
+  const title = String(fd.name || "").trim();
+  const price = formatLuxuryListingPrice(fd.price);
+  const description = stripListingDescriptionHtml(String(fd.description || ""));
+  const images = luxuryFieldDataImageUrls(fd);
+  return {
+    title,
+    price,
+    description,
+    images,
+    handle: slug || null,
+    productUrl: listingProductUrlFromSlug(slug),
+    shopifyOnlineUrl: null,
+  };
+}
+
+async function mapFurnitureListingSearchHit(hit, config) {
+  const { product, fd } = hit;
+  let skus = hit.skus ?? [];
+  let skuFd = skus[0]?.fieldData;
+  let images = furnitureSkuFieldDataImageUrls(skuFd);
+  if (images.length === 0 && product?.id) {
+    const full = await getWebflowEcommerceProductById(config.siteId, product.id, config.token);
+    if (full) {
+      skus = full.skus ?? [];
+      skuFd = skus[0]?.fieldData;
+      images = furnitureSkuFieldDataImageUrls(skuFd);
+    }
+  }
+  const slug = String(fd.slug || fd["shopify-slug-2"] || "").trim();
+  const title = String(fd.name || product.name || "").trim();
+  const description = stripListingDescriptionHtml(String(fd["main-description-2"] || fd.description || ""));
+  const cents = webflowSkuMoneyFieldToCents(skuFd?.price);
+  const price = formatSkuCentsAsListingPrice(cents);
+  return {
+    title,
+    price,
+    description,
+    images,
+    handle: slug || null,
+    productUrl: listingProductUrlFromSlug(slug),
+    shopifyOnlineUrl: null,
+  };
+}
+
+/**
+ * Best-effort title search across Luxury CMS + Furniture ecommerce (same JSON shape as Shopify listing).
+ * @param {string} name
+ */
+async function searchWebflowListing(name) {
+  const q = String(name || "").trim();
+  if (!q) return null;
+  const luxCfg = getWebflowConfig("luxury");
+  const furnCfg = getWebflowConfig("furniture");
+  const canLux = !!(luxCfg.collectionId && luxCfg.token);
+  const canFurn = !!(furnCfg.siteId && furnCfg.token);
+  if (!canLux && !canFurn) {
+    throw new Error(
+      "Webflow listing search not configured (set WEBFLOW_COLLECTION_ID + WEBFLOW_TOKEN and/or RESALE_WEBFLOW_SITE_ID + RESALE_TOKEN)"
+    );
+  }
+  const minScore = getListingSearchMinScore();
+  const [luxHit, furnHit] = await Promise.all([
+    canLux ? scanLuxuryCmsForListingSearch(q) : Promise.resolve(null),
+    canFurn ? scanFurnitureEcommerceForListingSearch(q) : Promise.resolve(null),
+  ]);
+  const luxOk = luxHit && luxHit.score >= minScore;
+  const furnOk = furnHit && furnHit.score >= minScore;
+  if (!luxOk && !furnOk) return null;
+  if (luxOk && furnOk) {
+    if (furnHit.score > luxHit.score) return mapFurnitureListingSearchHit(furnHit, furnCfg);
+    if (luxHit.score > furnHit.score) return mapLuxuryListingSearchHit(luxHit);
+    return mapLuxuryListingSearchHit(luxHit);
+  }
+  if (luxOk) return mapLuxuryListingSearchHit(luxHit);
+  return mapFurnitureListingSearchHit(furnHit, furnCfg);
 }
 
 /* ======================================================
@@ -4648,8 +4895,14 @@ app.get("/api/listing", async (req, res) => {
   if (name === undefined || String(name).trim() === "") {
     return res.status(400).json({ error: "Missing required query param: name" });
   }
+  const source = String(req.query.source || "webflow").trim().toLowerCase();
   try {
-    const listing = await searchShopifyProducts(String(name));
+    let listing = null;
+    if (source === "shopify") {
+      listing = await searchShopifyProducts(String(name));
+    } else {
+      listing = await searchWebflowListing(String(name));
+    }
     if (!listing) {
       return res.status(404).json({ error: "No products found" });
     }
@@ -4658,11 +4911,14 @@ app.get("/api/listing", async (req, res) => {
       price: listing.price,
       description: listing.description,
       images: listing.images,
+      handle: listing.handle,
+      productUrl: listing.productUrl,
+      shopifyOnlineUrl: listing.shopifyOnlineUrl,
     });
   } catch (err) {
-    webflowLog("error", { event: "api.listing", message: err?.message });
+    webflowLog("error", { event: "api.listing", message: err?.message, source });
     return res.status(500).json({
-      error: err?.message || "Shopify request failed",
+      error: err?.message || (source === "shopify" ? "Shopify request failed" : "Webflow request failed"),
     });
   }
 });
@@ -4936,7 +5192,8 @@ app.listen(PORT, () => {
   console.log(
     `Shopify product webhooks: ${scheme}://${host}/webhook/products (create), ${scheme}://${host}/webhook/products/update (update), ${scheme}://${host}/webhook/products/delete (delete)`
   );
-  console.log(`Facebook listing helper: ${scheme}://${host}/api/listing?name=...`);
+  console.log(`Facebook listing helper (Webflow default): ${scheme}://${host}/api/listing?name=...`);
+  console.log(`  Shopify mode: ${scheme}://${host}/api/listing?name=...&source=shopify`);
 });
 
 
