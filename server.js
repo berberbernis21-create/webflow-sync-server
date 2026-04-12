@@ -5082,10 +5082,15 @@ app.post("/api/listing-blurb", async (req, res) => {
       return res.status(502).json({ error: "OpenAI returned non-JSON" });
     }
 
-    const text = String(json?.choices?.[0]?.message?.content || "").trim();
+    let text = String(json?.choices?.[0]?.message?.content || "").trim();
     if (!text) {
       return res.status(502).json({ error: "OpenAI returned empty text" });
     }
+    text = text
+      .replace(/\*\*([^*]+)\*\*/g, "$1")
+      .replace(/\*([^*]+)\*/g, "$1")
+      .replace(/^#{1,6}\s+/gm, "")
+      .trim();
 
     webflowLog("info", { event: "api.listing_blurb.ok", model, titleLen: title.length, catalogLen: catalog.length });
     return res.json({ text, model });
