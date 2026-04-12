@@ -4530,12 +4530,141 @@ function buildWebflowFieldData(opts) {
 }
 
 /* ======================================================
+   FACEBOOK MARKETPLACE — GET /api/listing?name=...
+   Shopify Admin GraphQL (requires read_products). SHOPIFY_STORE + SHOPIFY_ACCESS_TOKEN.
+====================================================== */
+function stripListingDescriptionHtml(html) {
+  if (!html || typeof html !== "string") return "";
+  return html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function shopifyAdminGraphqlListingUrl() {
+  const raw = (process.env.SHOPIFY_STORE || "")
+    .trim()
+    .replace(/^https?:\/\//, "")
+    .replace(/\/$/, "");
+  if (!raw) return null;
+  const host = raw.includes(".") ? raw : `${raw}.myshopify.com`;
+  return `https://${host}/admin/api/2024-01/graphql.json`;
+}
+
+/**
+ * @param {string} name Search string for Shopify `products(query: ...)`
+ * @returns {Promise<{ title: string, price: string, description: string, images: string[] } | null>}
+ */
+async function searchShopifyProducts(name) {
+  const token = (process.env.SHOPIFY_ACCESS_TOKEN || "").trim();
+  const url = shopifyAdminGraphqlListingUrl();
+  if (!url || !token) {
+    throw new Error("Missing SHOPIFY_STORE or SHOPIFY_ACCESS_TOKEN");
+  }
+
+  const query = `
+    query ProductSearch($q: String!) {
+      products(first: 5, query: $q) {
+        edges {
+          node {
+            title
+            descriptionHtml
+            images(first: 5) {
+              edges {
+                node {
+                  url
+                }
+              }
+            }
+            variants(first: 1) {
+              edges {
+                node {
+                  price
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Shopify-Access-Token": token,
+    },
+    body: JSON.stringify({
+      query,
+      variables: { q: name.trim() },
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Shopify HTTP ${res.status}: ${text.slice(0, 300)}`);
+  }
+
+  const json = await res.json();
+  if (json.errors?.length) {
+    throw new Error(json.errors.map((e) => e.message).join("; "));
+  }
+
+  const edges = json.data?.products?.edges || [];
+  if (!edges.length) return null;
+
+  const node = edges[0].node;
+  const images = (node.images?.edges || [])
+    .map((e) => e?.node?.url)
+    .filter(Boolean);
+
+  const priceRaw = node.variants?.edges?.[0]?.node?.price;
+  let price = "";
+  if (priceRaw != null) {
+    if (typeof priceRaw === "object" && priceRaw.amount != null) {
+      price = String(priceRaw.amount);
+    } else {
+      price = String(priceRaw);
+    }
+  }
+
+  return {
+    title: node.title || "",
+    price,
+    description: stripListingDescriptionHtml(node.descriptionHtml || ""),
+    images,
+  };
+}
+
+/* ======================================================
    ROUTES
 ====================================================== */
 app.get("/", (req, res) => {
   res.send(
     "Lost & Found — Clean Sync Server (No Duplicates, Sold Logic Fixed, Deep Scan Matcher + Logging)"
   );
+});
+
+app.get("/api/listing", async (req, res) => {
+  const name = req.query.name;
+  if (name === undefined || String(name).trim() === "") {
+    return res.status(400).json({ error: "Missing required query param: name" });
+  }
+  try {
+    const listing = await searchShopifyProducts(String(name));
+    if (!listing) {
+      return res.status(404).json({ error: "No products found" });
+    }
+    return res.json({
+      title: listing.title,
+      price: listing.price,
+      description: listing.description,
+      images: listing.images,
+    });
+  } catch (err) {
+    webflowLog("error", { event: "api.listing", message: err?.message });
+    return res.status(500).json({
+      error: err?.message || "Shopify request failed",
+    });
+  }
 });
 
 /**
@@ -4807,6 +4936,7 @@ app.listen(PORT, () => {
   console.log(
     `Shopify product webhooks: ${scheme}://${host}/webhook/products (create), ${scheme}://${host}/webhook/products/update (update), ${scheme}://${host}/webhook/products/delete (delete)`
   );
+  console.log(`Facebook listing helper: ${scheme}://${host}/api/listing?name=...`);
 });
 
 
