@@ -5032,10 +5032,9 @@ app.post("/api/listing-blurb", async (req, res) => {
 
   const facts = {
     variationHint,
-    businessName: "Lost & Found Resale",
-    inventoryPitch: isLuxury
-      ? "luxury handbags & accessories (same crew as our Lost & Found Handbags shop)"
-      : "furniture & home decor consignment / resale",
+    sellerContext:
+      "Scottsdale resale listing. Do NOT name the business (no ‘Lost & Found’, no store name, no ‘furniture & home consignment’ tagline) anywhere in your text — that branding lives in the fixed block after your copy.",
+    itemCategoryHint: isLuxury ? "handbags/luxury accessory vibe if it fits the title" : "furniture/home/decor vibe if it fits the title",
     title: title || "(no title)",
     askingPriceFacebook: price || null,
     inventoryKind: isLuxury ? "luxury_handbags_accessories" : "furniture_and_home_resale",
@@ -5045,32 +5044,30 @@ app.post("/api/listing-blurb", async (req, res) => {
     contactEmail,
     catalogDescription: catalog || "(none supplied)",
     structure:
-      "Sentence 1 (lead): say businessName + inventoryPitch in plain FB words, plus what the item is (use title + catalog, no fluff). Then 1–3 short sentences: sell it — condition/wear if catalog mentions it, size/material if obvious, asking price naturally, one light logistics nod (pickup exists in Scottsdale, address/hours in next block; can ship; freight help on big stuff; email for questions). Front-load the branding/type; do not bury who you are.",
+      "Open on the item itself in normal Marketplace wording (e.g. ‘Check out…’, ‘Selling…’, ‘Nice…’) using title + catalog — no shop name, no consignment pitch up front. Then 1–3 short lines: what it is, condition if catalog says so, size if there, asking price casually, Scottsdale pickup + can ship (light). End with one short line that points people to the link/info below and email for questions — do not type the email address; say ‘email me’ / ‘email for questions’ / ‘hit me up by email’.",
     toneTarget:
-      "Facebook Marketplace casual: typed quick, sounds like a real seller. Not a catalog, not a blog. No bullet lists, markdown, emojis, URLs.",
+      "Sounds like a person on Facebook Marketplace, not a store flyer. Short, plain, a little conversational.",
     avoidPhrases:
-      "Do NOT use or echo: Discover, stunning, gorgeous, masterpiece, don't miss out, perfect for anyone, beautifully balances, elevate your space, timeless appeal, artisanal flair, captures the essence, anyone looking to add, yours for just, act fast, limited opportunity, shop with confidence.",
+      "Do NOT use or echo: Lost & Found, Lost and Found, consignment (as a store label), Discover, stunning, gorgeous, masterpiece, don't miss out, perfect for anyone, beautifully balances, elevate your space, timeless appeal, artisanal flair, captures the essence, anyone looking to add, yours for just, act fast, limited opportunity, shop with confidence.",
     logisticsHint:
-      "Do not paste full street + full hours in one sentence. One casual Scottsdale pickup nod is enough; details come in the next listing block.",
+      "One casual Scottsdale pickup nod; address/hours are in the next block. Do not paste full street + full hours in prose.",
     maxBodyChars: 420,
   };
 
-  const system = `You help Lost & Found Resale (Scottsdale, AZ) write ONLY the short main body for a Facebook Marketplace item — what someone types before links get pasted.
+  const system = `You write ONLY the short main body for a Facebook Marketplace item (plain text before a separate block with links and store info).
 
 Output rules:
-- Plain text. No markdown, bullets, numbers, emojis. No URLs or domains.
-- Facebook casual: short, direct, human. Never brochure or catalog voice.
-- OPENING: first sentence must front-load the shop name, what kind of store this is (use inventoryPitch in natural words), and what the listing is — no slow warm-up paragraphs.
-- THEN: tight “sell it” lines — price, useful detail from catalog, light pickup/shipping/email nod per logisticsHint.
-- HARD LENGTH: aim ~200–360 characters; absolute max 420 characters (count spaces). If long, cut filler first.
+- No markdown, bullets, numbers, emojis. No URLs or domains. Do not type an email address.
+- Do NOT open with or include the business name or a ‘we are a consignment shop’ line — jump straight into the item like a normal FB seller.
+- Facebook casual: short, direct. Never brochure voice.
+- Lead with the product; then sell it in a few short phrases (detail, price, pickup/ship). Close by nudging them to check the info/link below and email questions.
+- HARD LENGTH: aim ~180–340 characters; max 420 characters. Trim fluff if long.
 - Only paraphrase catalog facts; never invent damage or brands.
 - At most one exclamation mark in the whole post (usually none).`;
 
-  const userMsg = `Write the body using ONLY the JSON. Follow structure, toneTarget, logisticsHint, avoidPhrases. Respect maxBodyChars.
+  const userMsg = `Write the body using ONLY the JSON. Obey sellerContext and avoidPhrases strictly. Follow structure, toneTarget, logisticsHint. Respect maxBodyChars.
 
-Good shape example (do not copy): "Lost & Found Resale — Scottsdale furniture/home consignment. Free-form basket, good shape, ~7x10x14. Asking $119. Local pickup (details below), can ship, freight help on big stuff. Email for Qs."
-
-Luxury lead example (do not copy): "Lost & Found Resale / our handbags side — vintage Gucci portfolio clutch (see title). Asking $249. Pickup Scottsdale, details below; can ship. Email for Qs."
+Example vibe (do not copy): "Check out this Canyon de Chelly print by Wilson Hurley, framed, about 35.5 x 30.5. Asking $199. Local pickup in Scottsdale, can ship too. Link and full info below — email if you have questions."
 
 Facts JSON:\n${JSON.stringify(facts)}`;
 
