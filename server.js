@@ -5052,13 +5052,13 @@ app.post("/api/listing-blurb", async (req, res) => {
     catalogDescription: catalog || "(none supplied)",
     storePolicyInternalOnly,
     structure:
-      "Open on the item in normal Marketplace wording (e.g. ‘Check out…’, ‘Selling…’) using title + catalogDescription as the factual base — same claims, tight paraphrase; never invent brands, damage, dimensions, or materials not supported by catalog/title. No shop name or consignment pitch up front. 1–3 short lines: what it is, condition/size only if catalog says so, casual price, Scottsdale-area pickup and that shipping or freight may depend on the item (stay vague). End with one short line: full pickup/shipping/freight/checkout wording is on the website at the link below; email for questions — do not type the email address.",
+      "Open on the item in normal Marketplace wording (e.g. ‘Check out…’, ‘Selling…’) using title + catalogDescription as the factual base — same claims, tight paraphrase; never invent brands, damage, dimensions, or materials not supported by catalog/title. No shop name or consignment pitch up front. 1–3 short lines: what it is, condition/size only if catalog says so, casual price, Scottsdale-area pickup, and that shipping options are available (which service applies is on the site — do not hedge with ‘might’ / ‘maybe’ / ‘might be available’). End with one short line: full pickup/shipping/freight/checkout wording is on the website at the link below; email for questions — do not type the email address.",
     toneTarget:
       "Sounds like a person on Facebook Marketplace, not a store flyer. Short, plain, a little conversational.",
     avoidPhrases:
       "Do NOT use or echo: Lost & Found, Lost and Found, consignment (as a store label), Discover, stunning, gorgeous, masterpiece, don't miss out, perfect for anyone, beautifully balances, elevate your space, timeless appeal, artisanal flair, captures the essence, anyone looking to add, yours for just, act fast, limited opportunity, shop with confidence.",
     logisticsHint:
-      "Use storePolicyInternalOnly only to avoid overpromising shipping. Never put phone numbers, dollar amounts, time windows, storage/freight numbers, or broker names in your body. At most one vague clause that details are on the site below.",
+      "Use storePolicyInternalOnly so you do not invent carriers, rates, or guarantees. Say shipping options are available and spelled out on the site link below — never ‘shipping might be available’ or similar hedging. Never put phone numbers, dollar amounts, time windows, storage/freight numbers, or broker names in your body.",
     maxBodyChars: 420,
   };
 
@@ -5072,11 +5072,12 @@ Output rules:
 - HARD LENGTH: aim ~180–340 characters; max 420 characters. Trim fluff if long.
 - Only paraphrase catalog facts; never invent damage or brands.
 - JSON may include storePolicyInternalOnly: treat it as silent context only — never repeat or summarize it in your reply.
+- For shipping: prefer confident wording like ‘shipping options are available’ or ‘shipping’s on the site’ — do not say they might or may be available.
 - At most one exclamation mark in the whole post (usually none).`;
 
   const userMsg = `Write the body using ONLY the JSON. Obey sellerContext and avoidPhrases strictly. Follow structure, toneTarget, logisticsHint. Respect maxBodyChars.
 
-Example vibe (do not copy): "Check out this Canyon de Chelly print by Wilson Hurley, framed, about 35.5 x 30.5. Asking $199. Local pickup in Scottsdale, can ship too. Link and full info below — email if you have questions."
+Example vibe (do not copy): "Check out this Canyon de Chelly print by Wilson Hurley, framed, about 35.5 x 30.5. Asking $199. Local pickup in Scottsdale, shipping options are on the link below. Email if you have questions."
 
 Facts JSON:\n${JSON.stringify(facts)}`;
 
