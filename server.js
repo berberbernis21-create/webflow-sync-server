@@ -5017,7 +5017,7 @@ app.post("/api/listing-blurb", async (req, res) => {
   const title = String(body.title || "").trim();
   const price = body.price != null ? String(body.price).trim() : "";
   const vertical = String(body.vertical || "furniture").trim().toLowerCase();
-  const catalog = String(body.productDescription || "").trim().slice(0, 4000);
+  const catalog = String(body.productDescription || "").trim().slice(0, 2200);
   const pickupAddress = String(body.pickupAddress || "").trim();
   const pickupHours = String(body.pickupHours || "").trim();
   const contactEmail = String(body.contactEmail || "info@lostandfoundresale.com").trim();
@@ -5032,21 +5032,47 @@ app.post("/api/listing-blurb", async (req, res) => {
 
   const facts = {
     variationHint,
+    businessName: "Lost & Found Resale",
+    inventoryPitch: isLuxury
+      ? "luxury handbags & accessories (same crew as our Lost & Found Handbags shop)"
+      : "furniture & home decor consignment / resale",
     title: title || "(no title)",
     askingPriceFacebook: price || null,
     inventoryKind: isLuxury ? "luxury_handbags_accessories" : "furniture_and_home_resale",
+    pickupArea: "Scottsdale (north Scottsdale / Hayden area)",
     pickupAddress: pickupAddress || "15530 N Greenway Hayden Loop Suite 100, Scottsdale, AZ 85260",
     pickupHours: pickupHours || "MON - SAT 10-5, SUN 12-4",
     contactEmail,
     catalogDescription: catalog || "(none supplied)",
-    voiceNotes: isLuxury
-      ? "Same small team as Lost & Found Resale; handbag pieces also sell on our handbags-focused site. Same Scottsdale showroom for pickup."
-      : "Lost & Found Resale does furniture and home goods; same Scottsdale showroom for pickup.",
+    structure:
+      "Sentence 1 (lead): say businessName + inventoryPitch in plain FB words, plus what the item is (use title + catalog, no fluff). Then 1–3 short sentences: sell it — condition/wear if catalog mentions it, size/material if obvious, asking price naturally, one light logistics nod (pickup exists in Scottsdale, address/hours in next block; can ship; freight help on big stuff; email for questions). Front-load the branding/type; do not bury who you are.",
+    toneTarget:
+      "Facebook Marketplace casual: typed quick, sounds like a real seller. Not a catalog, not a blog. No bullet lists, markdown, emojis, URLs.",
+    avoidPhrases:
+      "Do NOT use or echo: Discover, stunning, gorgeous, masterpiece, don't miss out, perfect for anyone, beautifully balances, elevate your space, timeless appeal, artisanal flair, captures the essence, anyone looking to add, yours for just, act fast, limited opportunity, shop with confidence.",
+    logisticsHint:
+      "Do not paste full street + full hours in one sentence. One casual Scottsdale pickup nod is enough; details come in the next listing block.",
+    maxBodyChars: 420,
   };
 
-  const system = `You write the main body copy for Facebook Marketplace listings for Lost & Found Resale (Scottsdale, AZ). Your job is plain text only: no markdown, no bullet lists, no numbered lists, no emojis. Do not include URLs, domains, or "http" (the listing tool adds official links after your text). Sound warm, local, and human—like a shop owner typing on their phone—not corporate or SEO-stuffed. Vary how you open and how you transition; never reuse the same opening phrase as a default template. Weave in pickup (address + hours), that people can shop online, nationwide shipping, and help with freight on large items, and that questions go to the email—naturally, not as a checklist. If the catalog text mentions AS-IS / wear / condition, reflect that honestly in your own words; do not invent defects or guarantees. Stay under about 1100 characters.`;
+  const system = `You help Lost & Found Resale (Scottsdale, AZ) write ONLY the short main body for a Facebook Marketplace item — what someone types before links get pasted.
 
-  const userMsg = `Write the listing description body using only these facts (JSON). Do not invent specs or brands not implied there.\n${JSON.stringify(facts)}`;
+Output rules:
+- Plain text. No markdown, bullets, numbers, emojis. No URLs or domains.
+- Facebook casual: short, direct, human. Never brochure or catalog voice.
+- OPENING: first sentence must front-load the shop name, what kind of store this is (use inventoryPitch in natural words), and what the listing is — no slow warm-up paragraphs.
+- THEN: tight “sell it” lines — price, useful detail from catalog, light pickup/shipping/email nod per logisticsHint.
+- HARD LENGTH: aim ~200–360 characters; absolute max 420 characters (count spaces). If long, cut filler first.
+- Only paraphrase catalog facts; never invent damage or brands.
+- At most one exclamation mark in the whole post (usually none).`;
+
+  const userMsg = `Write the body using ONLY the JSON. Follow structure, toneTarget, logisticsHint, avoidPhrases. Respect maxBodyChars.
+
+Good shape example (do not copy): "Lost & Found Resale — Scottsdale furniture/home consignment. Free-form basket, good shape, ~7x10x14. Asking $119. Local pickup (details below), can ship, freight help on big stuff. Email for Qs."
+
+Luxury lead example (do not copy): "Lost & Found Resale / our handbags side — vintage Gucci portfolio clutch (see title). Asking $249. Pickup Scottsdale, details below; can ship. Email for Qs."
+
+Facts JSON:\n${JSON.stringify(facts)}`;
 
   try {
     const resp = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -5057,8 +5083,8 @@ app.post("/api/listing-blurb", async (req, res) => {
       },
       body: JSON.stringify({
         model,
-        temperature: 0.9,
-        max_tokens: 650,
+        temperature: 0.92,
+        max_tokens: 220,
         messages: [
           { role: "system", content: system },
           { role: "user", content: userMsg },
@@ -5091,6 +5117,13 @@ app.post("/api/listing-blurb", async (req, res) => {
       .replace(/\*([^*]+)\*/g, "$1")
       .replace(/^#{1,6}\s+/gm, "")
       .trim();
+
+    const cap = 440;
+    if (text.length > cap) {
+      const slice = text.slice(0, cap);
+      const breakAt = Math.max(slice.lastIndexOf("."), slice.lastIndexOf("!"), slice.lastIndexOf("?"));
+      text = (breakAt > 80 ? slice.slice(0, breakAt + 1) : slice.replace(/\s+\S*$/, "")).trim();
+    }
 
     webflowLog("info", { event: "api.listing_blurb.ok", model, titleLen: title.length, catalogLen: catalog.length });
     return res.json({ text, model });
