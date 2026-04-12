@@ -4532,6 +4532,10 @@ function buildWebflowFieldData(opts) {
 /* ======================================================
    FACEBOOK MARKETPLACE — GET /api/listing?name=...
    Default: Webflow (Luxury CMS + Furniture ecommerce). Env: WEBFLOW_* / RESALE_*.
+   Luxury productUrl: handbags storefront — https://www.lostandfoundhandbags.com/shop/{item-slug}
+     (data still from luxury Webflow CMS; public shop is separate domain). Override: LISTING_LUXURY_URL_PREFIX.
+     JSON includes vertical: "luxury" | "furniture" | "shopify" for clients (e.g. Chrome footer).
+   Furniture productUrl: LISTING_PRODUCT_URL_PREFIX + /{slug} (default …lostandfoundresale.com/product).
    Optional: ?source=shopify — Shopify Admin GraphQL (SHOPIFY_STORE + SHOPIFY_ACCESS_TOKEN).
 ====================================================== */
 function stripListingDescriptionHtml(html) {
@@ -4649,6 +4653,7 @@ async function searchShopifyProducts(name) {
     handle: handle || null,
     productUrl: productUrl || null,
     shopifyOnlineUrl: shopifyOnlineUrl || null,
+    vertical: "shopify",
   };
 }
 
@@ -4678,13 +4683,73 @@ function formatSkuCentsAsListingPrice(cents) {
   return (cents / 100).toFixed(2);
 }
 
-function listingProductUrlFromSlug(slug) {
+function listingFurnitureProductUrlFromSlug(slug) {
   const s = String(slug || "").trim();
   if (!s) return null;
   const prefix = (process.env.LISTING_PRODUCT_URL_PREFIX || "https://www.lostandfoundresale.com/product")
     .trim()
     .replace(/\/$/, "");
   return `${prefix}/${s}`;
+}
+
+/**
+ * Public base URL for luxury/handbag product links (no trailing slash).
+ * Matches the live Shopify/handbags storefront, e.g.
+ * https://www.lostandfoundhandbags.com/shop/gucci-sherry-line-vintage-brown-leather-portfolio-clutch-as-is-a6066
+ * Override with LISTING_LUXURY_URL_PREFIX (no trailing slash), e.g. https://www.lostandfoundhandbags.com/shop
+ */
+function getLuxuryListingPublicBaseUrl() {
+  const fromEnv = (process.env.LISTING_LUXURY_URL_PREFIX || "").trim().replace(/\/$/, "");
+  if (fromEnv) return fromEnv;
+  return "https://www.lostandfoundhandbags.com/shop";
+}
+
+/** When luxury + furniture both match, nudge toward luxury CMS for handbag-like search text. */
+function luxuryListingWinnerBoost(rawQuery) {
+  const q = normalizeProductNameForIndex(rawQuery);
+  if (!q) return 0;
+  const hints = [
+    "handbag",
+    "handbags",
+    "clutch",
+    "wallet",
+    "wallets",
+    "tote",
+    "totes",
+    "crossbody",
+    "hobo",
+    "satchel",
+    "duffel",
+    "luggage",
+    "backpack",
+    "backpacks",
+    "gucci",
+    "chanel",
+    "prada",
+    "fendi",
+    "dior",
+    "ysl",
+    "versace",
+    "burberry",
+    "vuitton",
+    "louis",
+    "goyard",
+    "balenciaga",
+    "hermes",
+    "celine",
+    "bottega",
+    "chloe",
+    "miumiu",
+    "valentino",
+    "saint laurent",
+    "louboutin",
+    "michael kors",
+    "kate spade",
+  ];
+  for (const t of hints) {
+    if (q.includes(t.trim())) return 200;
+  }
+  return 0;
 }
 
 /**
@@ -4760,7 +4825,7 @@ async function scanLuxuryCmsForListingSearch(query) {
       const name = fd.name ?? "";
       const score = listingTitleSearchScore(query, name);
       if (score <= 0) continue;
-      if (!best || score > best.score) best = { score, fd, name };
+      if (!best || score > best.score) best = { score, fd, name, item };
       if (score >= 1000) return best;
     }
     if (items.length < limit) break;
@@ -4803,19 +4868,25 @@ async function scanFurnitureEcommerceForListingSearch(query) {
 
 function mapLuxuryListingSearchHit(hit) {
   const fd = hit.fd;
-  const slug = String(fd.slug || fd["shopify-slug-2"] || "").trim();
+  const itemFd = hit.item?.fieldData && typeof hit.item.fieldData === "object" ? hit.item.fieldData : {};
+  const slug = String(
+    itemFd.slug || fd.slug || hit.item?.slug || fd["shopify-slug-2"] || ""
+  ).trim();
   const title = String(fd.name || "").trim();
   const price = formatLuxuryListingPrice(fd.price);
   const description = stripListingDescriptionHtml(String(fd.description || ""));
   const images = luxuryFieldDataImageUrls(fd);
+  const base = getLuxuryListingPublicBaseUrl();
+  const productUrl = slug ? `${base}/${slug}` : null;
   return {
     title,
     price,
     description,
     images,
     handle: slug || null,
-    productUrl: listingProductUrlFromSlug(slug),
+    productUrl,
     shopifyOnlineUrl: null,
+    vertical: "luxury",
   };
 }
 
@@ -4843,8 +4914,9 @@ async function mapFurnitureListingSearchHit(hit, config) {
     description,
     images,
     handle: slug || null,
-    productUrl: listingProductUrlFromSlug(slug),
+    productUrl: listingFurnitureProductUrlFromSlug(slug),
     shopifyOnlineUrl: null,
+    vertical: "furniture",
   };
 }
 
@@ -4872,13 +4944,14 @@ async function searchWebflowListing(name) {
   const luxOk = luxHit && luxHit.score >= minScore;
   const furnOk = furnHit && furnHit.score >= minScore;
   if (!luxOk && !furnOk) return null;
+  const luxAdj = luxOk ? luxHit.score + luxuryListingWinnerBoost(q) : 0;
   if (luxOk && furnOk) {
-    if (furnHit.score > luxHit.score) return mapFurnitureListingSearchHit(furnHit, furnCfg);
-    if (luxHit.score > furnHit.score) return mapLuxuryListingSearchHit(luxHit);
+    if (furnHit.score > luxAdj) return await mapFurnitureListingSearchHit(furnHit, furnCfg);
+    if (luxAdj > furnHit.score) return mapLuxuryListingSearchHit(luxHit);
     return mapLuxuryListingSearchHit(luxHit);
   }
   if (luxOk) return mapLuxuryListingSearchHit(luxHit);
-  return mapFurnitureListingSearchHit(furnHit, furnCfg);
+  return await mapFurnitureListingSearchHit(furnHit, furnCfg);
 }
 
 /* ======================================================
@@ -4914,6 +4987,7 @@ app.get("/api/listing", async (req, res) => {
       handle: listing.handle,
       productUrl: listing.productUrl,
       shopifyOnlineUrl: listing.shopifyOnlineUrl,
+      vertical: listing.vertical,
     });
   } catch (err) {
     webflowLog("error", { event: "api.listing", message: err?.message, source });
