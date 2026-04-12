@@ -5050,7 +5050,7 @@ app.post("/api/listing-blurb", async (req, res) => {
     avoidPhrases:
       "Do NOT use or echo: Lost & Found, Lost and Found, consignment (as a store label), Discover, stunning, gorgeous, masterpiece, don't miss out, perfect for anyone, beautifully balances, elevate your space, timeless appeal, artisanal flair, captures the essence, anyone looking to add, yours for just, act fast, limited opportunity, shop with confidence.",
     logisticsHint:
-      "One casual Scottsdale pickup nod if it fits. Do not paste full street + full hours, and do not quote $95/hr, third-party delivery, or full shipping policy in the short body—that text is fixed below the listing.",
+      "One casual nod that pickup/shipping details are in the block below. Do not paste the shop’s full delivery policy, 72-hour rules, storage fees, freight prep, phone number, or $95/hr in your short body—that summary is fixed under the listing.",
     maxBodyChars: 420,
   };
 
