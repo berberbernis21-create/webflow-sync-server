@@ -5030,6 +5030,13 @@ app.post("/api/listing-blurb", async (req, res) => {
   const model = (process.env.OPENAI_LISTING_MODEL || "gpt-4o-mini").trim();
   const variationHint = Math.random().toString(36).slice(2, 11);
 
+  const storePolicyInternalOnly = [
+    "MODEL REFERENCE ONLY — do not paste, quote, bullet, or summarize this in your output. It exists so you never contradict checkout reality.",
+    "Site policy (Lost & Found Resale): eligible items get shipping at checkout from size/weight/handling; larger, fragile, or long-distance may need freight preparation or pickup instead of standard shipping.",
+    "After purchase customers should call 480-588-7006 to confirm pickup/delivery; nights/weekends/holidays may mean slower callback.",
+    "Pickup vs freight prep, local third-party delivery coordination, 72-hour coordination window, storage fees, freight prep fee, 48-hour staging notice, broker names (FreightCenter, FreightQuote, uShip), liftgate/no dock, all sales final, and carrier responsibility after pickup — all detailed on the website; your Facebook body must not restate them.",
+  ].join(" ");
+
   const facts = {
     variationHint,
     sellerContext:
@@ -5043,14 +5050,15 @@ app.post("/api/listing-blurb", async (req, res) => {
     pickupHours: pickupHours || "MON - SAT 10-5, SUN 12-4",
     contactEmail,
     catalogDescription: catalog || "(none supplied)",
+    storePolicyInternalOnly,
     structure:
-      "Open on the item itself in normal Marketplace wording (e.g. ‘Check out…’, ‘Selling…’, ‘Nice…’) using title + catalog — no shop name, no consignment pitch up front. Then 1–3 short lines: what it is, condition if catalog says so, size if there, asking price casually, Scottsdale pickup + can ship (light). End with one short line that points people to the link/info below and email for questions — do not type the email address; say ‘email me’ / ‘email for questions’ / ‘hit me up by email’.",
+      "Open on the item in normal Marketplace wording (e.g. ‘Check out…’, ‘Selling…’) using title + catalogDescription as the factual base — same claims, tight paraphrase; never invent brands, damage, dimensions, or materials not supported by catalog/title. No shop name or consignment pitch up front. 1–3 short lines: what it is, condition/size only if catalog says so, casual price, Scottsdale-area pickup and that shipping or freight may depend on the item (stay vague). End with one short line: full pickup/shipping/freight/checkout wording is on the website at the link below; email for questions — do not type the email address.",
     toneTarget:
       "Sounds like a person on Facebook Marketplace, not a store flyer. Short, plain, a little conversational.",
     avoidPhrases:
       "Do NOT use or echo: Lost & Found, Lost and Found, consignment (as a store label), Discover, stunning, gorgeous, masterpiece, don't miss out, perfect for anyone, beautifully balances, elevate your space, timeless appeal, artisanal flair, captures the essence, anyone looking to add, yours for just, act fast, limited opportunity, shop with confidence.",
     logisticsHint:
-      "One casual nod that pickup/shipping details are in the block below. Do not paste the shop’s full delivery policy, 72-hour rules, storage fees, freight prep, phone number, or $95/hr in your short body—that summary is fixed under the listing.",
+      "Use storePolicyInternalOnly only to avoid overpromising shipping. Never put phone numbers, dollar amounts, time windows, storage/freight numbers, or broker names in your body. At most one vague clause that details are on the site below.",
     maxBodyChars: 420,
   };
 
@@ -5060,9 +5068,10 @@ Output rules:
 - No markdown, bullets, numbers, emojis. No URLs or domains. Do not type an email address.
 - Do NOT open with or include the business name or a ‘we are a consignment shop’ line — jump straight into the item like a normal FB seller.
 - Facebook casual: short, direct. Never brochure voice.
-- Lead with the product; then sell it in a few short phrases (detail, price, pickup/ship). Close by nudging them to check the info/link below and email questions.
+- Lead with the product; ground specifics in catalogDescription + title. Close by nudging them to the site link below for logistics and email for questions.
 - HARD LENGTH: aim ~180–340 characters; max 420 characters. Trim fluff if long.
 - Only paraphrase catalog facts; never invent damage or brands.
+- JSON may include storePolicyInternalOnly: treat it as silent context only — never repeat or summarize it in your reply.
 - At most one exclamation mark in the whole post (usually none).`;
 
   const userMsg = `Write the body using ONLY the JSON. Obey sellerContext and avoidPhrases strictly. Follow structure, toneTarget, logisticsHint. Respect maxBodyChars.
