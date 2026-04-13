@@ -717,7 +717,7 @@ const WEBFLOW_ITEM_REF_REGEX = /^[a-f0-9]{24}$/i;
 async function createWebflowEcommerceProduct(siteId, productFieldData, skuFieldData, token) {
   const url = `https://api.webflow.com/v2/sites/${siteId}/products`;
   const productData = sanitizeCategoryForWebflow({ ...productFieldData });
-  const skuData = sanitizeCategoryForWebflow({ ...skuFieldData });
+  const skuData = stripShopifyCdnFromSkuFieldDataForWebflow(sanitizeCategoryForWebflow({ ...skuFieldData }));
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
   const post = (skuFd) => {
     const payload = {
@@ -785,18 +785,63 @@ function skuFieldDataHasRemoteAssetFields(fieldData) {
   return WEBFLOW_SKU_REMOTE_ASSET_KEYS.some((k) => fieldData[k] != null);
 }
 
+function webflowApiErrorText(err) {
+  const d = err?.response?.data;
+  if (d == null) return String(err?.message || "");
+  if (typeof d === "string") return d;
+  if (typeof d.message === "string") return d.message;
+  try {
+    return JSON.stringify(d);
+  } catch {
+    return String(d);
+  }
+}
+
 /** Webflow returns 400 when their servers cannot pull a remote image into assets. */
 function isWebflowRemoteAssetImportError(err) {
   const status = err.response?.status;
   if (status !== 400 && status !== 422) return false;
-  const msg = String(err.response?.data?.message || err.message || "").toLowerCase();
+  const msg = webflowApiErrorText(err).toLowerCase();
   return (
     msg.includes("remote file failed") ||
     msg.includes("failed to import") ||
     msg.includes("remote asset") ||
     msg.includes("failed to fetch") ||
-    msg.includes("request to https://cdn.shopify.com")
+    msg.includes("cdn.shopify.com")
   );
+}
+
+/** Webflow's importer often fails on Shopify CDN URLs — omit them so PATCH/POST does not trigger remote import. */
+function isLikelyShopifyCdnUrl(url) {
+  if (typeof url !== "string") return false;
+  const u = url.toLowerCase();
+  return (
+    u.includes("cdn.shopify.com") ||
+    u.includes("cdn.shopifycdn.net") ||
+    u.includes("shopify.com/s/files/")
+  );
+}
+
+function stripShopifyCdnFromSkuFieldDataForWebflow(fieldData) {
+  if (!fieldData || typeof fieldData !== "object") return fieldData;
+  const out = { ...fieldData };
+  const main = out["main-image"];
+  if (main && typeof main === "object" && isLikelyShopifyCdnUrl(main.url)) {
+    delete out["main-image"];
+  }
+  const more = out["more-images"];
+  if (Array.isArray(more)) {
+    const filtered = more.filter((item) => !(item && typeof item === "object" && isLikelyShopifyCdnUrl(item.url)));
+    if (filtered.length === 0) delete out["more-images"];
+    else out["more-images"] = filtered;
+  }
+  const dl = out["download-files"];
+  if (Array.isArray(dl)) {
+    const filtered = dl.filter((item) => !(item && typeof item === "object" && isLikelyShopifyCdnUrl(item.url)));
+    if (filtered.length === 0) delete out["download-files"];
+    else out["download-files"] = filtered;
+  }
+  return out;
 }
 
 async function updateWebflowEcommerceProduct(siteId, productId, fieldData, token, _existingProduct = null) {
@@ -818,7 +863,9 @@ async function updateWebflowEcommerceProduct(siteId, productId, fieldData, token
     sku: { fieldData: skuFieldData },
   };
   body.product.fieldData = sanitizeCategoryForWebflow(body.product.fieldData);
-  body.sku.fieldData = sanitizeSkuNumericFields(sanitizeCategoryForWebflow(body.sku.fieldData));
+  body.sku.fieldData = stripShopifyCdnFromSkuFieldDataForWebflow(
+    sanitizeSkuNumericFields(sanitizeCategoryForWebflow(body.sku.fieldData))
+  );
   webflowLog("info", {
     event: "product.patch.calling",
     method: "PATCH",
@@ -862,7 +909,7 @@ async function updateWebflowEcommerceSku(siteId, productId, skuId, fieldData, to
     return;
   }
   const url = `https://api.webflow.com/v2/sites/${siteId}/products/${productId}/skus/${skuId}`;
-  let fd = sanitizeSkuNumericFields({ ...fieldData });
+  let fd = stripShopifyCdnFromSkuFieldDataForWebflow(sanitizeSkuNumericFields({ ...fieldData }));
   const patchHeaders = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
   webflowLog("info", { event: "sku.patch.calling", method: "PATCH", url, productId, skuId, bodyKeys: ["sku"] });
   try {
