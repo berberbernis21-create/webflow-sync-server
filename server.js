@@ -5111,16 +5111,16 @@ app.post("/api/listing-blurb", async (req, res) => {
   const variationHint = Math.random().toString(36).slice(2, 11);
 
   const storePolicyInternalOnly = [
-    "MODEL REFERENCE ONLY — do not paste, quote, bullet, or summarize this in your output. It exists so you never contradict checkout reality.",
+    "MODEL REFERENCE ONLY: do not paste, quote, bullet, or summarize this in your output. It exists so you never contradict checkout reality.",
     "Site policy (Lost & Found Resale): eligible items get shipping at checkout from size/weight/handling; larger, fragile, or long-distance may need freight preparation or pickup instead of standard shipping.",
     "After purchase customers should call 480-588-7006 to confirm pickup/delivery; nights/weekends/holidays may mean slower callback.",
-    "Pickup vs freight prep, local third-party delivery coordination, 72-hour coordination window, storage fees, freight prep fee, 48-hour staging notice, broker names (FreightCenter, FreightQuote, uShip), liftgate/no dock, all sales final, and carrier responsibility after pickup — all detailed on the website; your Facebook body must not restate them.",
+    "Pickup vs freight prep, local third-party delivery coordination, 72-hour coordination window, storage fees, freight prep fee, 48-hour staging notice, broker names (FreightCenter, FreightQuote, uShip), liftgate/no dock, all sales final, and carrier responsibility after pickup: all detailed on the website; your Facebook body must not restate them.",
   ].join(" ");
 
   const facts = {
     variationHint,
     sellerContext:
-      "Scottsdale resale listing. Do NOT name the business (no ‘Lost & Found’, no store name, no ‘furniture & home consignment’ tagline) anywhere in your text — that branding lives in the fixed block after your copy.",
+      "Scottsdale resale listing. Do NOT name the business (no ‘Lost & Found’, no store name, no ‘furniture & home consignment’ tagline) anywhere in your text. That branding lives in the fixed block after your copy.",
     itemCategoryHint: isLuxury ? "handbags/luxury accessory vibe if it fits the title" : "furniture/home/decor vibe if it fits the title",
     title: title || "(no title)",
     askingPriceFacebook: price || null,
@@ -5132,13 +5132,13 @@ app.post("/api/listing-blurb", async (req, res) => {
     catalogDescription: catalog || "(none supplied)",
     storePolicyInternalOnly,
     structure:
-      "Open on the item in normal Marketplace wording (e.g. ‘Check out…’, ‘Selling…’) using title + catalogDescription as the factual base — same claims, tight paraphrase; never invent brands, damage, dimensions, or materials not supported by catalog/title. No shop name or consignment pitch up front. 1–3 short lines: what it is, condition/size only if catalog says so, casual price, Scottsdale-area pickup, and that shipping options are available (which service applies is on the site — do not hedge with ‘might’ / ‘maybe’ / ‘might be available’). End with one short line: full pickup/shipping/freight/checkout wording is on the website at the link below; email for questions — do not type the email address.",
+      "Open on the item in normal Marketplace wording (e.g. ‘Check out…’, ‘Selling…’) using title + catalogDescription as the factual base: same claims, tight paraphrase; never invent brands, damage, dimensions, or materials not supported by catalog/title. No shop name or consignment pitch up front. 1-3 short lines: what it is, condition/size only if catalog says so, casual price, Scottsdale-area pickup, and that shipping options are available (which service applies is on the site; do not hedge with ‘might’ / ‘maybe’ / ‘might be available’). End with one short line: full pickup/shipping/freight/checkout wording is on the website at the link below; email for questions; do not type the email address. Never use an em dash (long dash) in your output; use commas, periods, or ‘and’ instead.",
     toneTarget:
       "Sounds like a person on Facebook Marketplace, not a store flyer. Short, plain, a little conversational.",
     avoidPhrases:
-      "Do NOT use or echo: Lost & Found, Lost and Found, consignment (as a store label), Discover, stunning, gorgeous, masterpiece, don't miss out, perfect for anyone, beautifully balances, elevate your space, timeless appeal, artisanal flair, captures the essence, anyone looking to add, yours for just, act fast, limited opportunity, shop with confidence.",
+      "Do NOT use or echo: Lost & Found, Lost and Found, consignment (as a store label), Discover, stunning, gorgeous, masterpiece, don't miss out, perfect for anyone, beautifully balances, elevate your space, timeless appeal, artisanal flair, captures the essence, anyone looking to add, yours for just, act fast, limited opportunity, shop with confidence. Do not use em-dash punctuation (Unicode U+2014) or en-dash as a clause dash (U+2013); use commas, periods, or ‘and’.",
     logisticsHint:
-      "Use storePolicyInternalOnly so you do not invent carriers, rates, or guarantees. Say shipping options are available and spelled out on the site link below — never ‘shipping might be available’ or similar hedging. Never put phone numbers, dollar amounts, time windows, storage/freight numbers, or broker names in your body.",
+      "Use storePolicyInternalOnly so you do not invent carriers, rates, or guarantees. Say shipping options are available and spelled out on the site link below. Never ‘shipping might be available’ or similar hedging. Never put phone numbers, dollar amounts, time windows, storage/freight numbers, or broker names in your body.",
     maxBodyChars: 420,
   };
 
@@ -5146,13 +5146,14 @@ app.post("/api/listing-blurb", async (req, res) => {
 
 Output rules:
 - No markdown, bullets, numbers, emojis. No URLs or domains. Do not type an email address.
-- Do NOT open with or include the business name or a ‘we are a consignment shop’ line — jump straight into the item like a normal FB seller.
+- Do NOT open with or include the business name or a ‘we are a consignment shop’ line. Jump straight into the item like a normal FB seller.
 - Facebook casual: short, direct. Never brochure voice.
 - Lead with the product; ground specifics in catalogDescription + title. Close by nudging them to the site link below for logistics and email for questions.
-- HARD LENGTH: aim ~180–340 characters; max 420 characters. Trim fluff if long.
+- HARD LENGTH: aim ~180-340 characters; max 420 characters. Trim fluff if long.
 - Only paraphrase catalog facts; never invent damage or brands.
-- JSON may include storePolicyInternalOnly: treat it as silent context only — never repeat or summarize it in your reply.
-- For shipping: prefer confident wording like ‘shipping options are available’ or ‘shipping’s on the site’ — do not say they might or may be available.
+- JSON may include storePolicyInternalOnly: treat it as silent context only. Never repeat or summarize it in your reply.
+- For shipping: prefer confident wording like ‘shipping options are available’ or ‘shipping’s on the site’. Do not say they might or may be available.
+- Never use an em dash in your output (Unicode U+2014, often shown as a long dash between clauses). Use a comma, a period, or the word ‘and’ instead. Same for en dash (U+2013) used as a sentence dash; for number ranges a plain hyphen is OK (e.g. 16-29).
 - At most one exclamation mark in the whole post (usually none).`;
 
   const userMsg = `Write the body using ONLY the JSON. Obey sellerContext and avoidPhrases strictly. Follow structure, toneTarget, logisticsHint. Respect maxBodyChars.
@@ -5203,6 +5204,9 @@ Facts JSON:\n${JSON.stringify(facts)}`;
       .replace(/\*\*([^*]+)\*\*/g, "$1")
       .replace(/\*([^*]+)\*/g, "$1")
       .replace(/^#{1,6}\s+/gm, "")
+      .replace(/\s*\u2014\s*/g, ", ")
+      .replace(/\u2013/g, "-")
+      .replace(/,\s*,/g, ",")
       .trim();
 
     const cap = 440;
