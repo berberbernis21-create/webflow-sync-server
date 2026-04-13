@@ -5075,7 +5075,7 @@ async function searchShopifyProducts(name) {
 
   const query = `
     query ProductSearch($q: String!) {
-      products(first: 5, query: $q) {
+      products(first: 15, query: $q) {
         edges {
           node {
             title
@@ -5127,7 +5127,23 @@ async function searchShopifyProducts(name) {
   const edges = json.data?.products?.edges || [];
   if (!edges.length) return null;
 
-  const node = edges[0].node;
+  let bestNode = null;
+  let bestScore = -1;
+  for (const edge of edges) {
+    const cand = edge?.node;
+    if (!cand) continue;
+    const title = String(cand.title || "").trim();
+    const score = listingTitleSearchScore(name, title);
+    if (score <= 0) continue;
+    const prevTitle = bestNode ? String(bestNode.title || "").trim() : "";
+    if (score > bestScore || (score === bestScore && listingSearchTiePrefer(name, title, prevTitle))) {
+      bestScore = score;
+      bestNode = cand;
+    }
+  }
+  if (!bestNode) return null;
+
+  const node = bestNode;
   const images = (node.images?.edges || [])
     .map((e) => e?.node?.url)
     .filter(Boolean);
@@ -5261,6 +5277,66 @@ function luxuryListingWinnerBoost(rawQuery) {
   return 0;
 }
 
+/** Query tokens this long must appear as substrings in the candidate title (unless stopword), or score is 0. Prevents shared "Design Within Reach Roll & Hill …" from always picking the first catalog hit (e.g. pendant vs chandelier). Override with LISTING_SEARCH_REQUIRED_TOKEN_LEN (3–8). */
+const LISTING_SEARCH_REQUIRED_TOKEN_LEN = (() => {
+  const n = parseInt(process.env.LISTING_SEARCH_REQUIRED_TOKEN_LEN || "4", 10);
+  if (!Number.isFinite(n)) return 4;
+  return Math.min(8, Math.max(3, n));
+})();
+
+const LISTING_SEARCH_QUERY_TOKEN_STOP = new Set([
+  "with",
+  "from",
+  "that",
+  "this",
+  "your",
+  "and",
+  "for",
+  "are",
+  "was",
+  "were",
+  "the",
+  "you",
+  "our",
+  "inch",
+  "inches",
+  "wide",
+  "deep",
+  "tall",
+  "high",
+  "long",
+  "each",
+  "sale",
+]);
+
+function listingQueryTokenRequiresNameMatch(t) {
+  if (!t || t.length < LISTING_SEARCH_REQUIRED_TOKEN_LEN) return false;
+  if (LISTING_SEARCH_QUERY_TOKEN_STOP.has(t)) return false;
+  if (/^\d+$/.test(t)) return false;
+  if (/^\d+x\d+$/i.test(t)) return false;
+  if (/^\d+x\d+x\d+[a-z0-9]*$/i.test(t)) return false;
+  return true;
+}
+
+/** Longest run of matching characters from the start of q against n (case-normalized strings). */
+function listingLongestPrefixCharMatch(q, n) {
+  const lim = Math.min(q.length, n.length);
+  let k = 0;
+  while (k < lim && q[k] === n[k]) k += 1;
+  return k;
+}
+
+/** True if newName should replace oldName when scores are equal (Webflow scan tie-break). */
+function listingSearchTiePrefer(q, newName, oldName) {
+  const n0 = normalizeProductNameForIndex(newName);
+  const n1 = normalizeProductNameForIndex(oldName);
+  const p0 = listingLongestPrefixCharMatch(q, n0);
+  const p1 = listingLongestPrefixCharMatch(q, n1);
+  if (p0 !== p1) return p0 > p1;
+  if (n0.length !== n1.length) return n0.length > n1.length;
+  return n0 < n1;
+}
+
 /**
  * Score 0 = no match. Higher = better. 1000 = exact normalized title match.
  * Used to pick one listing when searching Webflow luxury CMS + furniture ecommerce.
@@ -5270,17 +5346,37 @@ function listingTitleSearchScore(rawQuery, rawName) {
   const n = normalizeProductNameForIndex(rawName);
   if (!q || !n) return 0;
   if (q === n) return 1000;
-  if (n.includes(q) || q.includes(n)) return 850;
-  const qt = q.split(" ").filter(Boolean);
-  if (!qt.length) return 0;
-  let hits = 0;
-  for (const t of qt) {
-    if (n.split(" ").includes(t)) hits += 1;
-    else if (n.includes(t)) hits += 0.75;
+
+  const qTokens = q.split(/\s+/).filter(Boolean);
+  const required = qTokens.filter(listingQueryTokenRequiresNameMatch);
+  if (required.length > 0) {
+    for (const t of required) {
+      if (!n.includes(t)) return 0;
+    }
   }
-  if (hits <= 0) return 0;
-  const ratio = hits / qt.length;
-  return Math.round(200 + hits * 100 + ratio * 400);
+
+  let base;
+  if (n.includes(q) || q.includes(n)) {
+    base = 850;
+    if (n.includes(q) && q.length >= 8) {
+      base += Math.min(50, Math.floor(q.length / 5));
+    }
+  } else {
+    const qt = qTokens;
+    if (!qt.length) return 0;
+    let hits = 0;
+    for (const t of qt) {
+      if (n.split(" ").includes(t)) hits += 1;
+      else if (n.includes(t)) hits += 0.75;
+    }
+    if (hits <= 0) return 0;
+    const ratio = hits / qt.length;
+    base = Math.round(200 + hits * 100 + ratio * 400);
+  }
+
+  const prefix = listingLongestPrefixCharMatch(q, n);
+  const tie = Math.min(55, Math.floor(prefix / 3));
+  return Math.min(999, base + tie);
 }
 
 function luxuryFieldDataImageUrls(fd) {
@@ -5372,7 +5468,13 @@ async function scanLuxuryCmsForListingSearch(query) {
       const name = fd.name ?? "";
       const score = listingTitleSearchScore(query, name);
       if (score <= 0) continue;
-      if (!best || score > best.score) best = { score, fd, name, item };
+      if (
+        !best ||
+        score > best.score ||
+        (score === best.score && listingSearchTiePrefer(query, name, best.name || ""))
+      ) {
+        best = { score, fd, name, item };
+      }
       if (score >= 1000) return best;
     }
     if (items.length < limit) break;
@@ -5404,7 +5506,13 @@ async function scanFurnitureEcommerceForListingSearch(query) {
       const name = fd.name ?? product.name ?? "";
       const score = listingTitleSearchScore(query, name);
       if (score <= 0) continue;
-      if (!best || score > best.score) best = { score, product, fd, skus };
+      if (
+        !best ||
+        score > best.score ||
+        (score === best.score && listingSearchTiePrefer(query, name, best.name || ""))
+      ) {
+        best = { score, product, fd, skus, name };
+      }
       if (score >= 1000) return best;
     }
     if (list.length < limit) break;
