@@ -718,15 +718,30 @@ async function createWebflowEcommerceProduct(siteId, productFieldData, skuFieldD
   const url = `https://api.webflow.com/v2/sites/${siteId}/products`;
   const productData = sanitizeCategoryForWebflow({ ...productFieldData });
   const skuData = sanitizeCategoryForWebflow({ ...skuFieldData });
-  const payload = {
-    product: { fieldData: productData },
-    sku: { fieldData: skuData },
-    publishStatus: "staging",
+  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+  const post = (skuFd) => {
+    const payload = {
+      product: { fieldData: productData },
+      sku: { fieldData: sanitizeSkuNumericFields(sanitizeCategoryForWebflow({ ...skuFd })) },
+      publishStatus: "staging",
+    };
+    return axios.post(url, payload, { headers });
   };
-  const response = await axios.post(url, payload, {
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-  });
-  return response.data;
+  try {
+    const response = await post(skuData);
+    return response.data;
+  } catch (err) {
+    if (isWebflowRemoteAssetImportError(err) && skuFieldDataHasRemoteAssetFields(skuData)) {
+      webflowLog("warn", {
+        event: "create.ecommerce.remote_import_retry_without_sku_images",
+        siteId,
+        message: err.response?.data?.message || err.message,
+      });
+      const response = await post(stripRemoteImageFieldsFromSkuFieldData(skuData));
+      return response.data;
+    }
+    throw err;
+  }
 }
 
 function sanitizeCategoryForWebflow(fieldData) {
@@ -751,6 +766,37 @@ function sanitizeSkuNumericFields(fieldData) {
     }
   }
   return out;
+}
+
+/** SKU fields that make Webflow fetch remote URLs (Shopify CDN often fails their importer). */
+const WEBFLOW_SKU_REMOTE_ASSET_KEYS = ["main-image", "more-images", "download-files"];
+
+function stripRemoteImageFieldsFromSkuFieldData(fieldData) {
+  if (!fieldData || typeof fieldData !== "object") return fieldData;
+  const out = { ...fieldData };
+  for (const k of WEBFLOW_SKU_REMOTE_ASSET_KEYS) {
+    delete out[k];
+  }
+  return out;
+}
+
+function skuFieldDataHasRemoteAssetFields(fieldData) {
+  if (!fieldData || typeof fieldData !== "object") return false;
+  return WEBFLOW_SKU_REMOTE_ASSET_KEYS.some((k) => fieldData[k] != null);
+}
+
+/** Webflow returns 400 when their servers cannot pull a remote image into assets. */
+function isWebflowRemoteAssetImportError(err) {
+  const status = err.response?.status;
+  if (status !== 400 && status !== 422) return false;
+  const msg = String(err.response?.data?.message || err.message || "").toLowerCase();
+  return (
+    msg.includes("remote file failed") ||
+    msg.includes("failed to import") ||
+    msg.includes("remote asset") ||
+    msg.includes("failed to fetch") ||
+    msg.includes("request to https://cdn.shopify.com")
+  );
 }
 
 async function updateWebflowEcommerceProduct(siteId, productId, fieldData, token, _existingProduct = null) {
@@ -781,9 +827,29 @@ async function updateWebflowEcommerceProduct(siteId, productId, fieldData, token
     bodyKeys: ["product", "sku"],
     preserveArchived,
   });
-  await axios.patch(url, body, {
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-  });
+  const patchHeaders = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+  try {
+    await axios.patch(url, body, { headers: patchHeaders });
+  } catch (err) {
+    if (isWebflowRemoteAssetImportError(err) && body.sku?.fieldData && skuFieldDataHasRemoteAssetFields(body.sku.fieldData)) {
+      const strippedSku = stripRemoteImageFieldsFromSkuFieldData(body.sku.fieldData);
+      webflowLog("warn", {
+        event: "product.patch.remote_import_failed_retry_without_sku_images",
+        productId,
+        message: err.response?.data?.message || err.message,
+      });
+      await axios.patch(
+        url,
+        {
+          ...body,
+          sku: { fieldData: sanitizeSkuNumericFields(sanitizeCategoryForWebflow(strippedSku)) },
+        },
+        { headers: patchHeaders }
+      );
+      return;
+    }
+    throw err;
+  }
 }
 
 async function updateWebflowEcommerceSku(siteId, productId, skuId, fieldData, token) {
@@ -796,11 +862,25 @@ async function updateWebflowEcommerceSku(siteId, productId, skuId, fieldData, to
     return;
   }
   const url = `https://api.webflow.com/v2/sites/${siteId}/products/${productId}/skus/${skuId}`;
-  const body = { sku: { fieldData: sanitizeSkuNumericFields(fieldData) } };
+  let fd = sanitizeSkuNumericFields({ ...fieldData });
+  const patchHeaders = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
   webflowLog("info", { event: "sku.patch.calling", method: "PATCH", url, productId, skuId, bodyKeys: ["sku"] });
-  await axios.patch(url, body, {
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-  });
+  try {
+    await axios.patch(url, { sku: { fieldData: fd } }, { headers: patchHeaders });
+  } catch (err) {
+    if (isWebflowRemoteAssetImportError(err) && skuFieldDataHasRemoteAssetFields(fd)) {
+      webflowLog("warn", {
+        event: "sku.patch.remote_import_failed_retry_without_images",
+        productId,
+        skuId,
+        message: err.response?.data?.message || err.message,
+      });
+      fd = sanitizeSkuNumericFields(stripRemoteImageFieldsFromSkuFieldData(fd));
+      await axios.patch(url, { sku: { fieldData: fd } }, { headers: patchHeaders });
+      return;
+    }
+    throw err;
+  }
 }
 
 /** Sync default SKU for ecommerce product (price, images, weight, dimensions). */
