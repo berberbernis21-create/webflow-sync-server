@@ -5715,6 +5715,18 @@ app.post("/api/listing-blurb", async (req, res) => {
 
   const model = (process.env.OPENAI_LISTING_MODEL || "gpt-4o-mini").trim();
   const variationHint = Math.random().toString(36).slice(2, 11);
+  const structureGuide = isLuxury
+    ? "Open with the item type and standout style details in premium but natural Marketplace wording. Do NOT include explicit brand names/trademarks. Use 2-4 short lines grounded in title + catalogDescription: condition callout, materials, hardware/finish, silhouette/style, and practical use if supported by catalog facts. Mention authentication documentation is available. Keep pickup in Scottsdale and note shipping options are available with full logistics on the site link below. End with a confident natural call to action to message now or email for details. Never use an em dash; use commas or periods."
+    : "Open on the item in normal Marketplace wording (e.g. 'Check out...', 'Selling...') using title + catalogDescription as the factual base: same claims, tight paraphrase; never invent brands, damage, dimensions, or materials not supported by catalog/title. No shop name or consignment pitch up front. 1-3 short lines: what it is, condition/size only if catalog says so, casual price, Scottsdale-area pickup, and that shipping options are available (which service applies is on the site; do not hedge with 'might' / 'maybe' / 'might be available'). End with one short line: full pickup/shipping/freight/checkout wording is on the website at the link below; email for questions; do not type the email address. Never use an em dash (long dash) in your output; use commas, periods, or 'and' instead.";
+  const toneGuide = isLuxury
+    ? "Premium, confident, and trustworthy without sounding corporate. Short lines. No hype language."
+    : "Sounds like a person on Facebook Marketplace, not a store flyer. Short, plain, a little conversational.";
+  const avoidPhraseGuide = isLuxury
+    ? "Do NOT use or echo: Lost & Found, Lost and Found, consignment (as a store label), Discover, stunning, gorgeous, masterpiece, don't miss out, perfect for anyone, beautifully balances, elevate your space, timeless appeal, artisanal flair, captures the essence, anyone looking to add, yours for just, act fast, limited opportunity, shop with confidence. Do not use explicit brand/trademark names from sourceTitle or catalogDescription in output. Do not use em-dash punctuation (Unicode U+2014) or en-dash as a clause dash (U+2013); use commas, periods, or 'and'."
+    : "Do NOT use or echo: Lost & Found, Lost and Found, consignment (as a store label), Discover, stunning, gorgeous, masterpiece, don't miss out, perfect for anyone, beautifully balances, elevate your space, timeless appeal, artisanal flair, captures the essence, anyone looking to add, yours for just, act fast, limited opportunity, shop with confidence. Do not use em-dash punctuation (Unicode U+2014) or en-dash as a clause dash (U+2013); use commas, periods, or 'and'.";
+  const logisticsGuide = isLuxury
+    ? "Use storePolicyInternalOnly so you do not invent carriers, rates, or guarantees. Keep logistics short: shipping options are available and full rules are on the site link below. Never add phone numbers, dollar amounts, time windows, storage/freight numbers, or broker names in the body."
+    : "Use storePolicyInternalOnly so you do not invent carriers, rates, or guarantees. Say shipping options are available and spelled out on the site link below. Never 'shipping might be available' or similar hedging. Never put phone numbers, dollar amounts, time windows, storage/freight numbers, or broker names in your body.";
 
   const storePolicyInternalOnly = [
     "MODEL REFERENCE ONLY: do not paste, quote, bullet, or summarize this in your output. It exists so you never contradict checkout reality.",
@@ -5737,14 +5749,10 @@ app.post("/api/listing-blurb", async (req, res) => {
     contactEmail,
     catalogDescription: catalog || "(none supplied)",
     storePolicyInternalOnly,
-    structure:
-      "Open on the item in normal Marketplace wording (e.g. ‘Check out…’, ‘Selling…’) using title + catalogDescription as the factual base: same claims, tight paraphrase; never invent brands, damage, dimensions, or materials not supported by catalog/title. No shop name or consignment pitch up front. 1-3 short lines: what it is, condition/size only if catalog says so, casual price, Scottsdale-area pickup, and that shipping options are available (which service applies is on the site; do not hedge with ‘might’ / ‘maybe’ / ‘might be available’). End with one short line: full pickup/shipping/freight/checkout wording is on the website at the link below; email for questions; do not type the email address. Never use an em dash (long dash) in your output; use commas, periods, or ‘and’ instead.",
-    toneTarget:
-      "Sounds like a person on Facebook Marketplace, not a store flyer. Short, plain, a little conversational.",
-    avoidPhrases:
-      "Do NOT use or echo: Lost & Found, Lost and Found, consignment (as a store label), Discover, stunning, gorgeous, masterpiece, don't miss out, perfect for anyone, beautifully balances, elevate your space, timeless appeal, artisanal flair, captures the essence, anyone looking to add, yours for just, act fast, limited opportunity, shop with confidence. Do not use em-dash punctuation (Unicode U+2014) or en-dash as a clause dash (U+2013); use commas, periods, or ‘and’.",
-    logisticsHint:
-      "Use storePolicyInternalOnly so you do not invent carriers, rates, or guarantees. Say shipping options are available and spelled out on the site link below. Never ‘shipping might be available’ or similar hedging. Never put phone numbers, dollar amounts, time windows, storage/freight numbers, or broker names in your body.",
+    structure: structureGuide,
+    toneTarget: toneGuide,
+    avoidPhrases: avoidPhraseGuide,
+    logisticsHint: logisticsGuide,
     maxBodyChars: 420,
   };
 
@@ -5757,6 +5765,7 @@ Output rules:
 - Lead with the product; ground specifics in catalogDescription + title. Close by nudging them to the site link below for logistics and email for questions.
 - HARD LENGTH: aim ~180-340 characters; max 420 characters. Trim fluff if long.
 - Only paraphrase catalog facts; never invent damage or brands.
+- If inventoryKind is luxury_handbags_accessories: never include explicit brand or trademark names in output text.
 - JSON may include storePolicyInternalOnly: treat it as silent context only. Never repeat or summarize it in your reply.
 - For shipping: prefer confident wording like ‘shipping options are available’ or ‘shipping’s on the site’. Do not say they might or may be available.
 - Never use an em dash in your output (Unicode U+2014, often shown as a long dash between clauses). Use a comma, a period, or the word ‘and’ instead. Same for en dash (U+2013) used as a sentence dash; for number ranges a plain hyphen is OK (e.g. 16-29).
