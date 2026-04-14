@@ -5592,10 +5592,29 @@ async function searchWebflowListing(name) {
     );
   }
   const minScore = getListingSearchMinScore();
-  const [luxHit, furnHit] = await Promise.all([
+  const [luxRes, furnRes] = await Promise.allSettled([
     canLux ? scanLuxuryCmsForListingSearch(q) : Promise.resolve(null),
     canFurn ? scanFurnitureEcommerceForListingSearch(q) : Promise.resolve(null),
   ]);
+  const luxHit = luxRes.status === "fulfilled" ? luxRes.value : null;
+  const furnHit = furnRes.status === "fulfilled" ? furnRes.value : null;
+  if (luxRes.status === "rejected") {
+    webflowLog("warn", {
+      event: "listing_search.webflow_luxury_failed",
+      query: q.slice(0, 120),
+      message: luxRes.reason?.message || String(luxRes.reason || "unknown"),
+    });
+  }
+  if (furnRes.status === "rejected") {
+    webflowLog("warn", {
+      event: "listing_search.webflow_furniture_failed",
+      query: q.slice(0, 120),
+      message: furnRes.reason?.message || String(furnRes.reason || "unknown"),
+    });
+  }
+  if (luxRes.status === "rejected" && furnRes.status === "rejected") {
+    throw new Error("Webflow listing search failed (luxury + furniture endpoints unavailable)");
+  }
   const luxOk = luxHit && luxHit.score >= minScore;
   const furnOk = furnHit && furnHit.score >= minScore;
   if (!luxOk && !furnOk) return null;
@@ -5628,8 +5647,21 @@ app.get("/api/listing", async (req, res) => {
     let listing = null;
     if (source === "shopify") {
       listing = await searchShopifyProducts(String(name));
+      if (!listing) {
+        listing = await searchWebflowListing(String(name));
+      }
     } else {
-      listing = await searchWebflowListing(String(name));
+      try {
+        listing = await searchWebflowListing(String(name));
+      } catch (webflowErr) {
+        webflowLog("warn", {
+          event: "api.listing.webflow_fallback_shopify",
+          message: webflowErr?.message || "webflow listing search failed",
+        });
+      }
+      if (!listing) {
+        listing = await searchShopifyProducts(String(name));
+      }
     }
     if (!listing) {
       return res.status(404).json({ error: "No products found" });
