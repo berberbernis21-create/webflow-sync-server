@@ -1,6 +1,10 @@
 const API_SERVER = "https://webflow-sync-server.onrender.com";
 const API_LISTING = `${API_SERVER}/api/listing?name=`;
 
+/** First line of pickup footer (Facebook + Craigslist); matches store wayfinding. */
+const PICKUP_LANDMARK_LINE =
+  "Pickup is right by Scottsdale Quarter in the Airpark at Lost and Found Resale Interiors.";
+
 function showQuickLinks({ productUrl, storeUrl, handbagsShopUrl, isLuxury }) {
   const panel = document.getElementById("quickLinks");
   const qlProduct = document.getElementById("qlProduct");
@@ -180,6 +184,97 @@ document.getElementById("start").addEventListener("click", async () => {
     return;
   }
 
+  if (platform === "craigslist") {
+    const craigslistTabUrl = tab.url || "";
+    if (!craigslistTabUrl.includes("craigslist.org")) {
+      console.warn("Listing extension: open craigslist.org in the tab to autofill");
+      return;
+    }
+
+    let images = [];
+    if (Array.isArray(data.images) && data.images.length) {
+      images = await fetchImagesForListing(data.images);
+    }
+
+    const titleAndDesc = `${data.title || ""} ${data.description || ""}`;
+    const craigslistCondition = /\bas\s*is\b/i.test(titleAndDesc) ? "fair" : "good";
+
+    const craigslistBlurbFacts = {
+      title: data.title || "",
+      price: data.price != null ? String(data.price) : "",
+      vertical: data.vertical || "furniture",
+      productDescription: data.description || "",
+      pickupAddress: "15530 N Greenway Hayden Loop Suite 100, Scottsdale, AZ 85260",
+      pickupHours: "MON - SAT 10-5, SUN 12-4",
+      contactEmail: "info@lostandfoundresale.com",
+      isLuxury,
+      outputChannel: "craigslist",
+    };
+    const craigslistNarrative = await fetchFacebookListingNarrative(craigslistBlurbFacts);
+    const catalogFallback = String(data.description || "").trim();
+    let narrative =
+      (craigslistNarrative && String(craigslistNarrative).trim()) ||
+      catalogFallback ||
+      "See photos. Pickup in Scottsdale. Reply through Craigslist if you want it.";
+    if (isLuxury) {
+      narrative = sanitizeLuxuryFacebookDescription(narrative);
+    }
+
+    const pickupAddress = "15530 N Greenway Hayden Loop Suite 100, Scottsdale, AZ 85260";
+    const pickupHours = "MON - SAT 10-5, SUN 12-4";
+    const pickupBlock = `${PICKUP_LANDMARK_LINE}\n${pickupAddress}\nStore hours: ${pickupHours}`;
+    const linksFooter = buildFacebookLinksFooter({
+      isLuxury,
+      productUrl,
+      storeUrl,
+      handbagsShopUrl,
+      pickupBlock,
+    });
+    const craigslistDescription = `${narrative.trim()}\n\n---\n${linksFooter}`;
+
+    const vendorRaw = String(data.vendor || "").trim();
+    const vendor = vendorRaw && !/^unknown$/i.test(vendorRaw) ? vendorRaw : "";
+
+    const payload = {
+      platform: "craigslist",
+      title: data.title || "",
+      price: data.price != null ? String(data.price) : "",
+      description: craigslistDescription,
+      zip: "85251",
+      city: "Scottsdale",
+      /** Top-of-form "city or neighborhood" (not the same DOM field as location `city`). */
+      neighborhood: "Scottsdale",
+      condition: craigslistCondition,
+      /** Shopify vendor (same text for CL make + model per store workflow). */
+      vendor,
+      images,
+      /** Location info — after "show address" (same storefront as pickup footer). */
+      storeStreet: "15530 N Greenway Hayden Loop Suite 100",
+      storeCrossStreet: "",
+      storeCity: "Scottsdale",
+      storeState: "AZ",
+    };
+
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        world: "MAIN",
+        func: (p) => {
+          window.__CL_LISTING_EXT = p;
+        },
+        args: [payload],
+      });
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        world: "MAIN",
+        files: ["inject-craigslist.js"],
+      });
+    } catch (e) {
+      console.error("Listing extension: Craigslist inject failed", e);
+    }
+    return;
+  }
+
   if (platform !== "facebook") {
     try {
       await chrome.scripting.executeScript({
@@ -209,7 +304,7 @@ document.getElementById("start").addEventListener("click", async () => {
 
   const pickupAddress = "15530 N Greenway Hayden Loop Suite 100, Scottsdale, AZ 85260";
   const pickupHours = "MON - SAT 10-5, SUN 12-4";
-  const pickupBlock = `${pickupAddress}\nStore hours: ${pickupHours}`;
+  const pickupBlock = `${PICKUP_LANDMARK_LINE}\n${pickupAddress}\nStore hours: ${pickupHours}`;
 
   const blurbFacts = {
     title: facebookTitle || "",
