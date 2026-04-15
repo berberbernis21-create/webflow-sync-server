@@ -5286,7 +5286,7 @@ function shopifyAdminListingSearchVariants(raw) {
 
 /**
  * @param {string} name Search string for Shopify `products(query: ...)`
- * @returns {Promise<{ title: string, price: string, description: string, images: string[] } | null>}
+ * @returns {Promise<{ title: string, price: string, description: string, images: string[], vendor: string | null, handle: string | null, productUrl: string | null, shopifyOnlineUrl: string | null, vertical: string } | null>}
  */
 async function searchShopifyProducts(name) {
   const token = (process.env.SHOPIFY_ACCESS_TOKEN || "").trim();
@@ -5302,6 +5302,7 @@ async function searchShopifyProducts(name) {
           node {
             title
             handle
+            vendor
             onlineStoreUrl
             descriptionHtml
             images(first: 5) {
@@ -5405,6 +5406,7 @@ async function searchShopifyProducts(name) {
     productUrl = `${prefix}/${handle}`;
   }
 
+  const vendor = String(node.vendor || "").trim();
   return {
     title: node.title || "",
     price,
@@ -5414,6 +5416,7 @@ async function searchShopifyProducts(name) {
     productUrl: productUrl || null,
     shopifyOnlineUrl: shopifyOnlineUrl || null,
     vertical: "shopify",
+    vendor: vendor || null,
   };
 }
 
@@ -5774,6 +5777,7 @@ function mapLuxuryListingSearchHit(hit) {
   const images = luxuryFieldDataImageUrls(fd);
   const base = getLuxuryListingPublicBaseUrl();
   const productUrl = slug ? `${base}/${slug}` : null;
+  const vendor = String(fd.brand || itemFd.brand || "").trim();
   return {
     title,
     price,
@@ -5783,6 +5787,7 @@ function mapLuxuryListingSearchHit(hit) {
     productUrl,
     shopifyOnlineUrl: null,
     vertical: "luxury",
+    vendor: vendor || null,
   };
 }
 
@@ -5804,6 +5809,7 @@ async function mapFurnitureListingSearchHit(hit, config) {
   const description = stripListingDescriptionHtml(String(fd["main-description-2"] || fd.description || ""));
   const cents = webflowSkuMoneyFieldToCents(skuFd?.price);
   const price = formatSkuCentsAsListingPrice(cents);
+  const vendor = String(fd.brand || "").trim();
   return {
     title,
     price,
@@ -5813,6 +5819,7 @@ async function mapFurnitureListingSearchHit(hit, config) {
     productUrl: listingFurnitureProductUrlFromSlug(slug),
     shopifyOnlineUrl: null,
     vertical: "furniture",
+    vendor: vendor || null,
   };
 }
 
@@ -5916,6 +5923,7 @@ app.get("/api/listing", async (req, res) => {
       productUrl: listing.productUrl,
       shopifyOnlineUrl: listing.shopifyOnlineUrl,
       vertical: listing.vertical,
+      vendor: listing.vendor != null && String(listing.vendor).trim() !== "" ? String(listing.vendor).trim() : null,
     });
   } catch (err) {
     webflowLog("error", { event: "api.listing", message: err?.message, source });
@@ -5970,23 +5978,25 @@ app.post("/api/listing-blurb", async (req, res) => {
 
   if (isCraigslist) {
     maxBodyChars = 1400;
+    const clAvoidStorePitch =
+      "Do NOT use or echo: consignment (as a store label), Discover, stunning, gorgeous, masterpiece, don't miss out, perfect for anyone, beautifully balances, elevate your space, timeless appeal, artisanal flair, captures the essence, anyone looking to add, yours for just, act fast, limited opportunity, shop with confidence.";
     structureGuide = isLuxury
-      ? "Write a natural Craigslist for-sale body from title + catalogDescription. Sound like a real person: a few short paragraphs or flowing sentences, not a catalog paste. Keep concrete details only when supported (materials, wear, hardware, size). Never use explicit brand or trademark names. If AS IS appears in the source, describe condition plainly. Scottsdale area pickup; invite serious buyers to reply through Craigslist. No URLs, phone numbers, or business name as a store tagline. No markdown bullets or numbered lists. No em dash."
-      : "Write a natural Craigslist for-sale body from title + catalogDescription. Casual and plain, like a local seller: what it is, honest condition, size or material only if stated, Scottsdale area pickup, ask people to reply through Craigslist if interested. Strip retail or catalog voice down to human language. No business name as a store tagline. No URLs or phone numbers. No markdown bullets or numbered lists. No em dash.";
+      ? "Write a natural Craigslist for-sale body from title + catalogDescription. Sound like a real person: a few short paragraphs or flowing sentences, not a catalog paste. Keep concrete details only when supported (materials, wear, hardware, size). Never use explicit brand or trademark names. If AS IS appears in the source, describe condition plainly. Weave in one plain pickup sentence: right by Scottsdale Quarter in the Scottsdale Airpark at Lost and Found Resale Interiors (wayfinding, not a sales pitch). Invite serious buyers to reply through Craigslist. No URLs or phone numbers. No markdown bullets or numbered lists. No em dash."
+      : "Write a natural Craigslist for-sale body from title + catalogDescription. Casual and plain, like a local seller: what it is, honest condition, size or material only if stated, one plain pickup sentence near Scottsdale Quarter in the Airpark at Lost and Found Resale Interiors, ask people to reply through Craigslist if interested. Strip retail or catalog voice down to human language. No URLs or phone numbers. No markdown bullets or numbered lists. No em dash.";
     toneGuide = isLuxury
       ? "Relaxed Craigslist voice: honest and specific, not brochure or luxury ad copy."
       : "Friendly, plain Craigslist seller. Not corporate, not showroom.";
     avoidPhraseGuide = isLuxury
-      ? "Do NOT use or echo: Lost & Found, Lost and Found, consignment (as a store label), Discover, stunning, gorgeous, masterpiece, don't miss out, perfect for anyone, beautifully balances, elevate your space, timeless appeal, artisanal flair, captures the essence, anyone looking to add, yours for just, act fast, limited opportunity, shop with confidence. Do not use explicit brand/trademark names from title or catalogDescription in output. Do not use em-dash punctuation (Unicode U+2014) or en-dash as a clause dash (U+2013); use commas, periods, or 'and'."
-      : "Do NOT use or echo: Lost & Found, Lost and Found, consignment (as a store label), Discover, stunning, gorgeous, masterpiece, don't miss out, perfect for anyone, beautifully balances, elevate your space, timeless appeal, artisanal flair, captures the essence, anyone looking to add, yours for just, act fast, limited opportunity, shop with confidence. Do not use em-dash punctuation (Unicode U+2014) or en-dash as a clause dash (U+2013); use commas, periods, or 'and'.";
+      ? `${clAvoidStorePitch} Do not use explicit brand/trademark names from title or catalogDescription in output. Do not use em-dash punctuation (Unicode U+2014) or en-dash as a clause dash (U+2013); use commas, periods, or 'and'.`
+      : `${clAvoidStorePitch} Do not use em-dash punctuation (Unicode U+2014) or en-dash as a clause dash (U+2013); use commas, periods, or 'and'.`;
     avoidPhraseGuide += retailToneBlock;
     logisticsGuide =
-      "Keep logistics human and short: local pickup in the Scottsdale area is fine. Do not paste full shipping policy, storage rules, freight brokers, dollar amounts, or phone numbers. One short line max if you mention coordinating pickup.";
+      "Keep logistics human and short. Include exactly one pickup line that names Scottsdale Quarter, the Scottsdale Airpark, and Lost and Found Resale Interiors for directions (casual wording, not a brochure). Do not paste the full street address, store hours, URLs, shipping policy, freight brokers, or phone numbers from JSON; a separate block after your text will have address and links. Invite readers to reply through Craigslist to coordinate.";
   } else {
     maxBodyChars = 420;
     structureGuide = isLuxury
-      ? "Open with the item type and standout style details in premium but natural Marketplace wording. Do NOT include explicit brand names/trademarks. Use 2-4 short lines grounded in title + catalogDescription: condition callout, materials, hardware/finish, silhouette/style, and practical use if supported by catalog facts. Mention authentication documentation is available. Keep pickup in Scottsdale and note shipping options are available with full logistics on the site link below. End with a confident natural call to action to message now or email for details. Never use an em dash; use commas or periods."
-      : "Open on the item in normal Marketplace wording (e.g. 'Check out...', 'Selling...') using title + catalogDescription as the factual base: same claims, tight paraphrase; never invent brands, damage, dimensions, or materials not supported by catalog/title. No shop name or consignment pitch up front. 1-3 short lines: what it is, condition/size only if catalog says so, casual price, Scottsdale-area pickup, and that shipping options are available (which service applies is on the site; do not hedge with 'might' / 'maybe' / 'might be available'). End with one short line: full pickup/shipping/freight/checkout wording is on the website at the link below; email for questions; do not type the email address. Never use an em dash (long dash) in your output; use commas, periods, or 'and' instead.";
+      ? "Open with the item type and standout style details in premium but natural Marketplace wording. Do NOT include explicit brand names/trademarks. Use 2-4 short lines grounded in title + catalogDescription: condition callout, materials, hardware/finish, silhouette/style, and practical use if supported by catalog facts. Mention authentication documentation is available. Keep pickup in Scottsdale (near Scottsdale Quarter / Airpark is fine) and note shipping options are available with full logistics on the site link below. End with a confident natural call to action to message now or email for details. Never use an em dash; use commas or periods."
+      : "Open on the item in normal Marketplace wording (e.g. 'Check out...', 'Selling...') using title + catalogDescription as the factual base: same claims, tight paraphrase; never invent brands, damage, dimensions, or materials not supported by catalog/title. No shop name or consignment pitch up front. 1-3 short lines: what it is, condition/size only if catalog says so, casual price, Scottsdale-area pickup near Scottsdale Quarter / Airpark if you mention area, and that shipping options are available (which service applies is on the site; do not hedge with 'might' / 'maybe' / 'might be available'). End with one short line: full pickup/shipping/freight/checkout wording is on the website at the link below; email for questions; do not type the email address. Never use an em dash (long dash) in your output; use commas, periods, or 'and' instead.";
     toneGuide = isLuxury
       ? "Premium, confident, and trustworthy without sounding corporate. Short lines. No hype language."
       : "Sounds like a person on Facebook Marketplace, not a store flyer. Short, plain, a little conversational.";
@@ -6009,13 +6019,15 @@ app.post("/api/listing-blurb", async (req, res) => {
     variationHint,
     outputChannel: isCraigslist ? "craigslist" : "facebook",
     sellerContext: isCraigslist
-      ? "Scottsdale area Craigslist listing. Standalone body text only (no separate footer). Do not name the business as a store tagline (no ‘Lost & Found’, no consignment pitch)."
+      ? "Scottsdale area Craigslist listing. Standalone body text only (no separate footer). You may use one short pickup wayfinding sentence that names Scottsdale Quarter, the Scottsdale Airpark, and Lost and Found Resale Interiors. Do not stack store slogans, consignment pitch, or ‘we are Lost & Found’ branding."
       : "Scottsdale resale listing. Do NOT name the business (no ‘Lost & Found’, no store name, no ‘furniture & home consignment’ tagline) anywhere in your text. That branding lives in the fixed block after your copy.",
     itemCategoryHint: isLuxury ? "handbags/luxury accessory vibe if it fits the title" : "furniture/home/decor vibe if it fits the title",
     title: title || "(no title)",
     askingPriceFacebook: price || null,
     inventoryKind: isLuxury ? "luxury_handbags_accessories" : "furniture_and_home_resale",
-    pickupArea: "Scottsdale (north Scottsdale / Hayden area)",
+    pickupArea: isCraigslist
+      ? "Right by Scottsdale Quarter in the Scottsdale Airpark; storefront pickup at Lost and Found Resale Interiors (north Scottsdale / Hayden)."
+      : "Near Scottsdale Quarter in the Scottsdale Airpark (north Scottsdale / Hayden).",
     pickupAddress: pickupAddress || "15530 N Greenway Hayden Loop Suite 100, Scottsdale, AZ 85260",
     pickupHours: pickupHours || "MON - SAT 10-5, SUN 12-4",
     contactEmail,
