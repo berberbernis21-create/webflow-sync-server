@@ -2850,6 +2850,24 @@ function getLuxurySoldSinceFieldSlug() {
   return t || "date-sold";
 }
 
+/** Business timezone for sold-date stamping (default Arizona). */
+function getSalesTimezone() {
+  const t = (process.env.SALES_TIMEZONE || "America/Phoenix").trim();
+  return t || "America/Phoenix";
+}
+
+/** Date-only YYYY-MM-DD string in business timezone for Date Sold fields. */
+function getBusinessDateSoldString(now = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: getSalesTimezone(),
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const byType = Object.fromEntries(parts.map((p) => [p.type, p.value]));
+  return `${byType.year}-${byType.month}-${byType.day}`;
+}
+
 /** Webflow ecommerce SKU slug for compare-at (API: `compare-at-price`). Override if your site renamed the field. */
 function getFurnitureSkuCompareAtSlug() {
   const t = (process.env.FURNITURE_SKU_COMPARE_AT_SLUG || "compare-at-price").trim();
@@ -2911,17 +2929,17 @@ async function markAsSold(existing, vertical, config) {
 
   const luxurySoldSinceSlug = getLuxurySoldSinceFieldSlug();
   const furnitureSoldSinceSlug = getFurnitureSoldSinceFieldSlug();
-  const iso = new Date().toISOString();
+  const soldDate = getBusinessDateSoldString();
   // Luxury: fill Date sold when missing or unparsable (same idea as furniture), plus category + show-on-webflow above.
   if (vertical === "luxury" && luxurySoldSinceSlug) {
     if (parseSoldTimestampMsFromWebflowField(fieldData, luxurySoldSinceSlug) == null) {
-      fieldData[luxurySoldSinceSlug] = iso;
+      fieldData[luxurySoldSinceSlug] = soldDate;
     }
   }
   // Furniture: every sold listing must have a parseable `date-sold` for retention; keep existing if coerce succeeds.
   if (vertical === "furniture" && furnitureSoldSinceSlug) {
     if (parseSoldTimestampMsFromWebflowField(fieldData, furnitureSoldSinceSlug) == null) {
-      fieldData[furnitureSoldSinceSlug] = iso;
+      fieldData[furnitureSoldSinceSlug] = soldDate;
     }
   }
   // Furniture: append "(No Longer Available)" to product name once (same PATCH as sold + date-sold).
@@ -5164,7 +5182,7 @@ function buildWebflowFieldData(opts) {
         const wasSold = webflowListingLooksSold({ fieldData: ex || {} }, "furniture");
         const missingDate = parseSoldTimestampMsFromWebflowField(ex || {}, soldDateSlug) == null;
         if (!wasSold || missingDate) {
-          out[soldDateSlug] = new Date().toISOString();
+          out[soldDateSlug] = getBusinessDateSoldString();
         }
       } else if (ex != null && parseSoldTimestampMsFromWebflowField(ex, soldDateSlug) != null) {
         out[soldDateSlug] = null;
