@@ -1243,6 +1243,68 @@ async function deleteWebflowCollectionItem(collectionId, itemId, token) {
 ====================================================== */
 
 const SHOPIFY_GRAPHQL_URL = `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/graphql.json`;
+const SHOPIFY_WRITE_MAX_ATTEMPTS = Math.max(1, parseInt(process.env.SHOPIFY_WRITE_MAX_ATTEMPTS || "4", 10) || 4);
+const SHOPIFY_WRITE_BASE_BACKOFF_MS = Math.max(500, parseInt(process.env.SHOPIFY_WRITE_BASE_BACKOFF_MS || "2000", 10) || 2000);
+
+function isRetryableShopifyWriteError(err) {
+  const status = err?.response?.status;
+  if ([429, 500, 502, 503, 504].includes(status)) return true;
+  const code = String(err?.code || "").toUpperCase();
+  return (
+    code === "ECONNABORTED" ||
+    code === "ETIMEDOUT" ||
+    code === "ECONNRESET" ||
+    code === "EAI_AGAIN" ||
+    code === "ENOTFOUND"
+  );
+}
+
+function shopifyRetryDelayMs(err, attemptIndex) {
+  const headers = err?.response?.headers;
+  const raw = headers?.["retry-after"] ?? headers?.["Retry-After"];
+  if (raw != null) {
+    const sec = parseInt(String(raw).trim(), 10);
+    if (Number.isFinite(sec) && sec > 0) return Math.min(sec * 1000, 120_000);
+  }
+  return Math.min(SHOPIFY_WRITE_BASE_BACKOFF_MS * attemptIndex, 30_000);
+}
+
+async function postShopifyGraphqlWithRetry(body, op, meta = {}) {
+  let lastErr = null;
+  for (let attempt = 1; attempt <= SHOPIFY_WRITE_MAX_ATTEMPTS; attempt++) {
+    try {
+      return await axios.post(
+        SHOPIFY_GRAPHQL_URL,
+        body,
+        {
+          headers: {
+            "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN,
+            "Content-Type": "application/json",
+          },
+        }
+      );
+    } catch (err) {
+      lastErr = err;
+      const retryable = isRetryableShopifyWriteError(err);
+      if (retryable && attempt < SHOPIFY_WRITE_MAX_ATTEMPTS) {
+        const waitMs = shopifyRetryDelayMs(err, attempt);
+        webflowLog("warn", {
+          event: "shopify.graphql.retry",
+          op,
+          attempt,
+          waitMs,
+          status: err?.response?.status ?? null,
+          message: (err?.message || "").slice(0, 280),
+          ...meta,
+        });
+        await sleep(waitMs);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr || new Error(`Shopify GraphQL failed for ${op}`);
+}
 
 let cachedPublicationIds = null;
 
@@ -1367,15 +1429,10 @@ async function updateShopifyMetafields(productId, { department, category, vertic
       }
     }
   `;
-  const res = await axios.post(
-    SHOPIFY_GRAPHQL_URL,
+  const res = await postShopifyGraphqlWithRetry(
     { query: mutation, variables: { metafields } },
-    {
-      headers: {
-        "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN,
-        "Content-Type": "application/json",
-      },
-    }
+    "metafieldsSet",
+    { productId }
   );
   const errors = res.data?.data?.metafieldsSet?.userErrors ?? [];
   if (errors.length > 0) {
@@ -1456,15 +1513,10 @@ async function updateShopifyVendorAndType(productId, brandValue, productType, ex
   }
   const variables = { input };
 
-  const res = await axios.post(
-    SHOPIFY_GRAPHQL_URL,
+  const res = await postShopifyGraphqlWithRetry(
     { query: mutation, variables },
-    {
-      headers: {
-        "X-Shopify-Access-Token": process.env.SHOPIFY_ACCESS_TOKEN,
-        "Content-Type": "application/json",
-      }
-    }
+    "productUpdate",
+    { productId }
   );
   const errors = res.data?.data?.productUpdate?.userErrors ?? [];
   if (errors.length > 0) {
@@ -4104,29 +4156,43 @@ async function syncSingleProductCore(product, cache, options = {}) {
     }
   }
 
-  // Remove "Condition" option only for products we're actually syncing as Furniture.
-  if (vertical === "furniture") {
-    await removeConditionOptionIfFurniture(product);
-  }
+  try {
+    // Remove "Condition" option only for products we're actually syncing as Furniture.
+    if (vertical === "furniture") {
+      await removeConditionOptionIfFurniture(product);
+    }
 
-  // Write metafields + vendor/type/tags to Shopify so Shopify matches the vertical we're syncing to Webflow.
-  if (shopifyCategoryValue !== "Recently Sold") {
-    await updateShopifyMetafields(shopifyProductId, {
-      department: shopifyDepartment,
-      category: shopifyCategoryValue,
-      vertical: vertical === "furniture" ? "furniture" : "luxury",
-      dimensionsStatus: vertical === "furniture" ? dimensionsStatus : undefined,
+    // Write metafields + vendor/type/tags to Shopify so Shopify matches the vertical we're syncing to Webflow.
+    if (shopifyCategoryValue !== "Recently Sold") {
+      await updateShopifyMetafields(shopifyProductId, {
+        department: shopifyDepartment,
+        category: shopifyCategoryValue,
+        vertical: vertical === "furniture" ? "furniture" : "luxury",
+        dimensionsStatus: vertical === "furniture" ? dimensionsStatus : undefined,
+      });
+      // Only pass description if it changed
+      await updateShopifyVendorAndType(
+        shopifyProductId,
+        brand,
+        shopifyCategoryValue,
+        getProductTagsArray(product),
+        shopifyDepartment,
+        shopifyCategoryValue,
+        descriptionChanged ? description : null
+      );
+    }
+  } catch (err) {
+    // Do not fail the whole product sync on transient Shopify write errors; continue to Webflow + cache update.
+    webflowLog("error", {
+      event: "sync_product.shopify_write_failed_continue",
+      shopifyProductId,
+      productTitle: name,
+      vertical,
+      message: err?.message ?? String(err),
+      status: err?.response?.status ?? null,
+      url: err?.config?.url ?? null,
+      method: err?.config?.method ?? null,
     });
-    // Only pass description if it changed
-    await updateShopifyVendorAndType(
-      shopifyProductId, 
-      brand, 
-      shopifyCategoryValue, 
-      getProductTagsArray(product), 
-      shopifyDepartment, 
-      shopifyCategoryValue, 
-      descriptionChanged ? description : null
-    );
   }
 
   // RULE: Only touch Webflow when (1) item removed from Shopify, or (2) item changed in Shopify from previous run.
@@ -6006,6 +6072,7 @@ app.post("/sync-all", async (req, res) => {
       updated = 0,
       skipped = 0,
       sold = 0,
+      failed = 0,
       orphanMarkedSold = 0,
       archivedLongSold = 0,
       soldBackfillArchived = 0;
@@ -6073,7 +6140,7 @@ app.post("/sync-all", async (req, res) => {
 
     for (let i = 0; i < products.length; i += concurrency) {
       const chunk = products.slice(i, i + concurrency);
-      const results = await Promise.all(
+      const settled = await Promise.allSettled(
         chunk.map((p) =>
           syncSingleProduct(p, cache, {
             duplicateEmailSentFor,
@@ -6081,8 +6148,21 @@ app.post("/sync-all", async (req, res) => {
           })
         )
       );
-
-      for (const result of results) {
+      const results = settled.map((r) => (r.status === "fulfilled" ? r.value : null));
+      for (let j = 0; j < settled.length; j++) {
+        const s = settled[j];
+        if (s.status === "rejected") {
+          failed++;
+          const p = chunk[j];
+          webflowLog("error", {
+            event: "sync-all.product_failed_continue",
+            shopifyProductId: p?.id != null ? String(p.id) : null,
+            productTitle: p?.title ?? null,
+            message: s.reason?.message ?? String(s.reason),
+          });
+          continue;
+        }
+        const result = results[j];
         if (result.duplicateCorrected && result.duplicateLog) {
           webflowLog("info", {
             event: "sync-all.duplicate_placement",
@@ -6112,6 +6192,7 @@ app.post("/sync-all", async (req, res) => {
       updated,
       skipped,
       sold,
+      failed,
       orphanMarkedSold,
       archivedLongSold,
       soldBackfillArchived,
@@ -6125,6 +6206,7 @@ app.post("/sync-all", async (req, res) => {
       updated,
       skipped,
       sold,
+      failed,
       orphanMarkedSold,
       archivedLongSold,
       soldBackfillArchived,
