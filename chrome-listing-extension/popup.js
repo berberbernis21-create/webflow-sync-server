@@ -3,7 +3,7 @@ const API_LISTING = `${API_SERVER}/api/listing?name=`;
 
 /** First line of pickup footer (Facebook + Craigslist); matches store wayfinding. */
 const PICKUP_LANDMARK_LINE =
-  "Pickup is right by Scottsdale Quarter in the Airpark at Lost and Found Resale Interiors.";
+  "Pickup is right by Scottsdale Quarter at Lost and Found Resale Interiors.";
 
 function showQuickLinks({ productUrl, storeUrl, handbagsShopUrl, isLuxury }) {
   const panel = document.getElementById("quickLinks");
