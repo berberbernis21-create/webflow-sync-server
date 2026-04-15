@@ -5926,9 +5926,10 @@ app.get("/api/listing", async (req, res) => {
 });
 
 /**
- * POST /api/listing-blurb — Facebook-friendly narrative (OpenAI). Key stays on server: OPENAI_API_KEY.
+ * POST /api/listing-blurb — Short listing copy via OpenAI (OPENAI_API_KEY).
  * Body JSON: title, price, vertical, productDescription, pickupAddress, pickupHours, contactEmail,
- *   isLuxury (bool, optional). Returns { text } plain paragraphs only (no URLs); client appends links.
+ *   isLuxury (bool, optional), outputChannel (optional: "facebook" default | "craigslist").
+ * Returns { text } plain text (no URLs for Facebook; Craigslist is standalone body).
  * Model: OPENAI_LISTING_MODEL (default gpt-4o-mini).
  */
 app.post("/api/listing-blurb", async (req, res) => {
@@ -5949,6 +5950,8 @@ app.post("/api/listing-blurb", async (req, res) => {
   const pickupHours = String(body.pickupHours || "").trim();
   const contactEmail = String(body.contactEmail || "info@lostandfoundresale.com").trim();
   const isLuxury = body.isLuxury === true || vertical === "luxury";
+  const outputChannel = String(body.outputChannel || "facebook").trim().toLowerCase();
+  const isCraigslist = outputChannel === "craigslist";
 
   if (!title && !catalog) {
     return res.status(400).json({ error: "Provide at least title or productDescription" });
@@ -5956,18 +5959,44 @@ app.post("/api/listing-blurb", async (req, res) => {
 
   const model = (process.env.OPENAI_LISTING_MODEL || "gpt-4o-mini").trim();
   const variationHint = Math.random().toString(36).slice(2, 11);
-  const structureGuide = isLuxury
-    ? "Open with the item type and standout style details in premium but natural Marketplace wording. Do NOT include explicit brand names/trademarks. Use 2-4 short lines grounded in title + catalogDescription: condition callout, materials, hardware/finish, silhouette/style, and practical use if supported by catalog facts. Mention authentication documentation is available. Keep pickup in Scottsdale and note shipping options are available with full logistics on the site link below. End with a confident natural call to action to message now or email for details. Never use an em dash; use commas or periods."
-    : "Open on the item in normal Marketplace wording (e.g. 'Check out...', 'Selling...') using title + catalogDescription as the factual base: same claims, tight paraphrase; never invent brands, damage, dimensions, or materials not supported by catalog/title. No shop name or consignment pitch up front. 1-3 short lines: what it is, condition/size only if catalog says so, casual price, Scottsdale-area pickup, and that shipping options are available (which service applies is on the site; do not hedge with 'might' / 'maybe' / 'might be available'). End with one short line: full pickup/shipping/freight/checkout wording is on the website at the link below; email for questions; do not type the email address. Never use an em dash (long dash) in your output; use commas, periods, or 'and' instead.";
-  const toneGuide = isLuxury
-    ? "Premium, confident, and trustworthy without sounding corporate. Short lines. No hype language."
-    : "Sounds like a person on Facebook Marketplace, not a store flyer. Short, plain, a little conversational.";
-  const avoidPhraseGuide = isLuxury
-    ? "Do NOT use or echo: Lost & Found, Lost and Found, consignment (as a store label), Discover, stunning, gorgeous, masterpiece, don't miss out, perfect for anyone, beautifully balances, elevate your space, timeless appeal, artisanal flair, captures the essence, anyone looking to add, yours for just, act fast, limited opportunity, shop with confidence. Do not use explicit brand/trademark names from sourceTitle or catalogDescription in output. Do not use em-dash punctuation (Unicode U+2014) or en-dash as a clause dash (U+2013); use commas, periods, or 'and'."
-    : "Do NOT use or echo: Lost & Found, Lost and Found, consignment (as a store label), Discover, stunning, gorgeous, masterpiece, don't miss out, perfect for anyone, beautifully balances, elevate your space, timeless appeal, artisanal flair, captures the essence, anyone looking to add, yours for just, act fast, limited opportunity, shop with confidence. Do not use em-dash punctuation (Unicode U+2014) or en-dash as a clause dash (U+2013); use commas, periods, or 'and'.";
-  const logisticsGuide = isLuxury
-    ? "Use storePolicyInternalOnly so you do not invent carriers, rates, or guarantees. Keep logistics short: shipping options are available and full rules are on the site link below. Never add phone numbers, dollar amounts, time windows, storage/freight numbers, or broker names in the body."
-    : "Use storePolicyInternalOnly so you do not invent carriers, rates, or guarantees. Say shipping options are available and spelled out on the site link below. Never 'shipping might be available' or similar hedging. Never put phone numbers, dollar amounts, time windows, storage/freight numbers, or broker names in your body.";
+  const retailToneBlock =
+    " Avoid catalog or showroom tone: no introducing, curated, elevate your space, showcase, stunning, visit our website, SKU dumps, pasted spec tables, or pasted legal blocks.";
+
+  let structureGuide;
+  let toneGuide;
+  let avoidPhraseGuide;
+  let logisticsGuide;
+  let maxBodyChars;
+
+  if (isCraigslist) {
+    maxBodyChars = 1400;
+    structureGuide = isLuxury
+      ? "Write a natural Craigslist for-sale body from title + catalogDescription. Sound like a real person: a few short paragraphs or flowing sentences, not a catalog paste. Keep concrete details only when supported (materials, wear, hardware, size). Never use explicit brand or trademark names. If AS IS appears in the source, describe condition plainly. Scottsdale area pickup; invite serious buyers to reply through Craigslist. No URLs, phone numbers, or business name as a store tagline. No markdown bullets or numbered lists. No em dash."
+      : "Write a natural Craigslist for-sale body from title + catalogDescription. Casual and plain, like a local seller: what it is, honest condition, size or material only if stated, Scottsdale area pickup, ask people to reply through Craigslist if interested. Strip retail or catalog voice down to human language. No business name as a store tagline. No URLs or phone numbers. No markdown bullets or numbered lists. No em dash.";
+    toneGuide = isLuxury
+      ? "Relaxed Craigslist voice: honest and specific, not brochure or luxury ad copy."
+      : "Friendly, plain Craigslist seller. Not corporate, not showroom.";
+    avoidPhraseGuide = isLuxury
+      ? "Do NOT use or echo: Lost & Found, Lost and Found, consignment (as a store label), Discover, stunning, gorgeous, masterpiece, don't miss out, perfect for anyone, beautifully balances, elevate your space, timeless appeal, artisanal flair, captures the essence, anyone looking to add, yours for just, act fast, limited opportunity, shop with confidence. Do not use explicit brand/trademark names from title or catalogDescription in output. Do not use em-dash punctuation (Unicode U+2014) or en-dash as a clause dash (U+2013); use commas, periods, or 'and'."
+      : "Do NOT use or echo: Lost & Found, Lost and Found, consignment (as a store label), Discover, stunning, gorgeous, masterpiece, don't miss out, perfect for anyone, beautifully balances, elevate your space, timeless appeal, artisanal flair, captures the essence, anyone looking to add, yours for just, act fast, limited opportunity, shop with confidence. Do not use em-dash punctuation (Unicode U+2014) or en-dash as a clause dash (U+2013); use commas, periods, or 'and'.";
+    avoidPhraseGuide += retailToneBlock;
+    logisticsGuide =
+      "Keep logistics human and short: local pickup in the Scottsdale area is fine. Do not paste full shipping policy, storage rules, freight brokers, dollar amounts, or phone numbers. One short line max if you mention coordinating pickup.";
+  } else {
+    maxBodyChars = 420;
+    structureGuide = isLuxury
+      ? "Open with the item type and standout style details in premium but natural Marketplace wording. Do NOT include explicit brand names/trademarks. Use 2-4 short lines grounded in title + catalogDescription: condition callout, materials, hardware/finish, silhouette/style, and practical use if supported by catalog facts. Mention authentication documentation is available. Keep pickup in Scottsdale and note shipping options are available with full logistics on the site link below. End with a confident natural call to action to message now or email for details. Never use an em dash; use commas or periods."
+      : "Open on the item in normal Marketplace wording (e.g. 'Check out...', 'Selling...') using title + catalogDescription as the factual base: same claims, tight paraphrase; never invent brands, damage, dimensions, or materials not supported by catalog/title. No shop name or consignment pitch up front. 1-3 short lines: what it is, condition/size only if catalog says so, casual price, Scottsdale-area pickup, and that shipping options are available (which service applies is on the site; do not hedge with 'might' / 'maybe' / 'might be available'). End with one short line: full pickup/shipping/freight/checkout wording is on the website at the link below; email for questions; do not type the email address. Never use an em dash (long dash) in your output; use commas, periods, or 'and' instead.";
+    toneGuide = isLuxury
+      ? "Premium, confident, and trustworthy without sounding corporate. Short lines. No hype language."
+      : "Sounds like a person on Facebook Marketplace, not a store flyer. Short, plain, a little conversational.";
+    avoidPhraseGuide = isLuxury
+      ? "Do NOT use or echo: Lost & Found, Lost and Found, consignment (as a store label), Discover, stunning, gorgeous, masterpiece, don't miss out, perfect for anyone, beautifully balances, elevate your space, timeless appeal, artisanal flair, captures the essence, anyone looking to add, yours for just, act fast, limited opportunity, shop with confidence. Do not use explicit brand/trademark names from sourceTitle or catalogDescription in output. Do not use em-dash punctuation (Unicode U+2014) or en-dash as a clause dash (U+2013); use commas, periods, or 'and'."
+      : "Do NOT use or echo: Lost & Found, Lost and Found, consignment (as a store label), Discover, stunning, gorgeous, masterpiece, don't miss out, perfect for anyone, beautifully balances, elevate your space, timeless appeal, artisanal flair, captures the essence, anyone looking to add, yours for just, act fast, limited opportunity, shop with confidence. Do not use em-dash punctuation (Unicode U+2014) or en-dash as a clause dash (U+2013); use commas, periods, or 'and'.";
+    logisticsGuide = isLuxury
+      ? "Use storePolicyInternalOnly so you do not invent carriers, rates, or guarantees. Keep logistics short: shipping options are available and full rules are on the site link below. Never add phone numbers, dollar amounts, time windows, storage/freight numbers, or broker names in the body."
+      : "Use storePolicyInternalOnly so you do not invent carriers, rates, or guarantees. Say shipping options are available and spelled out on the site link below. Never 'shipping might be available' or similar hedging. Never put phone numbers, dollar amounts, time windows, storage/freight numbers, or broker names in your body.";
+  }
 
   const storePolicyInternalOnly = [
     "MODEL REFERENCE ONLY: do not paste, quote, bullet, or summarize this in your output. It exists so you never contradict checkout reality.",
@@ -5978,8 +6007,10 @@ app.post("/api/listing-blurb", async (req, res) => {
 
   const facts = {
     variationHint,
-    sellerContext:
-      "Scottsdale resale listing. Do NOT name the business (no ‘Lost & Found’, no store name, no ‘furniture & home consignment’ tagline) anywhere in your text. That branding lives in the fixed block after your copy.",
+    outputChannel: isCraigslist ? "craigslist" : "facebook",
+    sellerContext: isCraigslist
+      ? "Scottsdale area Craigslist listing. Standalone body text only (no separate footer). Do not name the business as a store tagline (no ‘Lost & Found’, no consignment pitch)."
+      : "Scottsdale resale listing. Do NOT name the business (no ‘Lost & Found’, no store name, no ‘furniture & home consignment’ tagline) anywhere in your text. That branding lives in the fixed block after your copy.",
     itemCategoryHint: isLuxury ? "handbags/luxury accessory vibe if it fits the title" : "furniture/home/decor vibe if it fits the title",
     title: title || "(no title)",
     askingPriceFacebook: price || null,
@@ -5994,10 +6025,22 @@ app.post("/api/listing-blurb", async (req, res) => {
     toneTarget: toneGuide,
     avoidPhrases: avoidPhraseGuide,
     logisticsHint: logisticsGuide,
-    maxBodyChars: 420,
+    maxBodyChars,
   };
 
-  const system = `You write ONLY the short main body for a Facebook Marketplace item (plain text before a separate block with links and store info).
+  const system = isCraigslist
+    ? `You write ONLY the body text for a Craigslist for-sale post (plain text for the description box).
+
+Output rules:
+- No markdown, bullets, numbers, emojis. No URLs or domains. Do not type an email address.
+- Do NOT open with a store name or consignment pitch. Sound like a normal Craigslist seller.
+- Natural length: aim ~400-900 characters unless catalog needs a bit more; respect maxBodyChars hard cap.
+- Only paraphrase catalog facts; never invent damage or brands.
+- If inventoryKind is luxury_handbags_accessories: never include explicit brand or trademark names in output text.
+- JSON may include storePolicyInternalOnly: treat it as silent context only. Never repeat or summarize it in your reply.
+- Never use an em dash in your output (Unicode U+2014). Use a comma, a period, or the word 'and' instead. Same for en dash (U+2013) as a sentence dash; for number ranges a plain hyphen is OK (e.g. 16-29).
+- At most one exclamation mark in the whole post (usually none).`
+    : `You write ONLY the short main body for a Facebook Marketplace item (plain text before a separate block with links and store info).
 
 Output rules:
 - No markdown, bullets, numbers, emojis. No URLs or domains. Do not type an email address.
@@ -6012,7 +6055,13 @@ Output rules:
 - Never use an em dash in your output (Unicode U+2014, often shown as a long dash between clauses). Use a comma, a period, or the word ‘and’ instead. Same for en dash (U+2013) used as a sentence dash; for number ranges a plain hyphen is OK (e.g. 16-29).
 - At most one exclamation mark in the whole post (usually none).`;
 
-  const userMsg = `Write the body using ONLY the JSON. Obey sellerContext and avoidPhrases strictly. Follow structure, toneTarget, logisticsHint. Respect maxBodyChars.
+  const userMsg = isCraigslist
+    ? `Write the Craigslist body using ONLY the JSON. Obey sellerContext and avoidPhrases strictly. Follow structure, toneTarget, logisticsHint. Respect maxBodyChars.
+
+Example vibe (do not copy): "Selling a solid wood dining table we used in our dining room for a few years. Seats six comfortably, a few normal scuffs on the legs. Measures about 60 by 36. Pickup near Hayden and the 101 in Scottsdale. Reply here if you want to come see it."
+
+Facts JSON:\n${JSON.stringify(facts)}`
+    : `Write the body using ONLY the JSON. Obey sellerContext and avoidPhrases strictly. Follow structure, toneTarget, logisticsHint. Respect maxBodyChars.
 
 Example vibe (do not copy): "Check out this Canyon de Chelly print by Wilson Hurley, framed, about 35.5 x 30.5. Asking $199. Local pickup in Scottsdale, shipping options are on the link below. Email if you have questions."
 
@@ -6027,8 +6076,8 @@ Facts JSON:\n${JSON.stringify(facts)}`;
       },
       body: JSON.stringify({
         model,
-        temperature: 0.92,
-        max_tokens: 220,
+        temperature: isCraigslist ? 0.88 : 0.92,
+        max_tokens: isCraigslist ? 700 : 220,
         messages: [
           { role: "system", content: system },
           { role: "user", content: userMsg },
@@ -6065,14 +6114,20 @@ Facts JSON:\n${JSON.stringify(facts)}`;
       .replace(/,\s*,/g, ",")
       .trim();
 
-    const cap = 440;
+    const cap = isCraigslist ? 1500 : 440;
     if (text.length > cap) {
       const slice = text.slice(0, cap);
       const breakAt = Math.max(slice.lastIndexOf("."), slice.lastIndexOf("!"), slice.lastIndexOf("?"));
       text = (breakAt > 80 ? slice.slice(0, breakAt + 1) : slice.replace(/\s+\S*$/, "")).trim();
     }
 
-    webflowLog("info", { event: "api.listing_blurb.ok", model, titleLen: title.length, catalogLen: catalog.length });
+    webflowLog("info", {
+      event: "api.listing_blurb.ok",
+      model,
+      titleLen: title.length,
+      catalogLen: catalog.length,
+      outputChannel: isCraigslist ? "craigslist" : "facebook",
+    });
     return res.json({ text, model });
   } catch (err) {
     webflowLog("error", { event: "api.listing_blurb.error", message: err?.message });
