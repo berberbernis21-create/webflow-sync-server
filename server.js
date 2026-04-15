@@ -5981,17 +5981,17 @@ app.post("/api/listing-blurb", async (req, res) => {
     const clAvoidStorePitch =
       "Do NOT use or echo: consignment (as a store label), Discover, stunning, gorgeous, masterpiece, don't miss out, perfect for anyone, beautifully balances, elevate your space, timeless appeal, artisanal flair, captures the essence, anyone looking to add, yours for just, act fast, limited opportunity, shop with confidence.";
     structureGuide = isLuxury
-      ? "Write a natural Craigslist for-sale body from title + catalogDescription. Sound like a real person: a few short paragraphs or flowing sentences, not a catalog paste. Keep concrete details only when supported (materials, wear, hardware, size). Never use explicit brand or trademark names. If AS IS appears in the source, describe condition plainly. Weave in one plain pickup sentence: right by Scottsdale Quarter at Lost and Found Resale Interiors (wayfinding, not a sales pitch). Invite serious buyers to reply through Craigslist. No URLs or phone numbers. No markdown bullets or numbered lists. No em dash."
-      : "Write a natural Craigslist for-sale body from title + catalogDescription. Casual and plain, like a local seller: what it is, honest condition, size or material only if stated, one plain pickup sentence near Scottsdale Quarter at Lost and Found Resale Interiors, ask people to reply through Craigslist if interested. Strip retail or catalog voice down to human language. No URLs or phone numbers. No markdown bullets or numbered lists. No em dash.";
+      ? "Write a natural Craigslist for-sale body from title + catalogDescription. Sound like a real person: a few short paragraphs or flowing sentences, not a catalog paste. Keep concrete details only when supported (materials, wear, hardware, size). Never use explicit brand or trademark names. If AS IS appears in the source, describe condition plainly. Weave in one plain pickup sentence: you can pick it up right by Scottsdale Quarter at Lost and Found Resale Interiors (wayfinding, not a sales pitch). Close by steering questions, purchase, and contact through the store link at the bottom of this posting (do not type URLs in your body), or say they are welcome to come in. Do not ask people to reply here on Craigslist to coordinate. No URLs or phone numbers in your body. No markdown bullets or numbered lists. No em dash."
+      : "Write a natural Craigslist for-sale body from title + catalogDescription. Casual and plain, like a local seller: what it is, honest condition, size or material only if stated, one plain pickup sentence (pickup right by Scottsdale Quarter at Lost and Found Resale Interiors). End by pointing them to the link at the bottom of this post for item details and to contact or buy through the site, or invite them to stop in. Do not ask people to reply here on Craigslist to coordinate. Strip retail or catalog voice down to human language. No URLs or phone numbers in your body. No markdown bullets or numbered lists. No em dash.";
     toneGuide = isLuxury
       ? "Relaxed Craigslist voice: honest and specific, not brochure or luxury ad copy."
       : "Friendly, plain Craigslist seller. Not corporate, not showroom.";
     avoidPhraseGuide = isLuxury
-      ? `${clAvoidStorePitch} Do not use explicit brand/trademark names from title or catalogDescription in output. Do not use em-dash punctuation (Unicode U+2014) or en-dash as a clause dash (U+2013); use commas, periods, or 'and'.`
-      : `${clAvoidStorePitch} Do not use em-dash punctuation (Unicode U+2014) or en-dash as a clause dash (U+2013); use commas, periods, or 'and'.`;
+      ? `${clAvoidStorePitch} Do not use explicit brand/trademark names from title or catalogDescription in output. Do not use em-dash punctuation (Unicode U+2014) or en-dash as a clause dash (U+2013); use commas, periods, or 'and'. Do not say: reply here, reply on Craigslist, coordinate through Craigslist, message me here to schedule, or similar.`
+      : `${clAvoidStorePitch} Do not use em-dash punctuation (Unicode U+2014) or en-dash as a clause dash (U+2013); use commas, periods, or 'and'. Do not say: reply here, reply on Craigslist, coordinate through Craigslist, message me here to schedule, or similar.`;
     avoidPhraseGuide += retailToneBlock;
     logisticsGuide =
-      "Keep logistics human and short. Include exactly one pickup line that names Scottsdale Quarter and Lost and Found Resale Interiors for directions (casual wording, not a brochure). Do not paste the full street address, store hours, URLs, shipping policy, freight brokers, or phone numbers from JSON; a separate block after your text will have address and links. Invite readers to reply through Craigslist to coordinate.";
+      "Keep logistics human and short. Include exactly one pickup line that names Scottsdale Quarter and Lost and Found Resale Interiors for directions (casual wording, not a brochure). Do not paste the full street address, store hours, URLs, shipping policy, freight brokers, or phone numbers from JSON; a separate block after your text will have address and links. For next steps: tell readers to use the link at the bottom of this posting for full item details and to reach out or purchase through the site, or to come into the showroom. Never ask them to reply here on Craigslist or to coordinate only through Craigslist email.";
   } else {
     maxBodyChars = 420;
     structureGuide = isLuxury
@@ -6019,7 +6019,7 @@ app.post("/api/listing-blurb", async (req, res) => {
     variationHint,
     outputChannel: isCraigslist ? "craigslist" : "facebook",
     sellerContext: isCraigslist
-      ? "Scottsdale area Craigslist listing. Standalone body text only (no separate footer). You may use one short pickup wayfinding sentence that names Scottsdale Quarter and Lost and Found Resale Interiors. Do not stack store slogans, consignment pitch, or ‘we are Lost & Found’ branding."
+      ? "Scottsdale area Craigslist listing. Standalone body text only (no separate footer). You may use one short pickup wayfinding sentence that names Scottsdale Quarter and Lost and Found Resale Interiors. Do not stack store slogans, consignment pitch, or ‘we are Lost & Found’ branding. Do not instruct readers to reply here or coordinate through Craigslist; contact and checkout are through the link that appears after your text, or they can visit the showroom."
       : "Scottsdale resale listing. Do NOT name the business (no ‘Lost & Found’, no store name, no ‘furniture & home consignment’ tagline) anywhere in your text. That branding lives in the fixed block after your copy.",
     itemCategoryHint: isLuxury ? "handbags/luxury accessory vibe if it fits the title" : "furniture/home/decor vibe if it fits the title",
     title: title || "(no title)",
@@ -6046,6 +6046,7 @@ app.post("/api/listing-blurb", async (req, res) => {
 Output rules:
 - No markdown, bullets, numbers, emojis. No URLs or domains. Do not type an email address.
 - Do NOT open with a store name or consignment pitch. Sound like a normal Craigslist seller.
+- Do not ask readers to reply here on Craigslist or to coordinate pickup only through Craigslist. Point them to the link block below this text for item details, web contact, and checkout, or to visit in person near Scottsdale Quarter at Lost and Found Resale Interiors.
 - Natural length: aim ~400-900 characters unless catalog needs a bit more; respect maxBodyChars hard cap.
 - Only paraphrase catalog facts; never invent damage or brands.
 - If inventoryKind is luxury_handbags_accessories: never include explicit brand or trademark names in output text.
@@ -6070,7 +6071,7 @@ Output rules:
   const userMsg = isCraigslist
     ? `Write the Craigslist body using ONLY the JSON. Obey sellerContext and avoidPhrases strictly. Follow structure, toneTarget, logisticsHint. Respect maxBodyChars.
 
-Example vibe (do not copy): "Selling a solid wood dining table we used in our dining room for a few years. Seats six comfortably, a few normal scuffs on the legs. Measures about 60 by 36. Pickup near Hayden and the 101 in Scottsdale. Reply here if you want to come see it."
+Example vibe (do not copy): "Selling a solid wood dining table we used in our dining room for a few years. Seats six comfortably, a few normal scuffs on the legs. Measures about 60 by 36. You can pick it up right by Scottsdale Quarter at Lost and Found Resale Interiors. Full details and how to reach us are on the link at the bottom of this post, or swing by the store."
 
 Facts JSON:\n${JSON.stringify(facts)}`
     : `Write the body using ONLY the JSON. Obey sellerContext and avoidPhrases strictly. Follow structure, toneTarget, logisticsHint. Respect maxBodyChars.
