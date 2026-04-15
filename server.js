@@ -124,6 +124,87 @@ async function sendDuplicatePlacementEmail(conflictLog, duplicateEmailSentFor) {
   }
 }
 
+function shopifyWriteFailureEmailText(err) {
+  const status = err?.response?.status;
+  const url = err?.config?.url;
+  const method = String(err?.config?.method || "").toUpperCase();
+  let responseBody = err?.response?.data;
+  if (typeof responseBody !== "string") {
+    try {
+      responseBody = JSON.stringify(responseBody);
+    } catch {
+      responseBody = String(responseBody ?? "");
+    }
+  }
+  return {
+    status: status ?? null,
+    url: url || null,
+    method: method || null,
+    message: String(err?.message || "Unknown error"),
+    responseBody: String(responseBody || "").slice(0, 4000),
+  };
+}
+
+/** Email when Shopify write retries are exhausted; same SMTP/REPORT_EMAIL_TO setup as duplicate-placement alerts. */
+async function sendShopifyWriteFailureEmail(detail, perRunDedupeSet) {
+  const productId = String(detail?.shopifyProductId ?? "");
+  const op = String(detail?.op ?? "shopify_write");
+  const dedupeKey = `${productId}:${op}`;
+  if (perRunDedupeSet?.has(dedupeKey)) return;
+
+  const to = process.env.REPORT_EMAIL_TO;
+  const user = process.env.GMAIL_SMTP_USER;
+  const pass = process.env.GMAIL_SMTP_PASSWORD;
+  if (!to || !user || !pass) {
+    webflowLog("warn", { event: "shopify_write.email_skipped", reason: "missing_env", shopifyProductId: productId || null, op });
+    return;
+  }
+
+  const recipients = to.split(",").map((e) => e.trim()).filter(Boolean);
+  const body = [
+    "Shopify write failed after automatic retries.",
+    "",
+    `Operation: ${op}`,
+    `Shopify product ID: ${productId || "n/a"}`,
+    detail?.productTitle ? `Product title: ${detail.productTitle}` : "",
+    detail?.vertical ? `Vertical: ${detail.vertical}` : "",
+    detail?.attempts ? `Attempts: ${detail.attempts}` : "",
+    detail?.status != null ? `HTTP status: ${detail.status}` : "",
+    detail?.method ? `HTTP method: ${detail.method}` : "",
+    detail?.url ? `URL: ${detail.url}` : "",
+    "",
+    "Error message:",
+    detail?.message || "(none)",
+    "",
+    "Response body (truncated):",
+    detail?.responseBody || "(none)",
+    "",
+    "This product continued through sync, but Shopify write did not complete.",
+    "— Lost & Found Webflow Sync",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  try {
+    const transporter = nodemailer.createTransport({
+      host: "smtp.gmail.com",
+      port: 587,
+      secure: false,
+      auth: { user, pass },
+    });
+    await transporter.sendMail({
+      from: user,
+      to: recipients.join(", "),
+      subject: `[Backend / Webflow sync] Shopify write failed after retries — ${productId || "unknown product"}`,
+      text: body,
+    });
+    if (perRunDedupeSet) perRunDedupeSet.add(dedupeKey);
+    webflowLog("info", { event: "shopify_write.email_sent", shopifyProductId: productId || null, op, to: recipients });
+  } catch (err) {
+    webflowLog("error", { event: "shopify_write.email_failed", shopifyProductId: productId || null, op, message: err.message });
+  }
+}
+
 /* ======================================================
    [WEBFLOW] CENTRALIZED LOGGING — Single-line JSON, timestamp, optional requestId/elapsedMs
    LOG_LEVEL: "error" | "warn" | "info" — defaults to "info". "error" cuts most I/O to speed up frequent syncs.
@@ -1243,7 +1324,7 @@ async function deleteWebflowCollectionItem(collectionId, itemId, token) {
 ====================================================== */
 
 const SHOPIFY_GRAPHQL_URL = `https://${process.env.SHOPIFY_STORE}.myshopify.com/admin/api/2024-01/graphql.json`;
-const SHOPIFY_WRITE_MAX_ATTEMPTS = Math.max(1, parseInt(process.env.SHOPIFY_WRITE_MAX_ATTEMPTS || "4", 10) || 4);
+const SHOPIFY_WRITE_MAX_ATTEMPTS = Math.max(5, parseInt(process.env.SHOPIFY_WRITE_MAX_ATTEMPTS || "5", 10) || 5);
 const SHOPIFY_WRITE_BASE_BACKOFF_MS = Math.max(500, parseInt(process.env.SHOPIFY_WRITE_BASE_BACKOFF_MS || "2000", 10) || 2000);
 
 function isRetryableShopifyWriteError(err) {
@@ -1300,9 +1381,11 @@ async function postShopifyGraphqlWithRetry(body, op, meta = {}) {
         await sleep(waitMs);
         continue;
       }
+      err._retryAttempts = attempt;
       throw err;
     }
   }
+  if (lastErr) lastErr._retryAttempts = SHOPIFY_WRITE_MAX_ATTEMPTS;
   throw lastErr || new Error(`Shopify GraphQL failed for ${op}`);
 }
 
@@ -3582,6 +3665,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
   const shopifyProductId = String(product.id);
   const cacheEntry = getCacheEntry(cache, shopifyProductId);
   const duplicateEmailSentFor = options.duplicateEmailSentFor ?? null;
+  const shopifyWriteEmailSentFor = options.shopifyWriteEmailSentFor ?? null;
 
   const currentHash = shopifyHash(product);
   const currentContentHash = contentHashForLLM(product);
@@ -4183,6 +4267,18 @@ async function syncSingleProductCore(product, cache, options = {}) {
     }
   } catch (err) {
     // Do not fail the whole product sync on transient Shopify write errors; continue to Webflow + cache update.
+    const detail = shopifyWriteFailureEmailText(err);
+    await sendShopifyWriteFailureEmail(
+      {
+        op: "shopify_metafields_or_product_update",
+        shopifyProductId,
+        productTitle: name,
+        vertical,
+        attempts: err?._retryAttempts || SHOPIFY_WRITE_MAX_ATTEMPTS,
+        ...detail,
+      },
+      shopifyWriteEmailSentFor
+    );
     webflowLog("error", {
       event: "sync_product.shopify_write_failed_continue",
       shopifyProductId,
@@ -4935,7 +5031,8 @@ async function runWebhookSingleProductSync(shopifyProductId, triggerPath) {
     }
     const cache = loadCache();
     const duplicateEmailSentFor = new Set();
-    const result = await syncSingleProduct(product, cache, { duplicateEmailSentFor });
+    const shopifyWriteEmailSentFor = new Set();
+    const result = await syncSingleProduct(product, cache, { duplicateEmailSentFor, shopifyWriteEmailSentFor });
     saveCache(cache);
     if (result?.duplicateCorrected && result?.duplicateLog) {
       await sendDuplicatePlacementEmail(result.duplicateLog, duplicateEmailSentFor);
@@ -6136,6 +6233,7 @@ app.post("/sync-all", async (req, res) => {
     sold += orphanMarkedSold;
 
     const duplicateEmailSentFor = new Set();
+    const shopifyWriteEmailSentFor = new Set();
     const concurrency = Math.min(Math.max(1, parseInt(process.env.SYNC_CONCURRENCY || "3", 10) || 1), 15);
 
     for (let i = 0; i < products.length; i += concurrency) {
@@ -6144,6 +6242,7 @@ app.post("/sync-all", async (req, res) => {
         chunk.map((p) =>
           syncSingleProduct(p, cache, {
             duplicateEmailSentFor,
+            shopifyWriteEmailSentFor,
             forceReclassify: reclassifyAll || (reclassifyIdsSet != null && reclassifyIdsSet.has(String(p.id))),
           })
         )
