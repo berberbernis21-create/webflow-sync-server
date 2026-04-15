@@ -215,7 +215,7 @@ document.getElementById("start").addEventListener("click", async () => {
     let narrative =
       (craigslistNarrative && String(craigslistNarrative).trim()) ||
       catalogFallback ||
-      "See photos. Pickup in Scottsdale. Reply through Craigslist if you want it.";
+      "See photos. Pickup right by Scottsdale Quarter at Lost and Found Resale Interiors. Use the link at the bottom of this post for details and to contact us through the site, or stop in.";
     if (isLuxury) {
       narrative = sanitizeLuxuryFacebookDescription(narrative);
     }
