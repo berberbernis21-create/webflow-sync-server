@@ -1,5 +1,5 @@
 /**
- * Craigslist posting flow — reads window.__CL_LISTING_EXT set by popup.js (MAIN world).
+ * Craigslist posting flow - reads window.__CL_LISTING_EXT set by popup.js (MAIN world).
  * Does not interact with Facebook listing globals.
  */
 (function () {
@@ -15,22 +15,6 @@
     el.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
-  /** post.craigslist.org often exposes fields by id (PostingTitle, Ask, postal_code, sale_*), not only name=. */
-  function editableField(selectors) {
-    for (const s of selectors) {
-      const el = s.startsWith("#") ? document.getElementById(s.slice(1)) : document.querySelector(s);
-      if (
-        el &&
-        (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) &&
-        !el.disabled &&
-        !el.readOnly
-      ) {
-        return el;
-      }
-    }
-    return null;
-  }
-
   function clickButtonByText(text) {
     const needle = String(text || "").toLowerCase();
     return [...document.querySelectorAll("button, input[type='submit'], input[type='button'], input")].find(
@@ -41,12 +25,11 @@
     );
   }
 
-  /** Top row "city or neighborhood" — not `input[name="city"]` (that is often the disabled location block). */
+  /** Top row "city or neighborhood" - not `input[name="city"]` (that is often the disabled location block). */
   function setCityOrNeighborhood(val) {
     const v = String(val || "").trim();
     if (!v) return;
     const tryEls = [
-      document.getElementById("GeographicArea"),
       document.querySelector('input[name="GeographicArea"]'),
       document.querySelector("input#geographic_area"),
       document.querySelector('input[name="geographic_area"]'),
@@ -125,11 +108,13 @@
     if (!v) return;
     const makeEl =
       inputForLabelRegex(/make\s*\/\s*manufacturer/i) ||
-      editableField(["#sale_manufacturer", 'input[name="sale_manufacturer"]', 'input[name="sale_make"]', 'input[name="make"]']);
+      firstEnabledInput('input[name="sale_make"]') ||
+      firstEnabledInput('input[name="make"]');
     if (makeEl) setValue(makeEl, v);
     const modelEl =
       inputForLabelRegex(/model\s*name/i) ||
-      editableField(["#sale_model", 'input[name="sale_model"]', 'input[name="model"]']);
+      firstEnabledInput('input[name="sale_model"]') ||
+      firstEnabledInput('input[name="model"]');
     if (modelEl) setValue(modelEl, v);
   }
 
@@ -220,24 +205,26 @@
     }
   }
 
-  const isDetailsPage =
-    document.querySelector('input[name="PostingTitle"]') ||
-    document.getElementById("PostingTitle") ||
-    document.querySelector('textarea[name="PostingBody"]') ||
-    document.getElementById("PostingBody");
+  function pageText() {
+    return String((document.body && document.body.innerText) || "");
+  }
+
+  const isDetailsPage = document.querySelector('input[name="PostingTitle"]');
   const isMapPage = document.querySelector("#map") || document.querySelector(".map");
-  const isImagePage = document.querySelector('input[type="file"]');
+  /** Modern CL hides file input until "Use classic image uploader" is used. */
+  const isImagePage =
+    !isDetailsPage &&
+    !isMapPage &&
+    (document.querySelector('input[type="file"]') ||
+      /\bdone with images\b/i.test(pageText()) ||
+      /\bmaximum\s+24\b/i.test(pageText()));
   const isPublishPage = document.body.innerText.toLowerCase().includes("unpublished draft");
 
   if (isDetailsPage) {
-    const titleEl = editableField(['input[name="PostingTitle"]', "#PostingTitle"]);
-    const priceEl = editableField(['input[name="price"]', "#Ask", 'input[name="Ask"]']);
-    const bodyEl = editableField(['textarea[name="PostingBody"]', "#PostingBody"]);
-    const zipEl = editableField(['input[name="postal"]', "#postal_code", 'input[name="postal_code"]']);
-    setValue(titleEl, listing.title);
-    setValue(priceEl, listing.price != null ? String(listing.price) : "");
-    setValue(bodyEl, listing.description);
-    setValue(zipEl, listing.zip);
+    setValue(document.querySelector('input[name="PostingTitle"]'), listing.title);
+    setValue(document.querySelector('input[name="price"]'), listing.price);
+    setValue(document.querySelector('textarea[name="PostingBody"]'), listing.description);
+    setValue(document.querySelector('input[name="postal"]'), listing.zip);
     setCityOrNeighborhood(listing.neighborhood || listing.city);
 
     setVendorMakeModel();
@@ -253,8 +240,8 @@
   if (isMapPage) {
     console.log("Craigslist: Map page detected");
 
-    setValue(editableField(['input[name="city"]', "#city"]), listing.city);
-    setValue(editableField(['input[name="postal"]', "#postal_code", 'input[name="postal_code"]']), listing.zip);
+    setValue(document.querySelector('input[name="city"]'), listing.city);
+    setValue(document.querySelector('input[name="postal"]'), listing.zip);
 
     setTimeout(() => {
       const btn =
@@ -289,21 +276,64 @@
         dt.items.add(base64ToFile(img.base64, img.mime, img.name));
       });
       input.files = dt.files;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
       input.dispatchEvent(new Event("change", { bubbles: true }));
     }
 
-    const input = document.querySelector('input[type="file"]');
-
-    if (input && listing.images?.length) {
-      uploadImages(input, listing.images);
-      console.log("Craigslist: Images uploaded");
+    function pickFileInput() {
+      const list = [...document.querySelectorAll('input[type="file"]')];
+      return list.find((el) => !el.disabled) || list[0] || null;
     }
 
-    setTimeout(() => {
-      const doneBtn = clickButtonByText("done");
-      if (doneBtn) doneBtn.click();
-    }, 1000);
+    function findClassicImageUploaderLink() {
+      return [...document.querySelectorAll("a")].find((a) =>
+        /classic\s+image\s+uploader/i.test(String(a.textContent || "").replace(/\s+/g, " ").trim())
+      );
+    }
 
+    function scheduleDoneWithImages() {
+      setTimeout(() => {
+        const doneBtn = clickButtonByText("done");
+        if (doneBtn) doneBtn.click();
+      }, 2200);
+    }
+
+    function tryAssignFiles() {
+      const input = pickFileInput();
+      if (!input) {
+        console.warn("Craigslist: no file input after classic uploader switch");
+        scheduleDoneWithImages();
+        return;
+      }
+      if (!listing.images?.length) {
+        scheduleDoneWithImages();
+        return;
+      }
+      uploadImages(input, listing.images);
+      console.log("Craigslist: Images assigned to file input");
+      scheduleDoneWithImages();
+    }
+
+    if (!listing.images?.length) {
+      scheduleDoneWithImages();
+      return;
+    }
+
+    if (pickFileInput()) {
+      tryAssignFiles();
+      return;
+    }
+
+    const classic = findClassicImageUploaderLink();
+    if (classic) {
+      console.log("Craigslist: opening classic image uploader for file input");
+      classic.click();
+      setTimeout(tryAssignFiles, 900);
+      return;
+    }
+
+    console.warn("Craigslist: no file input and no classic uploader link");
+    scheduleDoneWithImages();
     return;
   }
 
