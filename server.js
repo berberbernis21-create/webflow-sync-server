@@ -5062,6 +5062,47 @@ function shopifyAdminGraphqlListingUrl() {
   return `https://${host}/admin/api/2024-01/graphql.json`;
 }
 
+/** Loosen punctuation so "Table-79X39X43H" and "Table 79 x 39" score the same for listing match. */
+function normalizeProductTitleForLooseMatch(name) {
+  let s = String(name ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[–—]/g, "-");
+  s = s.replace(/[-_/]+/g, " ");
+  s = s.replace(/\s+/g, " ").trim();
+  return s;
+}
+
+/** Try several Admin search strings; long titles with & and hyphenated dims often miss on the first query. */
+function shopifyAdminListingSearchVariants(raw) {
+  const base = String(raw || "").trim();
+  if (!base) return [];
+  const uniq = [];
+  const add = (s) => {
+    const t = String(s || "").trim();
+    if (t && !uniq.includes(t)) uniq.push(t);
+  };
+  add(base);
+  add(base.replace(/\s*&\s*/g, " and "));
+  add(base.replace(/\s*&\s*/g, " "));
+  add(base.replace(/\s*-\s*as\s+is\b\s*$/i, "").trim());
+  add(base.replace(/\s+as\s+is\s*$/i, "").trim());
+  add(base.replace(/\s*-\s*2\s+leaves\b/i, " ").replace(/\s+/g, " ").trim());
+  add(
+    base
+      .replace(/\s*-\s*\d{1,3}\s*x\s*\d{1,3}(\s*x\s*\d{1,3})?\s*h?\b/i, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+  );
+  const words = base.split(/\s+/).filter(Boolean);
+  if (words.length >= 8) add(words.slice(0, 8).join(" "));
+  if (words.length >= 6) add(words.slice(0, 6).join(" "));
+  if (words.length >= 4) add(words.slice(0, 4).join(" "));
+  if (words.length >= 2) add(words.slice(0, 2).join(" "));
+  return uniq;
+}
+
 /**
  * @param {string} name Search string for Shopify `products(query: ...)`
  * @returns {Promise<{ title: string, price: string, description: string, images: string[] } | null>}
@@ -5102,29 +5143,39 @@ async function searchShopifyProducts(name) {
     }
   `;
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Shopify-Access-Token": token,
-    },
-    body: JSON.stringify({
-      query,
-      variables: { q: name.trim() },
-    }),
-  });
+  const rawName = String(name || "").trim();
+  const variants = shopifyAdminListingSearchVariants(rawName);
+  let edges = [];
+  for (const qTry of variants) {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shopify-Access-Token": token,
+      },
+      body: JSON.stringify({
+        query,
+        variables: { q: qTry },
+      }),
+    });
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Shopify HTTP ${res.status}: ${text.slice(0, 300)}`);
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Shopify HTTP ${res.status}: ${text.slice(0, 300)}`);
+    }
+
+    const json = await res.json();
+    if (json.errors?.length) {
+      throw new Error(json.errors.map((e) => e.message).join("; "));
+    }
+
+    const batch = json.data?.products?.edges || [];
+    if (batch.length) {
+      edges = batch;
+      break;
+    }
   }
 
-  const json = await res.json();
-  if (json.errors?.length) {
-    throw new Error(json.errors.map((e) => e.message).join("; "));
-  }
-
-  const edges = json.data?.products?.edges || [];
   if (!edges.length) return null;
 
   let bestNode = null;
@@ -5133,13 +5184,16 @@ async function searchShopifyProducts(name) {
     const cand = edge?.node;
     if (!cand) continue;
     const title = String(cand.title || "").trim();
-    const score = listingTitleSearchScore(name, title);
+    const score = listingTitleSearchScore(rawName, title);
     if (score <= 0) continue;
     const prevTitle = bestNode ? String(bestNode.title || "").trim() : "";
-    if (score > bestScore || (score === bestScore && listingSearchTiePrefer(name, title, prevTitle))) {
+    if (score > bestScore || (score === bestScore && listingSearchTiePrefer(rawName, title, prevTitle))) {
       bestScore = score;
       bestNode = cand;
     }
+  }
+  if (!bestNode && edges.length === 1) {
+    bestNode = edges[0]?.node || null;
   }
   if (!bestNode) return null;
 
@@ -5315,6 +5369,7 @@ function listingQueryTokenRequiresNameMatch(t) {
   if (/^\d+$/.test(t)) return false;
   if (/^\d+x\d+$/i.test(t)) return false;
   if (/^\d+x\d+x\d+[a-z0-9]*$/i.test(t)) return false;
+  if (/^\d{1,3}x\d{1,3}/i.test(t)) return false;
   return true;
 }
 
@@ -5342,8 +5397,13 @@ function listingSearchTiePrefer(q, newName, oldName) {
  * Used to pick one listing when searching Webflow luxury CMS + furniture ecommerce.
  */
 function listingTitleSearchScore(rawQuery, rawName) {
-  const q = normalizeProductNameForIndex(rawQuery);
-  const n = normalizeProductNameForIndex(rawName);
+  const qStrict = normalizeProductNameForIndex(rawQuery);
+  const nStrict = normalizeProductNameForIndex(rawName);
+  if (!qStrict || !nStrict) return 0;
+  if (qStrict === nStrict) return 1000;
+
+  const q = normalizeProductTitleForLooseMatch(rawQuery);
+  const n = normalizeProductTitleForLooseMatch(rawName);
   if (!q || !n) return 0;
   if (q === n) return 1000;
 
