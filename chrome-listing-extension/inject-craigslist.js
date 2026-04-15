@@ -15,6 +15,22 @@
     el.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
+  /** post.craigslist.org often exposes fields by id (PostingTitle, Ask, postal_code, sale_*), not only name=. */
+  function editableField(selectors) {
+    for (const s of selectors) {
+      const el = s.startsWith("#") ? document.getElementById(s.slice(1)) : document.querySelector(s);
+      if (
+        el &&
+        (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) &&
+        !el.disabled &&
+        !el.readOnly
+      ) {
+        return el;
+      }
+    }
+    return null;
+  }
+
   function clickButtonByText(text) {
     const needle = String(text || "").toLowerCase();
     return [...document.querySelectorAll("button, input[type='submit'], input[type='button'], input")].find(
@@ -30,6 +46,7 @@
     const v = String(val || "").trim();
     if (!v) return;
     const tryEls = [
+      document.getElementById("GeographicArea"),
       document.querySelector('input[name="GeographicArea"]'),
       document.querySelector("input#geographic_area"),
       document.querySelector('input[name="geographic_area"]'),
@@ -108,13 +125,11 @@
     if (!v) return;
     const makeEl =
       inputForLabelRegex(/make\s*\/\s*manufacturer/i) ||
-      firstEnabledInput('input[name="sale_make"]') ||
-      firstEnabledInput('input[name="make"]');
+      editableField(["#sale_manufacturer", 'input[name="sale_manufacturer"]', 'input[name="sale_make"]', 'input[name="make"]']);
     if (makeEl) setValue(makeEl, v);
     const modelEl =
       inputForLabelRegex(/model\s*name/i) ||
-      firstEnabledInput('input[name="sale_model"]') ||
-      firstEnabledInput('input[name="model"]');
+      editableField(["#sale_model", 'input[name="sale_model"]', 'input[name="model"]']);
     if (modelEl) setValue(modelEl, v);
   }
 
@@ -205,16 +220,24 @@
     }
   }
 
-  const isDetailsPage = document.querySelector('input[name="PostingTitle"]');
+  const isDetailsPage =
+    document.querySelector('input[name="PostingTitle"]') ||
+    document.getElementById("PostingTitle") ||
+    document.querySelector('textarea[name="PostingBody"]') ||
+    document.getElementById("PostingBody");
   const isMapPage = document.querySelector("#map") || document.querySelector(".map");
   const isImagePage = document.querySelector('input[type="file"]');
   const isPublishPage = document.body.innerText.toLowerCase().includes("unpublished draft");
 
   if (isDetailsPage) {
-    setValue(document.querySelector('input[name="PostingTitle"]'), listing.title);
-    setValue(document.querySelector('input[name="price"]'), listing.price);
-    setValue(document.querySelector('textarea[name="PostingBody"]'), listing.description);
-    setValue(document.querySelector('input[name="postal"]'), listing.zip);
+    const titleEl = editableField(['input[name="PostingTitle"]', "#PostingTitle"]);
+    const priceEl = editableField(['input[name="price"]', "#Ask", 'input[name="Ask"]']);
+    const bodyEl = editableField(['textarea[name="PostingBody"]', "#PostingBody"]);
+    const zipEl = editableField(['input[name="postal"]', "#postal_code", 'input[name="postal_code"]']);
+    setValue(titleEl, listing.title);
+    setValue(priceEl, listing.price != null ? String(listing.price) : "");
+    setValue(bodyEl, listing.description);
+    setValue(zipEl, listing.zip);
     setCityOrNeighborhood(listing.neighborhood || listing.city);
 
     setVendorMakeModel();
@@ -230,8 +253,8 @@
   if (isMapPage) {
     console.log("Craigslist: Map page detected");
 
-    setValue(document.querySelector('input[name="city"]'), listing.city);
-    setValue(document.querySelector('input[name="postal"]'), listing.zip);
+    setValue(editableField(['input[name="city"]', "#city"]), listing.city);
+    setValue(editableField(['input[name="postal"]', "#postal_code", 'input[name="postal_code"]']), listing.zip);
 
     setTimeout(() => {
       const btn =
