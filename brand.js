@@ -1,5 +1,5 @@
 // brand.js
-// Brand normalization + fuzzy detection for Lost & Found sync server
+// Brand normalization + title-based detection for Lost & Found sync server
 
 // ---------------------------
 // 1. Canonical Brand List (exact Webflow names, accent-free)
@@ -375,58 +375,7 @@ export const BRAND_ALIASES = {
 };
 
 // ---------------------------
-// 3. Contextual Model Keywords (brand inference when missing)
-// ---------------------------
-
-export const CONTEXT_BRAND_KEYWORDS = {
-  "Louis Vuitton": [
-    "neverfull",
-    "speedy",
-    "alma",
-    "pochette",
-    "palm springs",
-    "keepall",
-    "noe",
-    "montsouris",
-    "montaigne",
-    "capucines",
-    "multicolore",
-    "epi",
-    "damier",
-    "monogram"
-  ],
-  "Hermes": [
-    "birkin",
-    "kelly",
-    "constance",
-    "evelyne",
-    "herbag",
-    "garden party"
-  ],
-  "Chanel": [
-    "classic flap",
-    "boy bag",
-    "caviar",
-    "gabrielle",
-    "coco handle"
-  ],
-  "Fendi": [
-    "baguette",
-    "peekaboo",
-    "zucca",
-    "zucchino"
-  ],
-  "Goyard": [
-    "st louis",
-    "st. louis"
-  ],
-  "Longchamp": [
-    "le pliage"
-  ]
-};
-
-// ---------------------------
-// 4. Utility: normalization
+// 3. Utility: normalization
 // ---------------------------
 
 function normalize(str = "") {
@@ -465,7 +414,7 @@ function levenshtein(a, b) {
 }
 
 // ---------------------------
-// 5. Brand Detection Core
+// 4. Brand Detection Core
 // ---------------------------
 
 export function canonicalizeBrand(rawBrand) {
@@ -506,37 +455,50 @@ export function canonicalizeBrand(rawBrand) {
   return CANONICAL_BRANDS.find(b => normalize(b) === normalize(bestMatch)) || null;
 }
 
-export function detectBrandFromProduct(title, vendor) {
+function escapeRegex(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * True if normHaystack contains normPhrase as whole words (handles multi-word brands).
+ * Prevents "cc" → Chanel matching inside "accents".
+ */
+function normHaystackContainsPhrase(normHaystack, normPhrase) {
+  if (!normHaystack || !normPhrase) return false;
+  const parts = normPhrase.split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return false;
+  const pattern = parts.map((p) => escapeRegex(p)).join("\\s+");
+  return new RegExp(`(^|\\s)${pattern}(\\s|$)`).test(normHaystack);
+}
+
+/**
+ * Short aliases (e.g. lv, cc, dg) must match as whole tokens, not substrings.
+ */
+function normHaystackContainsAlias(normHaystack, aliasNorm) {
+  if (!normHaystack || !aliasNorm) return false;
+  if (aliasNorm.length <= 4) {
+    return new RegExp(`(^|\\s)${escapeRegex(aliasNorm)}(\\s|$)`).test(normHaystack);
+  }
+  return normHaystack.includes(aliasNorm);
+}
+
+/**
+ * Detect luxury brand from product title only. Does not infer from Shopify vendor (avoids locking in past wrong guesses).
+ * Short aliases (e.g. cc, lv) match whole tokens only — "accents" no longer yields Chanel via "cc".
+ */
+export function detectBrandFromProduct(title, _vendor) {
   const normTitle = normalize(title || "");
-  const normVendor = normalize(vendor || "");
 
-  // Vendor
-  const vendorCanonical = canonicalizeBrand(vendor);
-  if (vendorCanonical) return vendorCanonical;
-
-  // Title contains brand
-  for (const brand of CANONICAL_BRANDS) {
-    if (normTitle.includes(normalize(brand))) return brand;
+  // Longest canonical names first so "Kate Spade New York" beats "Kate Spade"
+  const brandsByLen = [...CANONICAL_BRANDS].sort((a, b) => normalize(b).length - normalize(a).length);
+  for (const brand of brandsByLen) {
+    const nb = normalize(brand);
+    if (nb && normHaystackContainsPhrase(normTitle, nb)) return brand;
   }
 
-  // Alias in title
+  // Aliases in title (short aliases cannot match inside unrelated words)
   for (const [aliasNorm, canonical] of Object.entries(BRAND_ALIASES)) {
-    if (normTitle.includes(aliasNorm)) return canonical;
-  }
-
-  // Contextual
-  for (const [brand, keywords] of Object.entries(CONTEXT_BRAND_KEYWORDS)) {
-    for (const kw of keywords) {
-      if (normTitle.includes(normalize(kw))) return brand;
-    }
-  }
-
-  // Fuzzy fallback
-  const attempts = [normVendor, normTitle.split(" ").slice(0, 3).join(" ")];
-
-  for (const attempt of attempts) {
-    const guess = canonicalizeBrand(attempt);
-    if (guess) return guess;
+    if (normHaystackContainsAlias(normTitle, aliasNorm)) return canonical;
   }
 
   return null;
