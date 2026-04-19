@@ -5,6 +5,19 @@ const API_LISTING = `${API_SERVER}/api/listing?name=`;
 const PICKUP_LANDMARK_LINE =
   "Pickup is right by Scottsdale Quarter at Lost and Found Resale Interiors.";
 
+/**
+ * Marketplace/Craigslist pricing style: bump to next whole dollar only.
+ * Examples: 39 -> 40, 44 -> 45, 1499 -> 1500.
+ */
+function roundUpMarketplacePrice(rawPrice) {
+  const raw = String(rawPrice ?? "").trim();
+  if (!raw) return "";
+  const numeric = Number(raw.replace(/[^0-9.]/g, ""));
+  if (!Number.isFinite(numeric) || numeric <= 0) return raw;
+  const bumped = Math.floor(numeric) + 1;
+  return String(bumped);
+}
+
 function showQuickLinks({ productUrl, storeUrl, handbagsShopUrl, isLuxury }) {
   const panel = document.getElementById("quickLinks");
   const qlProduct = document.getElementById("qlProduct");
@@ -25,6 +38,30 @@ function hideQuickLinks() {
 
 const LUXURY_BRAND_PATTERN =
   /\b(gucci|chanel|prada|fendi|dior|ysl|saint laurent|louis vuitton|vuitton|lv|goyard|balenciaga|hermes|celine|bottega|bottega veneta|chloe|miu miu|valentino|versace|burberry|louboutin|michael kors|kate spade|tory burch|coach)\b/gi;
+
+/** Furniture / lighting / art-world designer & maker names (Craigslist title only; reduces policy risk). */
+const CRAIGSLIST_DESIGNER_BRAND_PATTERN =
+  /\b(?:tribu|herman\s+miller|knoll|vitra|minotti|cassina|poliform|flexform|moroso|kartell|flos|artemide|moooi|dedon|gloster|b&b\s+italia|bb\s+italia|boconcept|ligne\s+roset|roche\s+bobois|poltrona\s+frau|gubi|hay\s+design|muuto|normann\s+copenhagen|fritz\s+hansen|carl\s+hansen|thonet|usm\s+haller|eames|saarinen|noguchi|bertoia|le\s+corbusier|mies\s+van\s+der\s+rohe|philippe\s+starck|patricia\s+urquiola|marcel\s+breuer|hans\s+j\.\s*wegner|wegner|arne\s+jacobsen|jacobsen|poul\s+kjaerholm|kjaerholm|finn\s+juhl|juhl|george\s+nelson|nelson\s+platform|warren\s+platner|platner|isamu\s+noguchi|tom\s+dixon|dixon|restoration\s+hardware|rh\s+modern|design\s+within\s+reach|\bdwr\b)\b/gi;
+
+/**
+ * Craigslist posting title: drop designer/artist/brand names (AI and platform sensitivity).
+ * Keeps item type words (e.g. art, lounge chair, dining table).
+ */
+function sanitizeCraigslistTitle(rawTitle) {
+  let t = String(rawTitle || "").trim();
+  if (!t) return "";
+  const byAttribution = /\s+by\s+(?!the\b|owner\b|seller\b|us\b|me\b|appointment\b)[A-Za-z][A-Za-z.'-]*(?:\s+[A-Za-z][A-Za-z.'-]*){0,5}\b/gi;
+  t = t.replace(byAttribution, " ");
+  t = t.replace(CRAIGSLIST_DESIGNER_BRAND_PATTERN, " ");
+  t = t.replace(LUXURY_BRAND_PATTERN, " ");
+  t = t
+    .replace(/\(\s*\)/g, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/^[\s\-,:;|]+|[\s\-,:;|]+$/g, "")
+    .trim();
+  if (!t || t.length < 4) return String(rawTitle || "").trim().slice(0, 70) || "Furniture / home item";
+  return t.slice(0, 70).trim();
+}
 
 /**
  * Luxury title safety for Marketplace:
@@ -93,6 +130,50 @@ async function fetchImagesForListing(imageUrls) {
     }
   }
   return images;
+}
+
+/** Which Craigslist posting UI is showing (MAIN world probe). */
+async function detectCraigslistUiStep(tabId) {
+  try {
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      func: () => {
+        if (document.querySelector('input[name="PostingTitle"]')) return "details";
+        if (document.querySelector("#map") || document.querySelector(".map")) return "map";
+        const href = String(location.href || "").toLowerCase();
+        if (/[?&]s=editimage\b/.test(href) || /[?&]s=editpic\b/.test(href)) return "images";
+
+        const t = (document.body && document.body.innerText) || "";
+        const tl = t.toLowerCase();
+        const hasUploaderCopy =
+          /\bmaximum\s+24\b/i.test(t) ||
+          /\b0\s+images\s+of\s+a\s+maximum\s+24\b/i.test(tl) ||
+          /\bdone with images\b/i.test(tl) ||
+          /\bdrop image files here\b/i.test(tl);
+        const hasUploaderChrome =
+          document.querySelector("#uploader") ||
+          document.querySelector('input[type="file"][name="file"]') ||
+          document.querySelector('input[type="file"]') ||
+          [...document.querySelectorAll("a")].some((a) =>
+            /classic\s+image\s+uploader/i.test(String(a.textContent || "").replace(/\s+/g, " ").trim())
+          );
+        if (hasUploaderCopy && hasUploaderChrome) return "images";
+
+        if (tl.includes("unpublished draft")) return "publish";
+        return "unknown";
+      },
+    });
+    return result || "unknown";
+  } catch (e) {
+    console.warn("Listing extension: Craigslist page probe failed", e);
+    return "unknown";
+  }
+}
+
+function craigslistUrlHintsImageStep(url) {
+  const u = String(url || "").toLowerCase();
+  return /[?&]s=editimage\b/.test(u) || /[?&]s=editpic\b/.test(u) || /[/?]editimage\b/.test(u);
 }
 
 /**
@@ -173,6 +254,8 @@ document.getElementById("start").addEventListener("click", async () => {
   const handbagsShopUrl = "https://www.lostandfoundhandbags.com";
   const productUrl = (data.productUrl && String(data.productUrl).trim()) || storeUrl;
   const isLuxury = data.vertical === "luxury";
+  const marketplacePrice = roundUpMarketplacePrice(data.price);
+  const craigslistTitle = sanitizeCraigslistTitle(data.title || "");
   const facebookTitle = isLuxury
     ? sanitizeLuxuryFacebookTitle(data.title || "")
     : String(data.title || "");
@@ -191,17 +274,59 @@ document.getElementById("start").addEventListener("click", async () => {
       return;
     }
 
-    let images = [];
-    if (Array.isArray(data.images) && data.images.length) {
-      images = await fetchImagesForListing(data.images);
+    let uiStep = await detectCraigslistUiStep(tab.id);
+    if (uiStep === "unknown" && craigslistUrlHintsImageStep(craigslistTabUrl)) {
+      uiStep = "images";
+    }
+
+    if (uiStep === "images") {
+      let images = [];
+      if (Array.isArray(data.images) && data.images.length) {
+        images = await fetchImagesForListing(data.images);
+      }
+      if (!images.length) {
+        console.warn("Listing extension: no listing images from API; check product has photos");
+        return;
+      }
+      const imagePayload = {
+        platform: "craigslist",
+        imagesOnly: true,
+        images,
+      };
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          world: "MAIN",
+          func: (p) => {
+            window.__CL_LISTING_EXT = p;
+          },
+          args: [imagePayload],
+        });
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          world: "MAIN",
+          files: ["inject-craigslist.js"],
+        });
+        console.log("Listing extension: Craigslist image step — attached", images.length, "image(s)");
+      } catch (e) {
+        console.error("Listing extension: Craigslist image inject failed", e);
+      }
+      return;
+    }
+
+    if (uiStep !== "details" && uiStep !== "map" && uiStep !== "publish") {
+      console.warn(
+        "Listing extension: open Craigslist posting form (title), map, or image upload page. On photos: click Start again."
+      );
+      return;
     }
 
     const titleAndDesc = `${data.title || ""} ${data.description || ""}`;
     const craigslistCondition = /\bas\s*is\b/i.test(titleAndDesc) ? "fair" : "good";
 
     const craigslistBlurbFacts = {
-      title: data.title || "",
-      price: data.price != null ? String(data.price) : "",
+      title: craigslistTitle || data.title || "",
+      price: marketplacePrice,
       vertical: data.vertical || "furniture",
       productDescription: data.description || "",
       pickupAddress: "15530 N Greenway Hayden Loop Suite 100, Scottsdale, AZ 85260",
@@ -237,8 +362,8 @@ document.getElementById("start").addEventListener("click", async () => {
 
     const payload = {
       platform: "craigslist",
-      title: data.title || "",
-      price: data.price != null ? String(data.price) : "",
+      title: craigslistTitle || data.title || "",
+      price: marketplacePrice,
       description: craigslistDescription,
       zip: "85251",
       city: "Scottsdale",
@@ -247,7 +372,8 @@ document.getElementById("start").addEventListener("click", async () => {
       condition: craigslistCondition,
       /** Shopify vendor (same text for CL make + model per store workflow). */
       vendor,
-      images,
+      /** Fetched again on image step (second Start); keeps first inject small. */
+      images: [],
       /** Location info — after "show address" (same storefront as pickup footer). */
       storeStreet: "15530 N Greenway Hayden Loop Suite 100",
       storeCrossStreet: "",
@@ -309,7 +435,7 @@ document.getElementById("start").addEventListener("click", async () => {
   const blurbFacts = {
     title: facebookTitle || "",
     sourceTitle: data.title || "",
-    price: data.price != null ? String(data.price) : "",
+    price: marketplacePrice,
     vertical: data.vertical || "furniture",
     productDescription: data.description || "",
     pickupAddress,
@@ -344,7 +470,7 @@ document.getElementById("start").addEventListener("click", async () => {
   const payload = {
     platform: "facebook",
     title: facebookTitle || "",
-    price: data.price != null ? String(data.price) : "",
+    price: marketplacePrice,
     description: fullDescription,
     images,
   };
@@ -367,3 +493,14 @@ document.getElementById("start").addEventListener("click", async () => {
     console.error("Listing extension: inject failed", e);
   }
 });
+
+(function initCraigslistPhotoHint() {
+  const platformEl = document.getElementById("platform");
+  const hint = document.getElementById("craigslistPhotoHint");
+  if (!platformEl || !hint) return;
+  function sync() {
+    hint.style.display = platformEl.value === "craigslist" ? "block" : "none";
+  }
+  platformEl.addEventListener("change", sync);
+  sync();
+})();

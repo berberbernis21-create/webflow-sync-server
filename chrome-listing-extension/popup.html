@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { font-family: sans-serif; width: 300px; padding: 12px; }
+    label { display: block; margin-top: 8px; font-size: 12px; }
+    input, select { width: 100%; box-sizing: border-box; margin-top: 4px; }
+    button { margin-top: 12px; width: 100%; padding: 8px; cursor: pointer; }
+    #quickLinks { display: none; margin-top: 12px; padding-top: 10px; border-top: 1px solid #ddd; }
+    #quickLinks.visible { display: block; }
+    #quickLinks .ql-title { font-size: 11px; font-weight: 600; color: #333; margin-bottom: 6px; }
+    #quickLinks a {
+      display: block;
+      font-size: 12px;
+      margin-top: 6px;
+      color: #1877f2;
+      word-break: break-all;
+    }
+    #quickLinks a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <label>Product name</label>
+  <input type="text" id="name" placeholder="Search Shopify by title" />
+
+  <label>Platform</label>
+  <select id="platform">
+    <option value="facebook">Facebook</option>
+    <option value="craigslist">Craigslist</option>
+  </select>
+
+  <button type="button" id="start">Start</button>
+
+  <p id="craigslistPhotoHint" style="display: none; font-size: 11px; color: #444; margin-top: 8px; line-height: 1.35">
+    Craigslist: use <strong>Start</strong> on the posting form first. Photos are usually the <strong>step after the map</strong> (not the same screen as the map). On that <strong>add photos</strong> page, click <strong>Start</strong> again to attach listing images from the API.
+  </p>
+
+  <div id="quickLinks">
+    <div class="ql-title">Quick links (Facebook description is plain text; open here)</div>
+    <a id="qlProduct" href="#" target="_blank" rel="noopener noreferrer">This item</a>
+    <a id="qlHandbags" href="#" target="_blank" rel="noopener noreferrer" style="display: none">Handbags shop</a>
+    <a id="qlStore" href="#" target="_blank" rel="noopener noreferrer">Lost &amp; Found Resale</a>
+    <a id="qlEmail" href="mailto:info@lostandfoundresale.com">info@lostandfoundresale.com</a>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

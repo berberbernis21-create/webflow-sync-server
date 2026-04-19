@@ -1,6 +1,8 @@
 /**
  * Craigslist posting flow - reads window.__CL_LISTING_EXT set by popup.js (MAIN world).
  * Does not interact with Facebook listing globals.
+ *
+ * imagesOnly: set by popup when you are already on CL's image upload step (second Start click).
  */
 (function () {
   const listing = window.__CL_LISTING_EXT;
@@ -205,19 +207,183 @@
     }
   }
 
+  function base64ToFile(base64, mime, name) {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new File([bytes], name, { type: mime });
+  }
+
+  function filesFromListingImages(images) {
+    return (images || []).map((img) => base64ToFile(img.base64, img.mime, img.name));
+  }
+
+  function pickFileInput() {
+    const list = [...document.querySelectorAll('input[type="file"]')];
+    const named = list.find((el) => String(el.name || "").toLowerCase() === "file");
+    return named || list.find((el) => !el.disabled) || list[0] || null;
+  }
+
+  function findClassicImageUploaderLink() {
+    return [...document.querySelectorAll("a")].find((a) =>
+      /classic\s+image\s+uploader/i.test(String(a.textContent || "").replace(/\s+/g, " ").trim())
+    );
+  }
+
+  function findDropTarget() {
+    return (
+      document.querySelector("#uploader") ||
+      [...document.querySelectorAll("div")].find((d) => /drop image files here/i.test(d.textContent || "")) ||
+      null
+    );
+  }
+
+  function trySyntheticDrop(files) {
+    if (!files.length) return false;
+    const el = findDropTarget();
+    if (!el) return false;
+    const dt = new DataTransfer();
+    files.forEach((f) => {
+      try {
+        dt.items.add(f);
+      } catch (e) {
+        console.warn("Craigslist: DataTransfer.add failed", e);
+      }
+    });
+    try {
+      el.dispatchEvent(new DragEvent("dragenter", { bubbles: true, cancelable: true, dataTransfer: dt }));
+      const over = new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dt });
+      over.preventDefault();
+      el.dispatchEvent(over);
+      el.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt }));
+      console.log("Craigslist: synthetic drop dispatched");
+      return true;
+    } catch (e) {
+      console.warn("Craigslist: synthetic drop failed", e);
+      return false;
+    }
+  }
+
+  function assignFilesToInput(input, images) {
+    const dt = new DataTransfer();
+    images.forEach((img) => {
+      dt.items.add(base64ToFile(img.base64, img.mime, img.name));
+    });
+    input.files = dt.files;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    try {
+      input.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    } catch (_) {
+      /* InputEvent optional */
+    }
+  }
+
+  function maybeClickClassicAddButton(input) {
+    const form = input && input.closest ? input.closest("form") : null;
+    if (!form) return;
+    const go =
+      form.querySelector('button[type="submit"][name="go"]') ||
+      form.querySelector('input[type="submit"][name="go"]') ||
+      form.querySelector("button.addbtn");
+    if (go && typeof go.click === "function") {
+      console.log("Craigslist: clicking classic add-image submit");
+      go.click();
+    }
+  }
+
+  function scheduleDoneWithImages() {
+    setTimeout(() => {
+      const doneBtn = clickButtonByText("done");
+      if (doneBtn) doneBtn.click();
+    }, 4500);
+  }
+
+  /** Called on image step (from flow or imagesOnly second Start). */
+  function runCraigslistImages(listingRef) {
+    const imgs = listingRef.images;
+    if (!imgs || !imgs.length) {
+      console.warn("Craigslist: no images in payload");
+      scheduleDoneWithImages();
+      return;
+    }
+
+    const files = filesFromListingImages(imgs);
+
+    function tryAssignFiles() {
+      const input = pickFileInput();
+      if (!input) {
+        console.warn("Craigslist: no file input; tried classic uploader");
+        if (trySyntheticDrop(files)) {
+          scheduleDoneWithImages();
+        } else {
+          scheduleDoneWithImages();
+        }
+        return;
+      }
+      assignFilesToInput(input, imgs);
+      console.log("Craigslist: assigned files to input", input.name || "(file)");
+      maybeClickClassicAddButton(input);
+      scheduleDoneWithImages();
+    }
+
+    if (pickFileInput()) {
+      tryAssignFiles();
+      return;
+    }
+
+    if (trySyntheticDrop(files)) {
+      scheduleDoneWithImages();
+      return;
+    }
+
+    const classic = findClassicImageUploaderLink();
+    if (classic) {
+      console.log("Craigslist: opening classic image uploader");
+      classic.click();
+      setTimeout(tryAssignFiles, 1500);
+      return;
+    }
+
+    console.warn("Craigslist: could not find file input, drop zone, or classic uploader link");
+    scheduleDoneWithImages();
+  }
+
+  if (listing.imagesOnly === true) {
+    console.log("Craigslist: images-only inject");
+    runCraigslistImages(listing);
+    return;
+  }
+
   function pageText() {
     return String((document.body && document.body.innerText) || "");
   }
 
+  function isCraigslistImageUploadStep() {
+    const href = String(location.href || "").toLowerCase();
+    if (/[?&]s=editimage\b/.test(href) || /[?&]s=editpic\b/.test(href)) return true;
+    const t = pageText();
+    const tl = t.toLowerCase();
+    const hasUploaderCopy =
+      /\bmaximum\s+24\b/i.test(t) ||
+      /\b0\s+images\s+of\s+a\s+maximum\s+24\b/i.test(tl) ||
+      /\bdone with images\b/i.test(tl) ||
+      /\bdrop image files here\b/i.test(tl);
+    const hasUploaderChrome =
+      document.querySelector("#uploader") ||
+      document.querySelector('input[type="file"][name="file"]') ||
+      document.querySelector('input[type="file"]') ||
+      [...document.querySelectorAll("a")].some((a) =>
+        /classic\s+image\s+uploader/i.test(String(a.textContent || "").replace(/\s+/g, " ").trim())
+      );
+    return hasUploaderCopy && hasUploaderChrome;
+  }
+
   const isDetailsPage = document.querySelector('input[name="PostingTitle"]');
   const isMapPage = document.querySelector("#map") || document.querySelector(".map");
-  /** Modern CL hides file input until "Use classic image uploader" is used. */
-  const isImagePage =
-    !isDetailsPage &&
-    !isMapPage &&
-    (document.querySelector('input[type="file"]') ||
-      /\bdone with images\b/i.test(pageText()) ||
-      /\bmaximum\s+24\b/i.test(pageText()));
+  const isImagePage = !isDetailsPage && !isMapPage && isCraigslistImageUploadStep();
   const isPublishPage = document.body.innerText.toLowerCase().includes("unpublished draft");
 
   if (isDetailsPage) {
@@ -233,7 +399,7 @@
     setDeliveryAvailableChecked();
     setShowAddressAndFillStore();
 
-    console.log("Craigslist: Page 1 filled");
+    console.log("Craigslist: Page 1 filled (photos: use image step + Start again)");
     return;
   }
 
@@ -259,81 +425,8 @@
   }
 
   if (isImagePage) {
-    console.log("Craigslist: Image page");
-
-    function base64ToFile(base64, mime, name) {
-      const binary = atob(base64);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
-      }
-      return new File([bytes], name, { type: mime });
-    }
-
-    function uploadImages(input, images) {
-      const dt = new DataTransfer();
-      images.forEach((img) => {
-        dt.items.add(base64ToFile(img.base64, img.mime, img.name));
-      });
-      input.files = dt.files;
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      input.dispatchEvent(new Event("change", { bubbles: true }));
-    }
-
-    function pickFileInput() {
-      const list = [...document.querySelectorAll('input[type="file"]')];
-      return list.find((el) => !el.disabled) || list[0] || null;
-    }
-
-    function findClassicImageUploaderLink() {
-      return [...document.querySelectorAll("a")].find((a) =>
-        /classic\s+image\s+uploader/i.test(String(a.textContent || "").replace(/\s+/g, " ").trim())
-      );
-    }
-
-    function scheduleDoneWithImages() {
-      setTimeout(() => {
-        const doneBtn = clickButtonByText("done");
-        if (doneBtn) doneBtn.click();
-      }, 2200);
-    }
-
-    function tryAssignFiles() {
-      const input = pickFileInput();
-      if (!input) {
-        console.warn("Craigslist: no file input after classic uploader switch");
-        scheduleDoneWithImages();
-        return;
-      }
-      if (!listing.images?.length) {
-        scheduleDoneWithImages();
-        return;
-      }
-      uploadImages(input, listing.images);
-      console.log("Craigslist: Images assigned to file input");
-      scheduleDoneWithImages();
-    }
-
-    if (!listing.images?.length) {
-      scheduleDoneWithImages();
-      return;
-    }
-
-    if (pickFileInput()) {
-      tryAssignFiles();
-      return;
-    }
-
-    const classic = findClassicImageUploaderLink();
-    if (classic) {
-      console.log("Craigslist: opening classic image uploader for file input");
-      classic.click();
-      setTimeout(tryAssignFiles, 900);
-      return;
-    }
-
-    console.warn("Craigslist: no file input and no classic uploader link");
-    scheduleDoneWithImages();
+    console.log("Craigslist: Image page (same-tab flow)");
+    runCraigslistImages(listing);
     return;
   }
 
