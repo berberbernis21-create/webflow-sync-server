@@ -1056,6 +1056,16 @@ async function updateWebflowEcommerceProduct(siteId, productId, fieldData, token
   // isArchived can clear archive / disturb publish state when Webflow merges the update.
   webflowLog("info", { event: "product.patch.prefetch", productId, reason: "authoritative sku + isArchived" });
   const current = await getWebflowEcommerceProductById(siteId, productId, token);
+  const currentProductFieldData =
+    current?.fieldData && typeof current.fieldData === "object" ? current.fieldData : {};
+  if (fieldDataEffectivelyEqual(data, currentProductFieldData)) {
+    webflowLog("info", {
+      event: "product.patch.skipped_unchanged",
+      productId,
+      message: "No product field changes detected; skipping Webflow PATCH",
+    });
+    return;
+  }
   let skuFieldData = current?.skus?.[0]?.fieldData;
   if (skuFieldData == null || typeof skuFieldData !== "object") {
     webflowLog("info", { event: "product.patch.sku_empty_after_prefetch", productId });
@@ -1966,6 +1976,25 @@ function detectCategoryFurniture(title, descriptionHtml, tags, dimensions) {
   const hasDesc = !!descText;
 
   if (!name && !descAndTags) return "Accessories";
+
+  // Hard guard: if title/description clearly says art, never classify as Rugs.
+  const artSignals = [
+    " art ",
+    " artwork",
+    " painting",
+    " paintings",
+    " wall art",
+    " canvas",
+    " tapestry",
+    " print",
+    " prints",
+    " lithograph",
+    " giclee",
+    " framed art",
+    " sculpture",
+  ];
+  const paddedText = ` ${[name, descAndTags].filter(Boolean).join(" ")} `;
+  if (artSignals.some((s) => paddedText.includes(s))) return "ArtMirrors";
 
   // Dimension-based override for tables (height/depth/width rules)
   const dimOverride = applyTableDimensionRules(dimensions, name, descAndTags);
