@@ -2107,6 +2107,16 @@ function hasFurnitureOrArtSignals(product) {
   return signals.some((w) => combined.includes(w));
 }
 
+/**
+ * Hard vertical guard: if title clearly says art, this listing must never go to Luxury.
+ * Uses word boundaries so "art" does not match inside unrelated words.
+ */
+function titleIndicatesArtNeverLuxury(title) {
+  const t = (title || "").toLowerCase();
+  if (!t) return false;
+  return /\b(art|signed art|wall art|painting|paintings|canvas|lithograph|giclee|serigraph|sculpture|print|prints|framed art|tapestry)\b/i.test(t);
+}
+
 /** True when product is obviously luxury (jewelry, earring, bracelet, pouch, or clearly a luxury accessory).
  *  IMPORTANT: Brand alone is NOT enough — we require accessory/jewelry cues so furniture/housewares from luxury brands stay in Furniture & Home.
  */
@@ -3966,17 +3976,22 @@ async function syncSingleProductCore(product, cache, options = {}) {
   }
 
   let vertical, detectedVertical, verticalCorrected;
+  const forceFurnitureByArtTitle = titleIndicatesArtNeverLuxury(product.title);
   if (!recoveredFromWebflow) {
     const llmLogPayload = {};
     const llmResult = await classifyWithLLM(product, llmLogPayload, webflowLog);
-    detectedVertical = llmResult.category === "LUXURY" ? "luxury" : "furniture";
+    detectedVertical = forceFurnitureByArtTitle
+      ? "furniture"
+      : (llmResult.category === "LUXURY" ? "luxury" : "furniture");
     const correctedToLuxury = cacheEntry?.vertical === "furniture" && detectedVertical === "luxury";
     const correctedToFurniture = cacheEntry?.vertical === "luxury" && detectedVertical === "furniture";
-    vertical = correctedToLuxury
-      ? "luxury"
-      : correctedToFurniture
-        ? "furniture"
-        : (cacheEntry?.vertical ?? detectedVertical);
+    vertical = forceFurnitureByArtTitle
+      ? "furniture"
+      : correctedToLuxury
+        ? "luxury"
+        : correctedToFurniture
+          ? "furniture"
+          : (cacheEntry?.vertical ?? detectedVertical);
     verticalCorrected = correctedToLuxury;
     webflowLog("info", {
     event: "vertical.resolved",
@@ -3989,6 +4004,14 @@ async function syncSingleProductCore(product, cache, options = {}) {
     llmReasoning: llmResult.reasoning?.slice(0, 120),
     llmOverride: llmLogPayload.override ?? null,
     });
+    if (forceFurnitureByArtTitle) {
+      webflowLog("info", {
+        event: "vertical.override_art_title",
+        shopifyProductId,
+        productTitle: product.title || "",
+        message: "Title indicates art; forcing furniture vertical and blocking luxury placement",
+      });
+    }
     if (llmLogPayload.raw != null || llmLogPayload.override) {
       webflowLog("info", { event: "llm_vertical.audit", shopifyProductId, ...llmLogPayload });
     }
@@ -4139,6 +4162,16 @@ async function syncSingleProductCore(product, cache, options = {}) {
   } else {
     vertical = recoveredFromWebflow.vertical;
     detectedVertical = vertical;
+    if (forceFurnitureByArtTitle && vertical !== "furniture") {
+      vertical = "furniture";
+      detectedVertical = "furniture";
+      webflowLog("info", {
+        event: "vertical.override_art_title_recovered",
+        shopifyProductId,
+        productTitle: product.title || "",
+        message: "Recovered vertical was non-furniture but title indicates art; forcing furniture",
+      });
+    }
   }
 
   const config = getWebflowConfig(vertical);
