@@ -82,7 +82,9 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
     "vanity", "vanity table", "vanity desk", "wardrobe", "wardrobes",
     "highboy", "lowboy", "tall boy", "blanket chest", "hope chest",
     "canopy bed", "four poster", "sleigh bed", "platform bed",
-    "bedroom set", "master bedroom"
+    "bedroom set", "master bedroom",
+    "mattress", "mattresses", "box spring", "box springs", "split box",
+    "pillow top", "pillow-top", "euro top", "box foundation", "adjustable base"
   ],
 
   Accessories: [

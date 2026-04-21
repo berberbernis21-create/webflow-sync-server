@@ -2029,6 +2029,24 @@ function furnitureAccessoryCategoryOverrideTitle(title) {
   return null;
 }
 
+/** Mattresses / sleep surfaces: title + description + tags. Overrides LLM "Accessories" when copy matches "pillow"/"box" from pillow-top or box spring. */
+function furnitureSleepSurfaceIndicatesBedroom(title, descriptionHtml, tags) {
+  const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const name = ((title || "").trim()).toLowerCase();
+  const descText = stripHtml(descriptionHtml || "").trim().toLowerCase();
+  const tagsStr = Array.isArray(tags) ? tags.join(" ").toLowerCase() : typeof tags === "string" ? tags.toLowerCase() : "";
+  const hay = `${name} ${descText} ${tagsStr}`;
+  if (!hay.trim()) return false;
+  if (/\bmattresses?\b/i.test(hay)) return true;
+  if (/\bbox[\s-]?springs?\b/i.test(hay)) return true;
+  if (/\bbox[\s-]?foundations?\b/i.test(hay)) return true;
+  if (/\bpillow[\s-]?top\b/i.test(hay)) return true;
+  if (/\beuro[\s-]?top\b/i.test(hay)) return true;
+  if (/\badjustable[\s-]?(base|bed)s?\b/i.test(hay)) return true;
+  if (/\bsplit[\s-]?box\b/i.test(hay)) return true;
+  return false;
+}
+
 function detectCategoryFurniture(title, descriptionHtml, tags, dimensions) {
   const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
   const descText = stripHtml(descriptionHtml || "").trim();
@@ -2038,6 +2056,8 @@ function detectCategoryFurniture(title, descriptionHtml, tags, dimensions) {
   const hasDesc = !!descText;
 
   if (!name && !descAndTags) return "Accessories";
+
+  if (furnitureSleepSurfaceIndicatesBedroom(title, descriptionHtml, tags)) return "Bedroom";
 
   // Hard guard: if title/description clearly says art, never classify as Rugs.
   const artSignals = [
@@ -4353,7 +4373,8 @@ async function syncSingleProductCore(product, cache, options = {}) {
     // Cache-missing path: no LLM; use keyword-only category.
     if (vertical === "furniture") {
       const forcedCat = furnitureAccessoryCategoryOverrideTitle(name);
-      const resolved = forcedCat ?? detectCategoryFurniture(name, description, getProductTagsArray(product), dimensions);
+      let resolved = forcedCat ?? detectCategoryFurniture(name, description, getProductTagsArray(product), dimensions);
+      if (furnitureSleepSurfaceIndicatesBedroom(name, description, getProductTagsArray(product))) resolved = "Bedroom";
       categoryForMetafield = mapFurnitureCategoryForShopify(resolved);
     } else {
       if (soldNow) categoryForMetafield = "Recently Sold";
@@ -4370,6 +4391,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
     let resolved = llmCategory?.category ?? detectCategoryFurniture(name, description, getProductTagsArray(product), dimensions);
     const forcedCat = furnitureAccessoryCategoryOverrideTitle(name);
     if (forcedCat) resolved = forcedCat;
+    if (furnitureSleepSurfaceIndicatesBedroom(name, description, getProductTagsArray(product))) resolved = "Bedroom";
     categoryForMetafield = mapFurnitureCategoryForShopify(resolved);
   } else {
     if (soldNow) {
