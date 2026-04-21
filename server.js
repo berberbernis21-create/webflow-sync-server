@@ -1049,6 +1049,17 @@ function isWebflowRemoteAssetImportError(err) {
   );
 }
 
+function isWebflowDuplicateSlugError(err) {
+  const status = err?.response?.status;
+  const details = err?.response?.data?.details;
+  if (status !== 400 || !Array.isArray(details)) return false;
+  return details.some(
+    (d) =>
+      d?.param === "slug" &&
+      /unique value is already in database/i.test(String(d?.description || ""))
+  );
+}
+
 async function updateWebflowEcommerceProduct(siteId, productId, fieldData, token, _existingProduct = null) {
   const url = `https://api.webflow.com/v2/sites/${siteId}/products/${productId}`;
   let data = sanitizeCategoryForWebflow({ ...fieldData });
@@ -2111,6 +2122,8 @@ const LUXURY_WEARABLE_CUES = [
   "backpack", "backpacks", "belt", "belts", "wallet", "wallets", "card holder", "cardholder",
   "handbag", "handbags", "bag", "bags", "crossbody", "clutch", "purse", "tote", "wristlet",
   "shoulder bag", "satchel", "luggage", "duffle", "duffel", "briefcase",
+  "bangle", "bangles", "bracelet", "bracelets", "cuff", "cuffs", "ring", "rings",
+  "necklace", "necklaces", "earring", "earrings", "pendant", "pendants", "brooch", "brooches",
 ];
 const ART_CUES_STRONG = [
   "signed art", "wall art", "framed art", "painting", "paintings", "lithograph", "giclee",
@@ -2150,7 +2163,7 @@ function resolveVerticalFromEvidence(product, llmDetectedVertical) {
     return { vertical: "luxury", reason: "evidence_wearable_cue" };
   }
   // Art/furniture only wins when supported by meaningful context, not one isolated token.
-  if (hasStrongArtCue || (hasGenericArtWord && (hasFurnitureCue || hasDimsOrWeight))) {
+  if (hasStrongArtCue || (hasGenericArtWord && hasFurnitureCue)) {
     return { vertical: "furniture", reason: "evidence_art_home_cues" };
   }
   if (hasFurnitureCue && hasDimsOrWeight) {
@@ -5121,7 +5134,30 @@ async function syncSingleProductCore(product, cache, options = {}) {
           status: createErr.response?.status,
           responseBody: createErr.response?.data,
         });
-        throw createErr;
+        if (isWebflowDuplicateSlugError(createErr)) {
+          const existingBySlug = await findExistingWebflowEcommerceProduct(
+            shopifyProductId,
+            slug,
+            createConfig,
+            name
+          );
+          if (existingBySlug?.id) {
+            newId = existingBySlug.id;
+            webflowLog("warn", {
+              event: "create.ecommerce.slug_collision_recovered",
+              shopifyProductId,
+              productTitle: name,
+              slug,
+              recoveredWebflowId: newId,
+              message:
+                "Create hit duplicate slug; recovered by linking to existing ecommerce product",
+            });
+          } else {
+            throw createErr;
+          }
+        } else {
+          throw createErr;
+        }
       }
     } else {
       webflowLog("info", { event: "create.cms.start", shopifyProductId, productTitle: name, collectionId: createConfig.collectionId });
@@ -5146,9 +5182,32 @@ async function syncSingleProductCore(product, cache, options = {}) {
           status: createErr.response?.status,
           responseBody: createErr.response?.data,
         });
-        throw createErr;
+        if (isWebflowDuplicateSlugError(createErr)) {
+          const existingBySlug = await findExistingWebflowItem(
+            shopifyProductId,
+            shopifyUrl,
+            slug,
+            createConfig
+          );
+          if (existingBySlug?.id) {
+            newId = existingBySlug.id;
+            webflowLog("warn", {
+              event: "create.cms.slug_collision_recovered",
+              shopifyProductId,
+              productTitle: name,
+              slug,
+              recoveredWebflowId: newId,
+              message:
+                "Create hit duplicate slug; recovered by linking to existing CMS item",
+            });
+          } else {
+            throw createErr;
+          }
+        } else {
+          throw createErr;
+        }
       }
-      newId = resp.data.id;
+      if (!newId) newId = resp?.data?.id;
       webflowLog("info", { event: "create.cms.ok", shopifyProductId, productTitle: name, webflowId: newId });
     }
     cache[shopifyProductId] = {
