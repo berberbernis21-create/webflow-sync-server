@@ -62,14 +62,14 @@ async function sendDuplicatePlacementEmail(conflictLog, duplicateEmailSentFor) {
         : String(detectedVertical || "Unknown");
   const intro =
     prev === "luxury"
-      ? "This item was listed on Luxury / Handbags, but we think it belongs on Furniture & Home. We removed the Handbags copy so it only shows in one place for now."
+      ? "It was listed on Luxury / Handbags, but we think it belongs on Furniture & Home. We removed the Handbags copy so it only shows in one place for now."
       : prev === "furniture"
-        ? "This item was listed on Furniture & Home, but we think it belongs on Luxury / Handbags. We removed the Furniture copy so it only shows in one place for now."
-        : "This item was listed on one site, but we think it belongs on the other site. We removed the extra copy so it only shows in one place for now.";
+        ? "It was listed on Furniture & Home, but we think it belongs on Luxury / Handbags. We removed the Furniture copy so it only shows in one place for now."
+        : "It was listed on one site, but we think it belongs on the other site. We removed the extra copy so it only shows in one place for now.";
   const wrongGuess =
     "If we got it wrong: update the product in Traxia. Change the title so it clearly says what the item is (lamp, vase, tray, handbag, wallet, etc.). Fix tags and product type if they do not match. Then run your next sync so we can place it correctly.";
   const body = [
-    `This item: ${productTitle || "(none)"}`,
+    `${productTitle || "(none)"}`,
     "",
     intro,
     "",
@@ -84,7 +84,7 @@ async function sendDuplicatePlacementEmail(conflictLog, duplicateEmailSentFor) {
   ].join("\n");
   const htmlBody = `
     <div style="font-family: Arial, sans-serif; line-height: 1.45; color: #111;">
-      <p>This item: <strong>${String(productTitle || "(none)")}</strong></p>
+      <p><strong>${String(productTitle || "(none)")}</strong></p>
       <p>${intro}</p>
       <p>${wrongGuess}</p>
       <p><strong>Details:</strong><br/>
@@ -212,6 +212,8 @@ const LOG_ERROR = LOG_LEVEL === "error" || LOG_LEVEL === "warn" || LOG_LEVEL ===
 const LOG_WARN = LOG_LEVEL === "warn" || LOG_LEVEL === "info";
 const LOG_INFO = LOG_LEVEL === "info";
 const LOG_REQUESTS = LOG_INFO; // skip per-request logs unless info
+// Default strict: do not touch Webflow when Shopify snapshot is unchanged.
+const WEBFLOW_STRICT_NOOP_UPDATES = process.env.WEBFLOW_STRICT_NOOP_UPDATES !== "false";
 
 let syncRequestId = null;
 let syncStartTime = null;
@@ -2105,14 +2107,56 @@ function hasFurnitureOrArtSignals(product) {
   return signals.some((w) => combined.includes(w));
 }
 
+const LUXURY_WEARABLE_CUES = [
+  "backpack", "backpacks", "belt", "belts", "wallet", "wallets", "card holder", "cardholder",
+  "handbag", "handbags", "bag", "bags", "crossbody", "clutch", "purse", "tote", "wristlet",
+  "shoulder bag", "satchel", "luggage", "duffle", "duffel", "briefcase",
+];
+const ART_CUES_STRONG = [
+  "signed art", "wall art", "framed art", "painting", "paintings", "lithograph", "giclee",
+  "serigraph", "sculpture", "acrylic on canvas", "oil on canvas", "mixed media", "original art",
+];
+const FURNITURE_HOME_CUES = [
+  "lamp", "lamps", "chandelier", "sconce", "mirror", "mirrors", "rug", "rugs", "dining table",
+  "coffee table", "side table", "nightstand", "dresser", "chair", "chairs", "sofa", "sectional",
+  "console", "bookcase", "bedroom", "living room", "dining room", "outdoor", "patio", "decor",
+];
+
+function textHasAnyWordCue(text, cues) {
+  if (!text) return false;
+  for (const cue of cues) {
+    if (matchWordBoundary(text, cue)) return true;
+  }
+  return false;
+}
+
 /**
- * Hard vertical guard: if title clearly says art, this listing must never go to Luxury.
- * Uses word boundaries so "art" does not match inside unrelated words.
+ * Resolve final vertical from combined evidence (name + description + dimensions + weight).
+ * This runs as a guard over LLM output to prevent one-word misroutes.
  */
-function titleIndicatesArtNeverLuxury(title) {
-  const t = (title || "").toLowerCase();
-  if (!t) return false;
-  return /\b(art|signed art|wall art|painting|paintings|canvas|lithograph|giclee|serigraph|sculpture|print|prints|framed art|tapestry)\b/i.test(t);
+function resolveVerticalFromEvidence(product, llmDetectedVertical) {
+  const title = (product?.title || "").trim().toLowerCase();
+  const desc = (product?.body_html || "").replace(/<[^>]*>/g, " ").trim().toLowerCase();
+  const text = [title, desc].filter(Boolean).join(" ");
+  const dims = getDimensionsFromProduct(product || {});
+  const hasDimsOrWeight = hasAnyDimensions(dims);
+  const hasWearableCue = textHasAnyWordCue(text, LUXURY_WEARABLE_CUES);
+  const hasStrongArtCue = textHasAnyWordCue(text, ART_CUES_STRONG);
+  const hasFurnitureCue = textHasAnyWordCue(text, FURNITURE_HOME_CUES);
+  const hasGenericArtWord = matchWordBoundary(text, "art");
+
+  // Wearables always stay Luxury, even if words like "canvas" appear.
+  if (hasWearableCue) {
+    return { vertical: "luxury", reason: "evidence_wearable_cue" };
+  }
+  // Art/furniture only wins when supported by meaningful context, not one isolated token.
+  if (hasStrongArtCue || (hasGenericArtWord && (hasFurnitureCue || hasDimsOrWeight))) {
+    return { vertical: "furniture", reason: "evidence_art_home_cues" };
+  }
+  if (hasFurnitureCue && hasDimsOrWeight) {
+    return { vertical: "furniture", reason: "evidence_furniture_plus_dimensions" };
+  }
+  return { vertical: llmDetectedVertical, reason: "llm" };
 }
 
 /** True when product is obviously luxury (jewelry, earring, bracelet, pouch, or clearly a luxury accessory).
@@ -3743,6 +3787,34 @@ async function syncSingleProductCore(product, cache, options = {}) {
   let recoveredFromWebflow = null;
 
   if (
+    WEBFLOW_STRICT_NOOP_UPDATES &&
+    !recoveredFromWebflow &&
+    nameOrDescriptionUnchanged &&
+    shopifyDataUnchangedForCache &&
+    cacheEntry?.webflowId &&
+    !forceReclassify
+  ) {
+    const vertical = cacheEntry.vertical ?? "luxury";
+    cache[shopifyProductId] = {
+      hash: currentHash,
+      contentHash: currentContentHash,
+      webflowId: cacheEntry.webflowId,
+      lastQty: qty,
+      vertical,
+      ...soldMarkedAtPayload(cacheEntry, qty),
+    };
+    webflowLog("info", {
+      event: "sync_product.skip_unchanged_no_touch",
+      shopifyProductId,
+      productTitle: product.title,
+      webflowId: cacheEntry.webflowId,
+      vertical,
+      message: "Shopify snapshot unchanged; skipping all Webflow read/write touch",
+    });
+    return { operation: "skip", id: cacheEntry.webflowId };
+  }
+
+  if (
     !recoveredFromWebflow &&
     nameOrDescriptionUnchanged &&
     shopifyDataUnchangedForCache &&
@@ -3974,22 +4046,19 @@ async function syncSingleProductCore(product, cache, options = {}) {
   }
 
   let vertical, detectedVertical, verticalCorrected;
-  const forceFurnitureByArtTitle = titleIndicatesArtNeverLuxury(product.title);
   if (!recoveredFromWebflow) {
     const llmLogPayload = {};
     const llmResult = await classifyWithLLM(product, llmLogPayload, webflowLog);
-    detectedVertical = forceFurnitureByArtTitle
-      ? "furniture"
-      : (llmResult.category === "LUXURY" ? "luxury" : "furniture");
+    const llmDetectedVertical = llmResult.category === "LUXURY" ? "luxury" : "furniture";
+    const evidenceVertical = resolveVerticalFromEvidence(product, llmDetectedVertical);
+    detectedVertical = evidenceVertical.vertical;
     const correctedToLuxury = cacheEntry?.vertical === "furniture" && detectedVertical === "luxury";
     const correctedToFurniture = cacheEntry?.vertical === "luxury" && detectedVertical === "furniture";
-    vertical = forceFurnitureByArtTitle
-      ? "furniture"
-      : correctedToLuxury
-        ? "luxury"
-        : correctedToFurniture
-          ? "furniture"
-          : (cacheEntry?.vertical ?? detectedVertical);
+    vertical = correctedToLuxury
+      ? "luxury"
+      : correctedToFurniture
+        ? "furniture"
+        : (cacheEntry?.vertical ?? detectedVertical);
     verticalCorrected = correctedToLuxury;
     webflowLog("info", {
     event: "vertical.resolved",
@@ -4002,12 +4071,15 @@ async function syncSingleProductCore(product, cache, options = {}) {
     llmReasoning: llmResult.reasoning?.slice(0, 120),
     llmOverride: llmLogPayload.override ?? null,
     });
-    if (forceFurnitureByArtTitle) {
+    if (evidenceVertical.reason !== "llm") {
       webflowLog("info", {
-        event: "vertical.override_art_title",
+        event: "vertical.override_evidence",
         shopifyProductId,
         productTitle: product.title || "",
-        message: "Title indicates art; forcing furniture vertical and blocking luxury placement",
+        reason: evidenceVertical.reason,
+        llmDetectedVertical,
+        finalVertical: detectedVertical,
+        message: "Evidence guard overrode LLM vertical using title/description/dimensions/weight",
       });
     }
     if (llmLogPayload.raw != null || llmLogPayload.override) {
@@ -4160,14 +4232,16 @@ async function syncSingleProductCore(product, cache, options = {}) {
   } else {
     vertical = recoveredFromWebflow.vertical;
     detectedVertical = vertical;
-    if (forceFurnitureByArtTitle && vertical !== "furniture") {
-      vertical = "furniture";
-      detectedVertical = "furniture";
+    const evidenceVertical = resolveVerticalFromEvidence(product, detectedVertical);
+    if (evidenceVertical.vertical !== vertical) {
+      vertical = evidenceVertical.vertical;
+      detectedVertical = evidenceVertical.vertical;
       webflowLog("info", {
-        event: "vertical.override_art_title_recovered",
+        event: "vertical.override_evidence_recovered",
         shopifyProductId,
         productTitle: product.title || "",
-        message: "Recovered vertical was non-furniture but title indicates art; forcing furniture",
+        reason: evidenceVertical.reason,
+        message: "Recovered vertical was overridden by evidence guard",
       });
     }
   }
@@ -4681,6 +4755,27 @@ async function syncSingleProductCore(product, cache, options = {}) {
       };
       webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "update", webflowId: existing.id, vertical });
       return { operation: "update", id: existing.id };
+    }
+
+    if (!changed && WEBFLOW_STRICT_NOOP_UPDATES) {
+      webflowLog("info", {
+        event: "sync_product.skip_no_changes_no_touch",
+        shopifyProductId,
+        productTitle: name,
+        webflowId: existing.id,
+        vertical,
+        message: "No Shopify changes and strict no-op mode enabled; skipping image/sync repair touches",
+      });
+      cache[shopifyProductId] = {
+        hash: currentHash,
+        contentHash: currentContentHash,
+        webflowId: existing.id,
+        lastQty: qty,
+        vertical,
+        ...soldMarkedAtPayload(cacheEntry, qty),
+      };
+      webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "skip", webflowId: existing.id, vertical });
+      return { operation: "skip", id: existing.id };
     }
 
     if (!changed && vertical === "furniture" && config?.siteId && furnitureEcommerceNeedsImageRepairFromShopify(product, existing)) {
