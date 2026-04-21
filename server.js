@@ -860,21 +860,56 @@ let furnitureProductIndex = null;
 async function findExistingWebflowEcommerceProduct(shopifyProductId, slug, config, productNameForFallback = null) {
   if (!config?.siteId || !config?.token) return null;
   const slugNorm = slug ? String(slug).trim() : null;
+  const ensureLive = async (entry, source) => {
+    if (!entry?.id) return null;
+    const live = await getWebflowEcommerceProductById(config.siteId, entry.id, config.token);
+    if (live) return entry;
+    if (furnitureProductIndex) {
+      try {
+        const fd = entry.fieldData || {};
+        const byIdKey = fd["shopify-product-id"] ? String(fd["shopify-product-id"]) : null;
+        const bySlugKey = (fd["slug"] || fd["shopify-slug-2"])
+          ? String(fd["slug"] || fd["shopify-slug-2"]).trim()
+          : null;
+        if (byIdKey) furnitureProductIndex.byShopifyId?.delete(byIdKey);
+        if (bySlugKey) furnitureProductIndex.bySlug?.delete(bySlugKey);
+        const nm = normalizeProductNameForIndex(fd.name ?? entry.name ?? "");
+        if (nm) furnitureProductIndex.byName?.delete(nm);
+      } catch {}
+    }
+    webflowLog("warn", {
+      event: "furniture_find.index_stale_entry",
+      source,
+      shopifyProductId,
+      staleWebflowId: entry.id,
+      message: "Indexed furniture entry was missing live; purged stale index mapping and falling back to live scan",
+    });
+    return null;
+  };
 
   // Use pre-loaded index when available; if Shopify ID not there, still scan API (index can be stale vs other workers / new rows).
   if (furnitureProductIndex) {
     const byId = furnitureProductIndex.byShopifyId?.get(String(shopifyProductId));
-    if (byId) return byId;
+    if (byId) {
+      const live = await ensureLive(byId, "byShopifyId");
+      if (live) return live;
+    }
     if (slugNorm) {
       const bySlug = furnitureProductIndex.bySlug?.get(slugNorm);
-      if (bySlug) return bySlug;
+      if (bySlug) {
+        const live = await ensureLive(bySlug, "bySlug");
+        if (live) return live;
+      }
     }
     if (productNameForFallback && furnitureProductIndex.byName) {
       const nameKey = normalizeProductNameForIndex(productNameForFallback);
       const byName = furnitureProductIndex.byName.get(nameKey);
       if (byName) {
-        webflowLog("info", { event: "furniture_find_by_name", shopifyProductId, webflowId: byName.id, name: productNameForFallback });
-        return byName;
+        const live = await ensureLive(byName, "byName");
+        if (live) {
+          webflowLog("info", { event: "furniture_find_by_name", shopifyProductId, webflowId: byName.id, name: productNameForFallback });
+          return live;
+        }
       }
     }
     webflowLog("info", {
