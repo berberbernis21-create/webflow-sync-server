@@ -1351,7 +1351,23 @@ async function deleteWebflowEcommerceProduct(siteId, productId, token) {
   } catch (err) {
     const status = err.response?.status;
     if (status === 404) {
-      webflowLog("info", { event: "delete.ecommerce_already_gone", productId, message: "Product already deleted or missing" });
+      // Webflow can return 404 RouteNotFound on DELETE while product still exists.
+      // Verify with GET before deciding it's gone.
+      const stillExists = await getWebflowEcommerceProductById(siteId, productId, token);
+      if (!stillExists) {
+        webflowLog("info", {
+          event: "delete.ecommerce_already_gone",
+          productId,
+          message: "Product already deleted or missing",
+        });
+        return;
+      }
+      webflowLog("warn", {
+        event: "delete.ecommerce_delete_404_but_exists",
+        productId,
+        message: "DELETE returned 404 but product still exists; falling back to archive",
+      });
+      await archiveWebflowEcommerceProduct(siteId, productId, token);
       return;
     }
     const msg = err.response?.data?.message || err.message || String(err);
