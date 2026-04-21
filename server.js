@@ -2122,8 +2122,8 @@ const LUXURY_WEARABLE_CUES = [
   "backpack", "backpacks", "belt", "belts", "wallet", "wallets", "card holder", "cardholder",
   "handbag", "handbags", "bag", "bags", "crossbody", "clutch", "purse", "tote", "wristlet",
   "shoulder bag", "satchel", "luggage", "duffle", "duffel", "briefcase",
-  "bangle", "bangles", "bracelet", "bracelets", "cuff", "cuffs", "ring", "rings",
-  "necklace", "necklaces", "earring", "earrings", "pendant", "pendants", "brooch", "brooches",
+  "bangle", "bangles", "bracelet", "bracelets",
+  "necklace", "necklaces", "earring", "earrings", "brooch", "brooches",
 ];
 const ART_CUES_STRONG = [
   "signed art", "wall art", "framed art", "painting", "paintings", "lithograph", "giclee",
@@ -2133,6 +2133,9 @@ const FURNITURE_HOME_CUES = [
   "lamp", "lamps", "chandelier", "sconce", "mirror", "mirrors", "rug", "rugs", "dining table",
   "coffee table", "side table", "nightstand", "dresser", "chair", "chairs", "sofa", "sectional",
   "console", "bookcase", "bedroom", "living room", "dining room", "outdoor", "patio", "decor",
+];
+const LIGHTING_HARD_CUES = [
+  "table lamp", "floor lamp", "desk lamp", "lamp", "lamps", "chandelier", "sconce", "torchiere",
 ];
 
 function textHasAnyWordCue(text, cues) {
@@ -2156,7 +2159,13 @@ function resolveVerticalFromEvidence(product, llmDetectedVertical) {
   const hasWearableCue = textHasAnyWordCue(text, LUXURY_WEARABLE_CUES);
   const hasStrongArtCue = textHasAnyWordCue(text, ART_CUES_STRONG);
   const hasFurnitureCue = textHasAnyWordCue(text, FURNITURE_HOME_CUES);
+  const hasLightingHardCue = textHasAnyWordCue(text, LIGHTING_HARD_CUES);
   const hasGenericArtWord = matchWordBoundary(text, "art");
+
+  // Hard-stop for obvious lighting/home terms so "ring"/"canvas" wording doesn't misroute lamps.
+  if (hasLightingHardCue) {
+    return { vertical: "furniture", reason: "evidence_lighting_hard_cue" };
+  }
 
   // Wearables always stay Luxury, even if words like "canvas" appear.
   if (hasWearableCue) {
