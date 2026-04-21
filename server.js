@@ -3793,6 +3793,9 @@ async function syncSingleProductCore(product, cache, options = {}) {
     (previousContentHash && JSON.stringify(currentContentHash) === JSON.stringify(previousContentHash)) ||
     (cacheEntry?.webflowId && previousContentHash == null);
   const forceReclassify = options.forceReclassify === true;
+  const cachedVerticalForSkip = cacheEntry?.vertical ?? "luxury";
+  const evidenceVsCache = resolveVerticalFromEvidence(product, cachedVerticalForSkip);
+  const verticalNeedsCorrection = evidenceVsCache.vertical !== cachedVerticalForSkip;
 
   // Do NOT lock vertical from cache when webflowId is missing and qty is 0 — wrong vertical (e.g. luxury) blocked
   // Webflow index lookup + sold heuristic, causing skip_create_sold while the live listing stays on Furniture unpublished/sold.
@@ -3805,9 +3808,10 @@ async function syncSingleProductCore(product, cache, options = {}) {
     nameOrDescriptionUnchanged &&
     shopifyDataUnchangedForCache &&
     cacheEntry?.webflowId &&
+    !verticalNeedsCorrection &&
     !forceReclassify
   ) {
-    const vertical = cacheEntry.vertical ?? "luxury";
+    const vertical = cachedVerticalForSkip;
     cache[shopifyProductId] = {
       hash: currentHash,
       contentHash: currentContentHash,
