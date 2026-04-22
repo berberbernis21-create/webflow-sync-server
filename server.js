@@ -2010,6 +2010,7 @@ function normalizeTitleForFurnitureAccessoryMatch(raw) {
 function furnitureAccessoryCategoryOverrideTitle(title) {
   const t = normalizeTitleForFurnitureAccessoryMatch(title);
   if (!t) return null;
+  if (/\blamps?\b/.test(t)) return "Lighting";
   // candlestick(s), candle stick(s), candle-stick(s); NFKC typography handled above
   if (/\bcandle[\s-]*sticks?\b/.test(t)) return "Accessories";
   if (/\bcandle-?holders?\b/.test(t) || /\bcandle holders?\b/.test(t)) return "Accessories";
@@ -2017,7 +2018,6 @@ function furnitureAccessoryCategoryOverrideTitle(title) {
   const bowlIsChair = /\bbowl chairs?\b/.test(t);
   if (!bowlIsChair && /\bbowls?\b/.test(t)) return "Accessories";
   if (/\bvases?\b/.test(t)) return "Accessories";
-  if (/\btable lamps?\b/.test(t) || /\bdesk lamps?\b/.test(t) || /\bbedside lamps?\b/.test(t)) return "Accessories";
   const trayIsFurnitureTable =
     /\btray tables?\b/.test(t) ||
     /\btv tray tables?\b/.test(t) ||
