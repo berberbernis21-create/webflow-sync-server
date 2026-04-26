@@ -3067,6 +3067,14 @@ function appendFurnitureNoLongerAvailableToTitle(currentTitle) {
   return s + FURNITURE_NO_LONGER_AVAILABLE_SUFFIX;
 }
 
+function furnitureTitleMissingNoLongerAvailableSuffix(existing) {
+  const currentName = existing?.fieldData?.name;
+  if (currentName == null) return false;
+  const s = String(currentName);
+  if (!s.trim()) return false;
+  return !s.includes("(No Longer Available)");
+}
+
 /* ======================================================
    MARK AS SOLD — per vertical
    Luxury: CMS PATCH. Furniture: ecommerce PATCH (siteId).
@@ -3271,6 +3279,11 @@ function shopifyQtySaysSold(qty) {
 /** Shopify says qty 0 but Webflow is not in sold state — must PATCH, never skip_unchanged. */
 function needsWebflowSoldRepair(existing, vertical, qty) {
   return shopifyQtySaysSold(qty) && !webflowListingLooksSold(existing, vertical);
+}
+
+/** Sold furniture listing must also carry "(No Longer Available)" once in the title. */
+function needsFurnitureNoLongerAvailableRepair(existing, vertical, qty) {
+  return vertical === "furniture" && shopifyQtySaysSold(qty) && furnitureTitleMissingNoLongerAvailableSuffix(existing);
 }
 
 /**
@@ -3946,15 +3959,17 @@ async function syncSingleProductCore(product, cache, options = {}) {
         return { operation: "skip", id: existing.id };
       }
       const repairSold = needsWebflowSoldRepair(existing, vertical, qty);
-      const mustMarkSold = shouldMarkSoldTransition(previousQty, qty) || repairSold;
+      const repairNoLongerAvailable = needsFurnitureNoLongerAvailableRepair(existing, vertical, qty);
+      const mustMarkSold = shouldMarkSoldTransition(previousQty, qty) || repairSold || repairNoLongerAvailable;
       if (mustMarkSold) {
         const fromQtyDrop =
           !repairSold &&
+          !repairNoLongerAvailable &&
           previousQty != null &&
           Number(previousQty) > 0 &&
           shopifyQtySaysSold(qty);
         webflowLog("info", {
-          event: repairSold ? "sync_product.repair_sold" : "sync_product.newly_sold",
+          event: repairSold || repairNoLongerAvailable ? "sync_product.repair_sold" : "sync_product.newly_sold",
           shopifyProductId,
           productTitle: product.title,
           webflowId: existing.id,
@@ -4712,17 +4727,19 @@ async function syncSingleProductCore(product, cache, options = {}) {
     }
 
     const repairSold = needsWebflowSoldRepair(existing, vertical, qty);
+    const repairNoLongerAvailable = needsFurnitureNoLongerAvailableRepair(existing, vertical, qty);
     const mustMarkSold =
-      shouldMarkSoldTransition(previousQty, qty) || repairSold;
+      shouldMarkSoldTransition(previousQty, qty) || repairSold || repairNoLongerAvailable;
 
     if (mustMarkSold) {
       const fromQtyDrop =
         !repairSold &&
+        !repairNoLongerAvailable &&
         previousQty != null &&
         Number(previousQty) > 0 &&
         shopifyQtySaysSold(qty);
       webflowLog("info", {
-        event: repairSold ? "sync_product.repair_sold" : "sync_product.newly_sold",
+        event: repairSold || repairNoLongerAvailable ? "sync_product.repair_sold" : "sync_product.newly_sold",
         shopifyProductId,
         productTitle: name,
         webflowId: existing.id,
@@ -5014,15 +5031,17 @@ async function syncSingleProductCore(product, cache, options = {}) {
         }
       }
       const guardRepair = needsWebflowSoldRepair(guardExisting, detectedVertical, qty);
-      const guardMustSold = shouldMarkSoldTransition(previousQty, qty) || guardRepair;
+      const guardNoLongerAvailableRepair = needsFurnitureNoLongerAvailableRepair(guardExisting, detectedVertical, qty);
+      const guardMustSold = shouldMarkSoldTransition(previousQty, qty) || guardRepair || guardNoLongerAvailableRepair;
       if (guardMustSold) {
         const fromQtyDrop =
           !guardRepair &&
+          !guardNoLongerAvailableRepair &&
           previousQty != null &&
           Number(previousQty) > 0 &&
           shopifyQtySaysSold(qty);
         webflowLog("info", {
-          event: guardRepair ? "sync_product.repair_sold" : "sync_product.newly_sold",
+          event: guardRepair || guardNoLongerAvailableRepair ? "sync_product.repair_sold" : "sync_product.newly_sold",
           shopifyProductId,
           productTitle: name,
           webflowId: guardExisting.id,
