@@ -3,6 +3,7 @@
 Dual-pipeline sync: **Luxury / Accessories** and **Furniture & Home**. Each vertical has its own Webflow collection and SOLD behavior.
 
 - **POST `/sync-all`** — Pull all Shopify products, detect vertical (luxury vs furniture), sync to the correct Webflow collection, write back metafields.
+- **POST `/google/furniture/full-push`** — Push furniture items from Shopify to Google Merchant (availability from Shopify qty). Optional body `{ "limit": 10 }` for a small test batch.
 
 ## Environment variables
 
@@ -22,6 +23,19 @@ Dual-pipeline sync: **Luxury / Accessories** and **Furniture & Home**. Each vert
 
 **Furniture & Home (RESALE)**  
 `RESALE_TOKEN`, `RESALE_Products_Collection_ID`, `RESALE_SKUs_Collection_ID`, `RESALE_WEBFLOW_SITE_ID`
+
+**Google Merchant (Furniture only, optional)**  
+`GOOGLE_MERCHANT_ENABLED` — `true|false` toggle for Google sync side-effects (default off).  
+`GOOGLE_MERCHANT_ID` — Merchant Center ID.  
+`GOOGLE_MERCHANT_SERVICE_ACCOUNT_JSON` — Full service account JSON string (preferred), **or** provide split vars below.  
+`GOOGLE_MERCHANT_SERVICE_ACCOUNT_EMAIL` — Service account client email.  
+`GOOGLE_MERCHANT_SERVICE_ACCOUNT_PRIVATE_KEY` — Private key (supports `\n` escapes).  
+`GOOGLE_MERCHANT_TARGET_COUNTRY` — Default `US`.  
+`GOOGLE_MERCHANT_CONTENT_LANGUAGE` — Default `en`.  
+`GOOGLE_MERCHANT_CURRENCY` — Default `USD`.  
+`GOOGLE_MERCHANT_FURNITURE_CATEGORY` — Default `Home & Garden > Furniture`.  
+`GOOGLE_MERCHANT_BRAND_FALLBACK` — Default `Lost and Found Resale`.  
+`GOOGLE_MERCHANT_DEFAULT_WEIGHT_LB` — Fallback weight when missing (default `10`).
 
 **LLM vertical classifier (required for sync)**  
 `OPENAI_API_KEY` — OpenAI API key for GPT-based LUXURY vs HOME_INTERIOR classification.  

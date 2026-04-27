@@ -217,6 +217,97 @@ const WEBFLOW_STRICT_NOOP_UPDATES = process.env.WEBFLOW_STRICT_NOOP_UPDATES !== 
 
 let syncRequestId = null;
 let syncStartTime = null;
+let googleMerchantAccessTokenCache = { token: null, expiresAtMs: 0 };
+
+function googleMerchantEnabled() {
+  const v = String(process.env.GOOGLE_MERCHANT_ENABLED || "").trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes";
+}
+
+function getGoogleMerchantConfig() {
+  const merchantId = String(process.env.GOOGLE_MERCHANT_ID || "").trim();
+  const rawJson =
+    process.env.GOOGLE_MERCHANT_SERVICE_ACCOUNT_JSON ||
+    process.env.GOOGLE_SERVICE_ACCOUNT_JSON ||
+    "";
+  let svc = null;
+  if (rawJson && rawJson.trim()) {
+    try {
+      svc = JSON.parse(rawJson);
+    } catch {
+      svc = null;
+    }
+  }
+  const clientEmail = String(
+    process.env.GOOGLE_MERCHANT_SERVICE_ACCOUNT_EMAIL ||
+      process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL ||
+      svc?.client_email ||
+      ""
+  ).trim();
+  const privateKeyRaw =
+    process.env.GOOGLE_MERCHANT_SERVICE_ACCOUNT_PRIVATE_KEY ||
+    process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY ||
+    svc?.private_key ||
+    "";
+  const privateKey = String(privateKeyRaw || "").replace(/\\n/g, "\n").trim();
+  return { merchantId, clientEmail, privateKey };
+}
+
+function toBase64Url(jsonObj) {
+  return Buffer.from(JSON.stringify(jsonObj), "utf8")
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+async function getGoogleMerchantAccessToken() {
+  const cfg = getGoogleMerchantConfig();
+  if (!cfg.merchantId || !cfg.clientEmail || !cfg.privateKey) return null;
+  const now = Date.now();
+  if (
+    googleMerchantAccessTokenCache.token &&
+    googleMerchantAccessTokenCache.expiresAtMs > now + 60 * 1000
+  ) {
+    return googleMerchantAccessTokenCache.token;
+  }
+  const iat = Math.floor(now / 1000);
+  const exp = iat + 3600;
+  const header = { alg: "RS256", typ: "JWT" };
+  const claims = {
+    iss: cfg.clientEmail,
+    scope: "https://www.googleapis.com/auth/content",
+    aud: "https://oauth2.googleapis.com/token",
+    iat,
+    exp,
+  };
+  const signingInput = `${toBase64Url(header)}.${toBase64Url(claims)}`;
+  const signer = crypto.createSign("RSA-SHA256");
+  signer.update(signingInput);
+  signer.end();
+  const signature = signer
+    .sign(cfg.privateKey, "base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+  const assertion = `${signingInput}.${signature}`;
+  const body = new URLSearchParams({
+    grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+    assertion,
+  }).toString();
+  const resp = await axios.post("https://oauth2.googleapis.com/token", body, {
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    timeout: 30000,
+  });
+  const accessToken = resp.data?.access_token;
+  const expiresIn = Number(resp.data?.expires_in || 3600);
+  if (!accessToken) return null;
+  googleMerchantAccessTokenCache = {
+    token: accessToken,
+    expiresAtMs: Date.now() + Math.max(300, expiresIn - 60) * 1000,
+  };
+  return accessToken;
+}
 
 function webflowLog(level, payload) {
   if (level === "error" && !LOG_ERROR) return;
@@ -1343,11 +1434,21 @@ async function archiveWebflowEcommerceProduct(siteId, productId, token) {
 async function deleteWebflowEcommerceProduct(siteId, productId, token) {
   if (!siteId || !productId || !token) return;
   const url = `https://api.webflow.com/v2/sites/${siteId}/products/${productId}`;
+  let googleOfferId = null;
+  try {
+    const pre = await getWebflowEcommerceProductById(siteId, productId, token);
+    const fd = pre?.fieldData || {};
+    const slug = String(fd["shopify-slug-2"] || fd.slug || "").trim();
+    googleOfferId = googleOfferIdFromSlugOrHandle(slug, fd["shopify-product-id"] || productId);
+  } catch {
+    googleOfferId = null;
+  }
   try {
     await axios.delete(url, {
       headers: { Authorization: `Bearer ${token}`, accept: "application/json" },
     });
     webflowLog("info", { event: "delete.ecommerce_product", productId, message: "Furniture ecommerce product deleted" });
+    if (googleOfferId) await deleteGoogleMerchantFurnitureByOfferId(googleOfferId, "webflow_delete");
   } catch (err) {
     const status = err.response?.status;
     if (status === 404) {
@@ -1360,6 +1461,7 @@ async function deleteWebflowEcommerceProduct(siteId, productId, token) {
           productId,
           message: "Product already deleted or missing",
         });
+        if (googleOfferId) await deleteGoogleMerchantFurnitureByOfferId(googleOfferId, "webflow_delete_already_gone");
         return;
       }
       webflowLog("warn", {
@@ -1368,6 +1470,7 @@ async function deleteWebflowEcommerceProduct(siteId, productId, token) {
         message: "DELETE returned 404 but product still exists; falling back to archive",
       });
       await archiveWebflowEcommerceProduct(siteId, productId, token);
+      if (googleOfferId) await deleteGoogleMerchantFurnitureByOfferId(googleOfferId, "webflow_archive_fallback_404");
       return;
     }
     const msg = err.response?.data?.message || err.message || String(err);
@@ -1378,6 +1481,7 @@ async function deleteWebflowEcommerceProduct(siteId, productId, token) {
       message: msg,
     });
     await archiveWebflowEcommerceProduct(siteId, productId, token);
+    if (googleOfferId) await deleteGoogleMerchantFurnitureByOfferId(googleOfferId, "webflow_archive_fallback");
   }
 }
 
@@ -3133,6 +3237,7 @@ async function markAsSold(existing, vertical, config) {
   if (vertical === "furniture" && config.siteId) {
     // Ecommerce PATCH requires { product: { fieldData }, sku: { fieldData } }; reuse shared updater
     await updateWebflowEcommerceProduct(config.siteId, existing.id, fieldData, config.token, existing);
+    await syncGoogleMerchantFurnitureOutOfStockFromWebflow(existing, "mark_sold");
     return;
   }
   await axios.patch(
@@ -4849,6 +4954,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
       if (vertical === "furniture" && config.siteId) {
         await updateWebflowEcommerceProduct(config.siteId, existing.id, fieldData, config.token, existing);
         await syncFurnitureEcommerceSku(product, existing.id, config);
+        await syncGoogleMerchantFurnitureFromShopifyProduct(product, "in stock", "furniture_update");
       } else {
         await axios.patch(
           `https://api.webflow.com/v2/collections/${config.collectionId}/items/${existing.id}`,
@@ -4952,6 +5058,9 @@ async function syncSingleProductCore(product, cache, options = {}) {
   if (!existing) {
     // Don't recreate sold items (qty 0). If you deleted them from Webflow, we won't push them back.
     if (soldNow) {
+      if (vertical === "furniture") {
+        await syncGoogleMerchantFurnitureFromShopifyProduct(product, "out of stock", "skip_create_sold");
+      }
       // Write cache so next run skips LLM for this already-classified sold item.
       cache[shopifyProductId] = {
         hash: currentHash,
@@ -5125,6 +5234,9 @@ async function syncSingleProductCore(product, cache, options = {}) {
         vertical: detectedVertical,
         ...soldMarkedAtPayload(cacheEntry, qty),
       };
+      if (detectedVertical === "furniture") {
+        await syncGoogleMerchantFurnitureFromShopifyProduct(product, "in stock", "furniture_guard_update");
+      }
       webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "update", webflowId: guardExisting.id, vertical: detectedVertical });
       return { operation: "update", id: guardExisting.id };
     }
@@ -5323,6 +5435,9 @@ async function syncSingleProductCore(product, cache, options = {}) {
       vertical: detectedVertical,
       ...soldMarkedAtPayload(cacheEntry, qty),
     };
+    if (detectedVertical === "furniture") {
+      await syncGoogleMerchantFurnitureFromShopifyProduct(product, soldNow ? "out of stock" : "in stock", "furniture_create");
+    }
     webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "create", webflowId: newId, vertical: detectedVertical });
     return { operation: "create", id: newId };
   }
@@ -5772,6 +5887,257 @@ function listingFurnitureProductUrlFromSlug(slug) {
     .trim()
     .replace(/\/$/, "");
   return `${prefix}/${s}`;
+}
+
+function htmlToTextForGoogle(raw) {
+  return String(raw || "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\r/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function formatGoogleFurnitureDescription(raw, title) {
+  const text = htmlToTextForGoogle(raw);
+  if (!text) return String(title || "").trim();
+  const dimensionsMatch = text.match(/Dimensions:.*?(?=Weight:|$)/i);
+  const weightMatch = text.match(/Weight:.*$/i);
+  let clean = text.replace(/Dimensions:.*$/i, "").trim();
+  if (!clean) clean = String(title || "").trim();
+  const parts = [clean];
+  if (dimensionsMatch?.[0]) parts.push(dimensionsMatch[0].trim());
+  if (weightMatch?.[0]) parts.push(weightMatch[0].trim());
+  return parts.filter(Boolean).join("\n\n").trim();
+}
+
+function extractGoogleWeightFromText(text) {
+  if (!text) return null;
+  const m = String(text).match(/Weight:\s*([\d.]+)\s*lb\.?/i);
+  if (!m) return null;
+  return { value: String(m[1]), unit: "lb" };
+}
+
+function extractGoogleDimsFromText(text) {
+  if (!text) return {};
+  const out = {};
+  const w = String(text).match(/Width:\s*([\d.]+)"/i);
+  const d = String(text).match(/Depth:\s*([\d.]+)"/i);
+  const h = String(text).match(/Height:\s*([\d.]+)"/i);
+  if (w) out.shippingWidth = { value: String(w[1]), unit: "in" };
+  if (d) out.shippingLength = { value: String(d[1]), unit: "in" };
+  if (h) out.shippingHeight = { value: String(h[1]), unit: "in" };
+  return out;
+}
+
+function googleOfferIdFromSlugOrHandle(slugOrHandle, fallbackId) {
+  const raw = String(slugOrHandle || "").trim();
+  if (!raw) return String(fallbackId || "").trim().slice(0, 50);
+  const clean = raw.replace(/[^a-zA-Z0-9_-]/g, "-").replace(/-+/g, "-");
+  return clean.slice(0, 50);
+}
+
+function parseGooglePriceValue(priceLike) {
+  const s = String(priceLike ?? "").trim();
+  const n = parseFloat(s.replace(/[^0-9.]/g, ""));
+  if (!Number.isFinite(n)) return null;
+  return n.toFixed(2);
+}
+
+function buildGoogleFurnitureProductFromShopify(product, availability = "in stock") {
+  const handle = String(product?.handle || "").trim();
+  const offerId = googleOfferIdFromSlugOrHandle(handle, product?.id);
+  const productUrl = listingFurnitureProductUrlFromSlug(handle);
+  const images = Array.isArray(product?.images) ? product.images.map((i) => i?.src).filter(Boolean) : [];
+  const description = formatGoogleFurnitureDescription(product?.body_html || "", product?.title || "");
+  let shippingWeight = extractGoogleWeightFromText(description);
+  const dims = getDimensionsFromProduct(product || {});
+  if (!shippingWeight && dims.weight != null && Number.isFinite(Number(dims.weight)) && Number(dims.weight) > 0) {
+    shippingWeight = { value: String(Number(dims.weight)), unit: "lb" };
+  }
+  if (!shippingWeight) {
+    const fallbackWeight = String(process.env.GOOGLE_MERCHANT_DEFAULT_WEIGHT_LB || "10").trim();
+    shippingWeight = { value: fallbackWeight || "10", unit: "lb" };
+  }
+  const extractedDims = extractGoogleDimsFromText(description);
+  if (!extractedDims.shippingWidth && dims.width != null && Number.isFinite(Number(dims.width))) {
+    extractedDims.shippingWidth = { value: String(Number(dims.width)), unit: "in" };
+  }
+  if (!extractedDims.shippingLength && dims.length != null && Number.isFinite(Number(dims.length))) {
+    extractedDims.shippingLength = { value: String(Number(dims.length)), unit: "in" };
+  }
+  if (!extractedDims.shippingHeight && dims.height != null && Number.isFinite(Number(dims.height))) {
+    extractedDims.shippingHeight = { value: String(Number(dims.height)), unit: "in" };
+  }
+  const priceValue =
+    parseGooglePriceValue(product?.variants?.[0]?.price) ??
+    parseGooglePriceValue(product?.price) ??
+    "0.00";
+  const out = {
+    offerId,
+    title: String(product?.title || "").trim(),
+    description,
+    link: productUrl || null,
+    imageLink: images[0] || "",
+    additionalImageLinks: images.slice(1, 10),
+    contentLanguage: String(process.env.GOOGLE_MERCHANT_CONTENT_LANGUAGE || "en").trim() || "en",
+    targetCountry: String(process.env.GOOGLE_MERCHANT_TARGET_COUNTRY || "US").trim() || "US",
+    channel: "online",
+    availability,
+    condition: "used",
+    price: { value: priceValue, currency: String(process.env.GOOGLE_MERCHANT_CURRENCY || "USD").trim() || "USD" },
+    brand: String(product?.vendor || process.env.GOOGLE_MERCHANT_BRAND_FALLBACK || "Lost and Found Resale").trim(),
+    identifierExists: false,
+    googleProductCategory:
+      String(process.env.GOOGLE_MERCHANT_FURNITURE_CATEGORY || "Home & Garden > Furniture").trim() ||
+      "Home & Garden > Furniture",
+    shippingWeight,
+  };
+  Object.assign(out, extractedDims);
+  return out;
+}
+
+async function googleMerchantInsertProduct(payload) {
+  const cfg = getGoogleMerchantConfig();
+  if (!cfg.merchantId) throw new Error("GOOGLE_MERCHANT_ID missing");
+  const token = await getGoogleMerchantAccessToken();
+  if (!token) throw new Error("google merchant auth unavailable");
+  const url = `https://shoppingcontent.googleapis.com/content/v2.1/${encodeURIComponent(cfg.merchantId)}/products`;
+  return axios.post(url, payload, {
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    timeout: 30000,
+  });
+}
+
+async function syncGoogleMerchantFurnitureFromShopifyProduct(product, availability = "in stock", reason = "sync") {
+  if (!googleMerchantEnabled() || !product) return false;
+  const payload = buildGoogleFurnitureProductFromShopify(product, availability);
+  if (!payload.offerId || !payload.title) return false;
+  try {
+    await googleMerchantInsertProduct(payload);
+    webflowLog("info", {
+      event: "google_merchant.upsert_ok",
+      reason,
+      shopifyProductId: String(product?.id || ""),
+      offerId: payload.offerId,
+      availability,
+    });
+    return true;
+  } catch (err) {
+    webflowLog("error", {
+      event: "google_merchant.upsert_failed",
+      reason,
+      shopifyProductId: String(product?.id || ""),
+      offerId: payload.offerId,
+      availability,
+      status: err?.response?.status ?? null,
+      message: err?.response?.data?.error?.message || err.message,
+    });
+    return false;
+  }
+}
+
+function buildGoogleFurnitureOutOfStockFromWebflow(existing) {
+  const fd = existing?.fieldData || {};
+  const slug = String(fd["shopify-slug-2"] || fd.slug || "").trim();
+  const offerId = googleOfferIdFromSlugOrHandle(slug, fd["shopify-product-id"] || existing?.id);
+  const description = formatGoogleFurnitureDescription(fd.description || fd["main-description-2"] || "", fd.name || "");
+  const weight = extractGoogleWeightFromText(description) || {
+    value: String(process.env.GOOGLE_MERCHANT_DEFAULT_WEIGHT_LB || "10").trim() || "10",
+    unit: "lb",
+  };
+  const dims = extractGoogleDimsFromText(description);
+  const rawPrice = existing?.skus?.[0]?.fieldData?.price?.value;
+  const priceValue = Number.isFinite(Number(rawPrice)) ? (Number(rawPrice) / 100).toFixed(2) : "0.00";
+  const payload = {
+    offerId,
+    title: String(fd.name || "").trim(),
+    description,
+    link: listingFurnitureProductUrlFromSlug(slug) || null,
+    imageLink: "",
+    additionalImageLinks: [],
+    contentLanguage: String(process.env.GOOGLE_MERCHANT_CONTENT_LANGUAGE || "en").trim() || "en",
+    targetCountry: String(process.env.GOOGLE_MERCHANT_TARGET_COUNTRY || "US").trim() || "US",
+    channel: "online",
+    availability: "out of stock",
+    condition: "used",
+    price: { value: priceValue, currency: String(process.env.GOOGLE_MERCHANT_CURRENCY || "USD").trim() || "USD" },
+    brand: String(fd.brand || process.env.GOOGLE_MERCHANT_BRAND_FALLBACK || "Lost and Found Resale").trim(),
+    identifierExists: false,
+    googleProductCategory:
+      String(process.env.GOOGLE_MERCHANT_FURNITURE_CATEGORY || "Home & Garden > Furniture").trim() ||
+      "Home & Garden > Furniture",
+    shippingWeight: weight,
+  };
+  Object.assign(payload, dims);
+  return payload;
+}
+
+async function syncGoogleMerchantFurnitureOutOfStockFromWebflow(existing, reason = "mark_sold") {
+  if (!googleMerchantEnabled()) return false;
+  const payload = buildGoogleFurnitureOutOfStockFromWebflow(existing);
+  if (!payload.offerId || !payload.title) return false;
+  try {
+    await googleMerchantInsertProduct(payload);
+    webflowLog("info", {
+      event: "google_merchant.mark_out_of_stock_ok",
+      reason,
+      webflowId: existing?.id || null,
+      offerId: payload.offerId,
+    });
+    return true;
+  } catch (err) {
+    webflowLog("error", {
+      event: "google_merchant.mark_out_of_stock_failed",
+      reason,
+      webflowId: existing?.id || null,
+      offerId: payload.offerId,
+      status: err?.response?.status ?? null,
+      message: err?.response?.data?.error?.message || err.message,
+    });
+    return false;
+  }
+}
+
+async function deleteGoogleMerchantFurnitureByOfferId(offerId, reason = "delete") {
+  if (!googleMerchantEnabled()) return false;
+  const cfg = getGoogleMerchantConfig();
+  if (!cfg.merchantId) return false;
+  const oid = String(offerId || "").trim();
+  if (!oid) return false;
+  try {
+    const token = await getGoogleMerchantAccessToken();
+    if (!token) return false;
+    const lang = String(process.env.GOOGLE_MERCHANT_CONTENT_LANGUAGE || "en").trim() || "en";
+    const country = String(process.env.GOOGLE_MERCHANT_TARGET_COUNTRY || "US").trim() || "US";
+    const productId = `online:${lang}:${country}:${oid}`;
+    const url = `https://shoppingcontent.googleapis.com/content/v2.1/${encodeURIComponent(
+      cfg.merchantId
+    )}/products/${encodeURIComponent(productId)}`;
+    await axios.delete(url, {
+      headers: { Authorization: `Bearer ${token}`, accept: "application/json" },
+      timeout: 30000,
+    });
+    webflowLog("info", { event: "google_merchant.delete_ok", reason, offerId: oid, productId });
+    return true;
+  } catch (err) {
+    const status = err?.response?.status;
+    if (status === 404) {
+      webflowLog("info", { event: "google_merchant.delete_already_gone", reason, offerId: oid });
+      return true;
+    }
+    webflowLog("error", {
+      event: "google_merchant.delete_failed",
+      reason,
+      offerId: oid,
+      status: status ?? null,
+      message: err?.response?.data?.error?.message || err.message,
+    });
+    return false;
+  }
 }
 
 /**
@@ -6669,6 +7035,71 @@ app.post("/webhook/products/delete", verifyShopifyHmac, async (req, res) => {
       event: "shopify.webhook.product_delete.error",
       message: err.message,
     });
+  }
+});
+
+function shouldPushProductToGoogleFurniture(product, cacheEntry) {
+  const cachedVertical = cacheEntry?.vertical;
+  if (cachedVertical === "furniture") return true;
+  if (cachedVertical === "luxury") return false;
+  const typeDept = getDepartmentFromType(product?.product_type);
+  const llmGuess = typeDept === "Luxury Goods" ? "luxury" : "furniture";
+  const evidence = resolveVerticalFromEvidence(product, llmGuess);
+  return evidence.vertical === "furniture";
+}
+
+app.post("/google/furniture/full-push", async (req, res) => {
+  if (!googleMerchantEnabled()) {
+    return res.status(400).json({ error: "GOOGLE_MERCHANT_ENABLED is false" });
+  }
+  syncRequestId = crypto.randomUUID().slice(0, 8);
+  syncStartTime = Date.now();
+  try {
+    const products = await fetchAllShopifyProducts();
+    const cache = loadCache();
+    const requestedLimit = Number(req.body?.limit);
+    const maxItems =
+      Number.isFinite(requestedLimit) && requestedLimit > 0
+        ? Math.min(Math.floor(requestedLimit), products?.length || 0)
+        : products?.length || 0;
+    let attempted = 0;
+    let pushed = 0;
+    let failed = 0;
+    let skipped = 0;
+    for (const p of (products || []).slice(0, maxItems)) {
+      const shopifyProductId = String(p?.id || "").trim();
+      if (!shopifyProductId) continue;
+      const cacheEntry = getCacheEntry(cache, shopifyProductId);
+      if (!shouldPushProductToGoogleFurniture(p, cacheEntry)) {
+        skipped++;
+        continue;
+      }
+      attempted++;
+      const soldNow = shopifyQtySaysSold(getPrimaryVariantInventoryQuantity(p));
+      const ok = await syncGoogleMerchantFurnitureFromShopifyProduct(
+        p,
+        soldNow ? "out of stock" : "in stock",
+        "full_push"
+      );
+      if (ok) pushed++;
+      else failed++;
+    }
+    return res.json({
+      status: "ok",
+      totalShopifyProducts: products?.length || 0,
+      maxItems,
+      attempted,
+      pushed,
+      failed,
+      skipped,
+      durationMs: Date.now() - syncStartTime,
+    });
+  } catch (err) {
+    webflowLog("error", { event: "google_merchant.full_push_failed", message: err.message });
+    return res.status(500).json({ error: err.message || "google full push failed" });
+  } finally {
+    syncRequestId = null;
+    syncStartTime = null;
   }
 });
 
