@@ -36,6 +36,10 @@ Dual-pipeline sync: **Luxury / Accessories** and **Furniture & Home**. Each vert
 `GOOGLE_MERCHANT_FURNITURE_CATEGORY` — Default `Home & Garden > Furniture`.  
 `GOOGLE_MERCHANT_BRAND_FALLBACK` — Default `Lost and Found Resale`.  
 `GOOGLE_MERCHANT_DEFAULT_WEIGHT_LB` — Fallback weight when missing (default `10`).
+`GOOGLE_MERCHANT_DEFAULT_WIDTH_IN` — Fallback width when shipping dimension is missing (default `24`).  
+`GOOGLE_MERCHANT_DEFAULT_LENGTH_IN` — Fallback length when shipping dimension is missing (default `24`).  
+`GOOGLE_MERCHANT_DEFAULT_HEIGHT_IN` — Fallback height when shipping dimension is missing (default `24`).  
+`GOOGLE_MERCHANT_DIMENSIONS_MODEL` — Optional OpenAI model for missing-dim inference (default `gpt-4o-mini`).
 
 **LLM vertical classifier (required for sync)**  
 `OPENAI_API_KEY` — OpenAI API key for GPT-based LUXURY vs HOME_INTERIOR classification.  

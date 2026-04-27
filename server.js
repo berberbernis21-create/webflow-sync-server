@@ -5924,13 +5924,102 @@ function extractGoogleWeightFromText(text) {
 function extractGoogleDimsFromText(text) {
   if (!text) return {};
   const out = {};
-  const w = String(text).match(/Width:\s*([\d.]+)"/i);
-  const d = String(text).match(/Depth:\s*([\d.]+)"/i);
-  const h = String(text).match(/Height:\s*([\d.]+)"/i);
+  const source = String(text);
+  const w = source.match(/Width:\s*([\d.]+)"/i);
+  const d = source.match(/Depth:\s*([\d.]+)"/i);
+  const h = source.match(/Height:\s*([\d.]+)"/i);
   if (w) out.shippingWidth = { value: String(w[1]), unit: "in" };
   if (d) out.shippingLength = { value: String(d[1]), unit: "in" };
   if (h) out.shippingHeight = { value: String(h[1]), unit: "in" };
+  // Fallback for compact dimensions often found in titles, e.g. "41x26x14H" or "41 x 26 x 14".
+  if (!out.shippingWidth || !out.shippingLength || !out.shippingHeight) {
+    const compact = source.match(/(\d+(?:\.\d+)?)\s*(?:x|×)\s*(\d+(?:\.\d+)?)\s*(?:x|×)\s*(\d+(?:\.\d+)?)/i);
+    if (compact) {
+      if (!out.shippingWidth) out.shippingWidth = { value: String(compact[1]), unit: "in" };
+      if (!out.shippingLength) out.shippingLength = { value: String(compact[2]), unit: "in" };
+      if (!out.shippingHeight) out.shippingHeight = { value: String(compact[3]), unit: "in" };
+    }
+  }
   return out;
+}
+
+function getGoogleDimFallbackIn() {
+  const width = Number(process.env.GOOGLE_MERCHANT_DEFAULT_WIDTH_IN || "24");
+  const length = Number(process.env.GOOGLE_MERCHANT_DEFAULT_LENGTH_IN || "24");
+  const height = Number(process.env.GOOGLE_MERCHANT_DEFAULT_HEIGHT_IN || "24");
+  return {
+    width: Number.isFinite(width) && width > 0 ? width : 24,
+    length: Number.isFinite(length) && length > 0 ? length : 24,
+    height: Number.isFinite(height) && height > 0 ? height : 24,
+  };
+}
+
+function hasAllGoogleShippingDims(dims) {
+  return !!(dims?.shippingWidth && dims?.shippingLength && dims?.shippingHeight);
+}
+
+async function completeGoogleDimsWithAi({ title, description, dims }) {
+  const merged = { ...(dims || {}) };
+  if (hasAllGoogleShippingDims(merged)) return merged;
+  const key = String(process.env.OPENAI_API_KEY || "").trim();
+  if (!key) return merged;
+  try {
+    const model = String(process.env.GOOGLE_MERCHANT_DIMENSIONS_MODEL || "gpt-4o-mini").trim();
+    const prompt = [
+      "Estimate package dimensions in inches for a furniture/home resale listing.",
+      "Return strict JSON only: {\"width\":number|null,\"length\":number|null,\"height\":number|null}.",
+      "Use title + description; if uncertain, return null for unknown fields.",
+      "",
+      `Title: ${String(title || "").slice(0, 300)}`,
+      `Description: ${String(description || "").slice(0, 1500)}`,
+    ].join("\n");
+    const resp = await axios.post(
+      "https://api.openai.com/v1/chat/completions",
+      {
+        model,
+        messages: [
+          { role: "system", content: "You estimate package dimensions for merchant feeds. Return JSON only." },
+          { role: "user", content: prompt },
+        ],
+        temperature: 0,
+        response_format: { type: "json_object" },
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${key}`,
+          "Content-Type": "application/json",
+        },
+        timeout: 30000,
+      }
+    );
+    const raw = resp.data?.choices?.[0]?.message?.content;
+    if (!raw) return merged;
+    const parsed = JSON.parse(raw);
+    const w = Number(parsed?.width);
+    const l = Number(parsed?.length);
+    const h = Number(parsed?.height);
+    if (!merged.shippingWidth && Number.isFinite(w) && w > 0) merged.shippingWidth = { value: String(w), unit: "in" };
+    if (!merged.shippingLength && Number.isFinite(l) && l > 0) merged.shippingLength = { value: String(l), unit: "in" };
+    if (!merged.shippingHeight && Number.isFinite(h) && h > 0) merged.shippingHeight = { value: String(h), unit: "in" };
+    if (hasAllGoogleShippingDims(merged)) {
+      webflowLog("info", { event: "google_merchant.dimensions_ai_completed", title: String(title || "").slice(0, 120) });
+    }
+  } catch (err) {
+    webflowLog("warn", {
+      event: "google_merchant.dimensions_ai_failed",
+      message: err?.response?.data?.error?.message || err.message,
+    });
+  }
+  return merged;
+}
+
+function applyGoogleDimFallback(dims) {
+  const merged = { ...(dims || {}) };
+  const fallback = getGoogleDimFallbackIn();
+  if (!merged.shippingWidth) merged.shippingWidth = { value: String(fallback.width), unit: "in" };
+  if (!merged.shippingLength) merged.shippingLength = { value: String(fallback.length), unit: "in" };
+  if (!merged.shippingHeight) merged.shippingHeight = { value: String(fallback.height), unit: "in" };
+  return merged;
 }
 
 function googleOfferIdFromSlugOrHandle(slugOrHandle, fallbackId) {
@@ -5947,7 +6036,7 @@ function parseGooglePriceValue(priceLike) {
   return n.toFixed(2);
 }
 
-function buildGoogleFurnitureProductFromShopify(product, availability = "in stock") {
+async function buildGoogleFurnitureProductFromShopify(product, availability = "in stock") {
   const handle = String(product?.handle || "").trim();
   const offerId = googleOfferIdFromSlugOrHandle(handle, product?.id);
   const productUrl = listingFurnitureProductUrlFromSlug(handle);
@@ -5962,7 +6051,7 @@ function buildGoogleFurnitureProductFromShopify(product, availability = "in stoc
     const fallbackWeight = String(process.env.GOOGLE_MERCHANT_DEFAULT_WEIGHT_LB || "10").trim();
     shippingWeight = { value: fallbackWeight || "10", unit: "lb" };
   }
-  const extractedDims = extractGoogleDimsFromText(description);
+  let extractedDims = extractGoogleDimsFromText(`${product?.title || ""}\n${description}`);
   if (!extractedDims.shippingWidth && dims.width != null && Number.isFinite(Number(dims.width))) {
     extractedDims.shippingWidth = { value: String(Number(dims.width)), unit: "in" };
   }
@@ -5972,6 +6061,12 @@ function buildGoogleFurnitureProductFromShopify(product, availability = "in stoc
   if (!extractedDims.shippingHeight && dims.height != null && Number.isFinite(Number(dims.height))) {
     extractedDims.shippingHeight = { value: String(Number(dims.height)), unit: "in" };
   }
+  extractedDims = await completeGoogleDimsWithAi({
+    title: product?.title || "",
+    description,
+    dims: extractedDims,
+  });
+  extractedDims = applyGoogleDimFallback(extractedDims);
   const priceValue =
     parseGooglePriceValue(product?.variants?.[0]?.price) ??
     parseGooglePriceValue(product?.price) ??
@@ -6014,7 +6109,7 @@ async function googleMerchantInsertProduct(payload) {
 
 async function syncGoogleMerchantFurnitureFromShopifyProduct(product, availability = "in stock", reason = "sync") {
   if (!googleMerchantEnabled() || !product) return false;
-  const payload = buildGoogleFurnitureProductFromShopify(product, availability);
+  const payload = await buildGoogleFurnitureProductFromShopify(product, availability);
   if (!payload.offerId || !payload.title) return false;
   try {
     await googleMerchantInsertProduct(payload);
@@ -6040,7 +6135,7 @@ async function syncGoogleMerchantFurnitureFromShopifyProduct(product, availabili
   }
 }
 
-function buildGoogleFurnitureOutOfStockFromWebflow(existing) {
+async function buildGoogleFurnitureOutOfStockFromWebflow(existing) {
   const fd = existing?.fieldData || {};
   const slug = String(fd["shopify-slug-2"] || fd.slug || "").trim();
   const offerId = googleOfferIdFromSlugOrHandle(slug, fd["shopify-product-id"] || existing?.id);
@@ -6049,7 +6144,13 @@ function buildGoogleFurnitureOutOfStockFromWebflow(existing) {
     value: String(process.env.GOOGLE_MERCHANT_DEFAULT_WEIGHT_LB || "10").trim() || "10",
     unit: "lb",
   };
-  const dims = extractGoogleDimsFromText(description);
+  let dims = extractGoogleDimsFromText(`${fd.name || ""}\n${description}`);
+  dims = await completeGoogleDimsWithAi({
+    title: fd.name || "",
+    description,
+    dims,
+  });
+  dims = applyGoogleDimFallback(dims);
   const rawPrice = existing?.skus?.[0]?.fieldData?.price?.value;
   const priceValue = Number.isFinite(Number(rawPrice)) ? (Number(rawPrice) / 100).toFixed(2) : "0.00";
   const payload = {
@@ -6078,7 +6179,7 @@ function buildGoogleFurnitureOutOfStockFromWebflow(existing) {
 
 async function syncGoogleMerchantFurnitureOutOfStockFromWebflow(existing, reason = "mark_sold") {
   if (!googleMerchantEnabled()) return false;
-  const payload = buildGoogleFurnitureOutOfStockFromWebflow(existing);
+  const payload = await buildGoogleFurnitureOutOfStockFromWebflow(existing);
   if (!payload.offerId || !payload.title) return false;
   try {
     await googleMerchantInsertProduct(payload);
