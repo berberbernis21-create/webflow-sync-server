@@ -2114,7 +2114,19 @@ function normalizeTitleForFurnitureAccessoryMatch(raw) {
 function furnitureAccessoryCategoryOverrideTitle(title) {
   const t = normalizeTitleForFurnitureAccessoryMatch(title);
   if (!t) return null;
+  if (/\bchandeliers?\b/.test(t)) return "Lighting";
+  if (/\bpendant lights?\b/.test(t) || /\bceiling lights?\b/.test(t) || /\blight fixtures?\b/.test(t)) return "Lighting";
   if (/\blamps?\b/.test(t)) return "Lighting";
+  if (/\bheadboards?\b/.test(t) || /\bbed frames?\b/.test(t) || /\bbunk beds?\b/.test(t) || /\barmoires?\b/.test(t) || /\bwardrobes?\b/.test(t)) return "Bedroom";
+  if (/\btea caddies?\b/.test(t) || /\bcaddies?\b/.test(t)) return "Accessories";
+  const boxIsBedroomFurniture =
+    /\bchest of drawers?\b/.test(t) ||
+    /\bblanket chests?\b/.test(t) ||
+    /\bhope chests?\b/.test(t) ||
+    /\btoy chests?\b/.test(t);
+  if (!boxIsBedroomFurniture && /\b(scroll|document|trinket|decorative|keepsake|jewelry|jewellery)\s*boxes?\b/.test(t)) {
+    return "Accessories";
+  }
   // candlestick(s), candle stick(s), candle-stick(s); NFKC typography handled above
   if (/\bcandle[\s-]*sticks?\b/.test(t)) return "Accessories";
   if (/\bcandle-?holders?\b/.test(t) || /\bcandle holders?\b/.test(t)) return "Accessories";
@@ -2151,6 +2163,50 @@ function furnitureSleepSurfaceIndicatesBedroom(title, descriptionHtml, tags) {
   return false;
 }
 
+function furnitureBedroomIndicatesBedroom(title, descriptionHtml, tags) {
+  const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const name = ((title || "").trim()).toLowerCase();
+  const descText = stripHtml(descriptionHtml || "").trim().toLowerCase();
+  const tagsStr = Array.isArray(tags) ? tags.join(" ").toLowerCase() : typeof tags === "string" ? tags.toLowerCase() : "";
+  const hay = `${name} ${descText} ${tagsStr}`;
+  if (!hay.trim()) return false;
+  if (/\bheadboards?\b/i.test(hay)) return true;
+  if (/\bbed frames?\b/i.test(hay) || /\bbedframe\b/i.test(hay)) return true;
+  if (/\bbunk beds?\b/i.test(hay)) return true;
+  if (/\barmoires?\b/i.test(hay)) return true;
+  if (/\bwardrobes?\b/i.test(hay)) return true;
+  if (/\bnightstands?\b/i.test(hay)) return true;
+  if (/\bdressers?\b/i.test(hay)) return true;
+  return false;
+}
+
+function furnitureRugIndicatesRugs(title, descriptionHtml, tags) {
+  const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const name = ((title || "").trim()).toLowerCase();
+  const descText = stripHtml(descriptionHtml || "").trim().toLowerCase();
+  const tagsStr = Array.isArray(tags) ? tags.join(" ").toLowerCase() : typeof tags === "string" ? tags.toLowerCase() : "";
+  const hay = `${name} ${descText} ${tagsStr}`;
+  if (!hay.trim()) return false;
+  if (/\brugs?\b/i.test(hay)) return true;
+  if (/\brunners?\b/i.test(hay)) return true;
+  if (/\barea rugs?\b/i.test(hay)) return true;
+  if (/\bpersian rugs?\b/i.test(hay) || /\boriental rugs?\b/i.test(hay)) return true;
+  return false;
+}
+
+function furnitureTableIndicatesCategory(title, descriptionHtml, tags, dimensions) {
+  const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const name = ((title || "").trim()).toLowerCase();
+  const descText = stripHtml(descriptionHtml || "").trim().toLowerCase();
+  const tagsStr = Array.isArray(tags) ? tags.join(" ").toLowerCase() : typeof tags === "string" ? tags.toLowerCase() : "";
+  const hay = `${name} ${descText} ${tagsStr}`;
+  if (!/\btable\b/i.test(hay)) return null;
+  if (/\bdining table(s)?\b/i.test(hay) || /\bbreakfast table(s)?\b/i.test(hay)) return "DiningRoom";
+  const dimOverride = applyTableDimensionRules(dimensions, name, `${descText} ${tagsStr}`.trim());
+  if (dimOverride) return dimOverride;
+  return "LivingRoom";
+}
+
 function detectCategoryFurniture(title, descriptionHtml, tags, dimensions) {
   const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
   const descText = stripHtml(descriptionHtml || "").trim();
@@ -2161,9 +2217,18 @@ function detectCategoryFurniture(title, descriptionHtml, tags, dimensions) {
 
   if (!name && !descAndTags) return "Accessories";
 
-  if (furnitureSleepSurfaceIndicatesBedroom(title, descriptionHtml, tags)) return "Bedroom";
+  const forcedFromTitle = furnitureAccessoryCategoryOverrideTitle(title);
+  if (forcedFromTitle === "Accessories" || forcedFromTitle === "Lighting" || forcedFromTitle === "Bedroom") {
+    return forcedFromTitle;
+  }
 
-  // Hard guard: if title/description clearly says art, never classify as Rugs.
+  if (furnitureSleepSurfaceIndicatesBedroom(title, descriptionHtml, tags)) return "Bedroom";
+  if (furnitureBedroomIndicatesBedroom(title, descriptionHtml, tags)) return "Bedroom";
+  if (furnitureRugIndicatesRugs(title, descriptionHtml, tags)) return "Rugs";
+  const tableCategory = furnitureTableIndicatesCategory(title, descriptionHtml, tags, dimensions);
+  if (tableCategory) return tableCategory;
+
+  // Hard guard for clear art items, but do not hijack obvious furniture titles.
   const artSignals = [
     " art ",
     " artwork",
@@ -2179,8 +2244,37 @@ function detectCategoryFurniture(title, descriptionHtml, tags, dimensions) {
     " framed art",
     " sculpture",
   ];
+  const furnitureTitleAnchors = [
+    " table ",
+    " cabinet ",
+    " armoire ",
+    " wardrobe ",
+    " dresser ",
+    " nightstand ",
+    " headboard ",
+    " bed ",
+    " desk ",
+    " bookcase ",
+    " bookshelf ",
+    " sofa ",
+    " sectional ",
+    " chair ",
+    " console ",
+    " sideboard ",
+    " buffet ",
+    " hutch ",
+    " chest ",
+    " shelving ",
+  ];
   const paddedText = ` ${[name, descAndTags].filter(Boolean).join(" ")} `;
-  if (artSignals.some((s) => paddedText.includes(s))) return "ArtMirrors";
+  const paddedTitle = ` ${name} `;
+  const explicitWallArtSignals = [" wall art", " framed art", " painting", " paintings", " lithograph", " giclee", " sculpture"];
+  const rugSignals = [" rug ", " rugs ", " runner", " runners ", " area rug", " area rugs"];
+  const hasRugSignal = rugSignals.some((s) => paddedText.includes(s));
+  const hasArtSignal = artSignals.some((s) => paddedText.includes(s));
+  const hasExplicitWallArtSignal = explicitWallArtSignals.some((s) => paddedText.includes(s));
+  const hasFurnitureAnchorInTitle = furnitureTitleAnchors.some((s) => paddedTitle.includes(s));
+  if (hasArtSignal && !hasFurnitureAnchorInTitle && !(hasRugSignal && !hasExplicitWallArtSignal)) return "ArtMirrors";
 
   // Dimension-based override for tables (height/depth/width rules)
   const dimOverride = applyTableDimensionRules(dimensions, name, descAndTags);

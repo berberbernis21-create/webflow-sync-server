@@ -83,6 +83,7 @@ RULES (mandatory):
 - Game tables (shuffleboard, pool table, ping pong, foosball), exercise/workout/fitness equipment (dumbbells, treadmill, home gym), play equipment, game room furniture → "OfficeDen".
 - Rug, runner, area rug → "Rugs".
 - Bed, headboard, nightstand, dresser, armoire, vanity → "Bedroom".
+- Headboard/bedroom furniture remains "Bedroom" even if description says phrases like "works of art" or "artful design".
 - **Mattress**, **box spring**, split box, box foundation, pillow-top / euro top, adjustable base/bed → **"Bedroom"** (never "Accessories" because description mentions "pillow" or "box").
 - **Chandelier**, sconce, pendant light, **floor lamp**, **table lamp**, **desk lamp**, **bedside lamp**, torchiere → "Lighting". Lamps are never "Accessories".
 - Freestanding **candlesticks**, **candleholder** / **candle holder**, taper holders, and tabletop candle pieces (pewter, brass, glass hurricanes, clay taper holders, etc.) → "Accessories", not "Lighting". If **candlestick**, **candleholder**, or **candle holder** is in the title → **Accessories** — never LivingRoom because of “dining table” / “centerpiece” in the description.
