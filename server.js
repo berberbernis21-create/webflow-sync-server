@@ -6131,9 +6131,12 @@ function parseGooglePriceValue(priceLike) {
 }
 
 async function buildGoogleFurnitureProductFromShopify(product, availability = "in stock") {
-  const handle = String(product?.handle || "").trim();
-  const offerId = googleOfferIdFromSlugOrHandle(handle, product?.id);
-  const productUrl = listingFurnitureProductUrlFromSlug(handle);
+  const canonicalSlug =
+    String(product?.__googleCanonicalSlug || "").trim() ||
+    String(product?.__webflowCanonicalSlug || "").trim();
+  if (!canonicalSlug) return null;
+  const offerId = googleOfferIdFromSlugOrHandle(canonicalSlug, product?.id);
+  const productUrl = listingFurnitureProductUrlFromSlug(canonicalSlug);
   const images = Array.isArray(product?.images) ? product.images.map((i) => i?.src).filter(Boolean) : [];
   const description = formatGoogleFurnitureDescription(product?.body_html || "", product?.title || "");
   let shippingWeight = extractGoogleWeightFromText(description);
@@ -6203,8 +6206,59 @@ async function googleMerchantInsertProduct(payload) {
 
 async function syncGoogleMerchantFurnitureFromShopifyProduct(product, availability = "in stock", reason = "sync") {
   if (!googleMerchantEnabled() || !product) return false;
-  const payload = await buildGoogleFurnitureProductFromShopify(product, availability);
-  if (!payload.offerId || !payload.title) return false;
+  const cfg = getWebflowConfig("furniture");
+  const sid = String(product?.id || "").trim();
+  let canonicalSlug = "";
+  const retries = Math.max(1, parseInt(process.env.GOOGLE_MERCHANT_WAIT_FOR_WEBFLOW_SLUG_RETRIES || "4", 10) || 4);
+  const delayMs = Math.max(250, parseInt(process.env.GOOGLE_MERCHANT_WAIT_FOR_WEBFLOW_SLUG_DELAY_MS || "1500", 10) || 1500);
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    const indexed = sid && furnitureProductIndex?.byShopifyId?.get(sid);
+    const indexedFd = indexed?.fieldData || {};
+    const indexedSlug = String(indexedFd.slug || indexedFd["shopify-slug-2"] || "").trim();
+    if (indexedSlug) {
+      canonicalSlug = indexedSlug;
+      break;
+    }
+    if (cfg?.siteId && cfg?.token && sid) {
+      try {
+        const existing = await findExistingWebflowEcommerceProduct(
+          sid,
+          null,
+          cfg,
+          String(product?.title || "").trim() || null
+        );
+        const fd = existing?.fieldData || {};
+        const foundSlug = String(fd.slug || fd["shopify-slug-2"] || "").trim();
+        if (foundSlug) {
+          canonicalSlug = foundSlug;
+          break;
+        }
+      } catch (err) {
+        webflowLog("warn", {
+          event: "google_merchant.canonical_slug_lookup_failed",
+          shopifyProductId: sid || null,
+          attempt,
+          retries,
+          message: err?.message || String(err),
+        });
+      }
+    }
+    if (attempt < retries) await sleep(delayMs);
+  }
+  if (!canonicalSlug) {
+    webflowLog("warn", {
+      event: "google_merchant.defer_missing_canonical_slug",
+      reason,
+      shopifyProductId: sid || null,
+      retries,
+      delayMs,
+      message: "Skipping Google push until Webflow canonical slug is available",
+    });
+    return false;
+  }
+  const productForGoogle = { ...product, __googleCanonicalSlug: canonicalSlug };
+  const payload = await buildGoogleFurnitureProductFromShopify(productForGoogle, availability);
+  if (!payload || !payload.offerId || !payload.title) return false;
   try {
     await googleMerchantInsertProduct(payload);
     webflowLog("info", {
@@ -6212,6 +6266,7 @@ async function syncGoogleMerchantFurnitureFromShopifyProduct(product, availabili
       reason,
       shopifyProductId: String(product?.id || ""),
       offerId: payload.offerId,
+      canonicalSlug: canonicalSlug || null,
       availability,
     });
     return true;
@@ -7252,6 +7307,8 @@ app.post("/google/furniture/full-push", async (req, res) => {
   try {
     const products = await fetchAllShopifyProducts();
     const cache = loadCache();
+    furnitureProductIndex = null;
+    await loadFurnitureProductIndex();
     const requestedLimit = Number(req.body?.limit);
     const maxItems =
       Number.isFinite(requestedLimit) && requestedLimit > 0
