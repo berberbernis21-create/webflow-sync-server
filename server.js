@@ -642,6 +642,7 @@ const DATA_DIR = process.env.DATA_DIR || "./data";
 const CACHE_FILE = `${DATA_DIR}/lastSync.json`;
 const DUPLICATE_EMAIL_SENT_FILE = `${DATA_DIR}/duplicate_placement_emails_sent.json`;
 const WEIGHT_MISSING_EMAIL_SENT_FILE = `${DATA_DIR}/weight_missing_emails_sent.json`;
+const GOOGLE_GUARD_EMAIL_SENT_FILE = `${DATA_DIR}/google_guard_emails_sent.json`;
 const SKU_IMAGE_FAIL_EMAIL_LAST_FILE = `${DATA_DIR}/sku_image_fail_email_last.json`;
 const WEBFLOW_SKU_IMAGE_MAX_ATTEMPTS = 5;
 const WEBFLOW_SKU_IMAGE_BACKOFF_MS = 5000;
@@ -705,6 +706,44 @@ function saveWeightMissingEmailSentIds(set) {
 function clearWeightMissingEmailSentId(shopifyProductId) {
   const set = loadWeightMissingEmailSentIds();
   if (set.delete(String(shopifyProductId))) saveWeightMissingEmailSentIds(set);
+}
+
+function loadGoogleGuardEmailSentIds() {
+  try {
+    if (!fs.existsSync(GOOGLE_GUARD_EMAIL_SENT_FILE)) return new Set();
+    const raw = fs.readFileSync(GOOGLE_GUARD_EMAIL_SENT_FILE, "utf8");
+    const arr = JSON.parse(raw);
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveGoogleGuardEmailSentIds(set) {
+  try {
+    ensureDataDir();
+    fs.writeFileSync(GOOGLE_GUARD_EMAIL_SENT_FILE, JSON.stringify([...set], null, 2), "utf8");
+  } catch (err) {
+    webflowLog("error", { event: "google_guard_sent.save_failed", message: err.message });
+  }
+}
+
+function googleGuardIssueKey(shopifyProductId, issue) {
+  return `${String(shopifyProductId || "").trim()}:${String(issue || "").trim()}`;
+}
+
+function clearGoogleGuardEmailSentIds(shopifyProductId) {
+  const pid = String(shopifyProductId || "").trim();
+  if (!pid) return;
+  const set = loadGoogleGuardEmailSentIds();
+  let changed = false;
+  for (const key of [...set]) {
+    if (key.startsWith(`${pid}:`)) {
+      set.delete(key);
+      changed = true;
+    }
+  }
+  if (changed) saveGoogleGuardEmailSentIds(set);
 }
 
 /** One email per product until weight is added; uses same Gmail SMTP as duplicate-placement alerts. */
@@ -784,6 +823,17 @@ async function sendGoogleFeedDataIssueEmail({
     return;
   }
   const shopifyProductId = String(product?.id || "").trim();
+  const issueKey = googleGuardIssueKey(shopifyProductId, issue);
+  const sent = loadGoogleGuardEmailSentIds();
+  if (shopifyProductId && sent.has(issueKey)) {
+    webflowLog("info", {
+      event: "google_merchant.guard_email_skipped",
+      issue,
+      shopifyProductId,
+      reason: "already_sent_for_issue",
+    });
+    return;
+  }
   const title = String(product?.title || "(no title)");
   const store = process.env.SHOPIFY_STORE || "";
   const adminUrl = store && shopifyProductId
@@ -791,18 +841,25 @@ async function sendGoogleFeedDataIssueEmail({
     : "";
   const recipients = ["info@lostandfoundresale.com", "berberbernis21@gmail.com"];
   const body = [
-    "Google Merchant sync skipped this product due to feed guardrail.",
+    "Google Merchant sync skipped this product because a feed guardrail failed.",
     "",
-    `Issue: ${issue}`,
-    `Reason: ${reason}`,
-    `Product: ${title}`,
-    `Shopify product ID: ${shopifyProductId || "(unknown)"}`,
-    canonicalSlug ? `Canonical slug: ${canonicalSlug}` : "",
-    listingUrl ? `Listing URL: ${listingUrl}` : "",
-    shippingWeight ? `Shipping weight: ${shippingWeight.value || "?"} ${shippingWeight.unit || ""}`.trim() : "Shipping weight: (missing)",
-    adminUrl ? `Admin: ${adminUrl}` : "",
+    "What failed",
+    `- Issue: ${issue}`,
+    `- Reason: ${reason}`,
     "",
-    "Fix the product data in Shopify/Webflow and run sync again.",
+    "Product",
+    `- Title: ${title}`,
+    `- Shopify product ID: ${shopifyProductId || "(unknown)"}`,
+    canonicalSlug ? `- Canonical slug: ${canonicalSlug}` : "",
+    listingUrl ? `- Listing URL: ${listingUrl}` : "",
+    shippingWeight ? `- Shipping weight: ${shippingWeight.value || "?"} ${shippingWeight.unit || ""}`.trim() : "- Shipping weight: (missing)",
+    adminUrl ? `- Traxia admin: ${adminUrl}` : "",
+    "",
+    "Action required",
+    "- Fix this in Traxia (Shopify source of truth), not in Webflow.",
+    "- After saving in Traxia, run sync again.",
+    "",
+    "Note: This alert sends once per product+issue and will re-alert only after a successful sync clears the issue state.",
     "",
     "— Lost & Found Webflow Sync",
   ]
@@ -821,6 +878,10 @@ async function sendGoogleFeedDataIssueEmail({
       subject: `[Webflow Sync] Google guard: ${issue} — ${title.slice(0, 60)}${title.length > 60 ? "…" : ""}`,
       text: body,
     });
+    if (shopifyProductId) {
+      sent.add(issueKey);
+      saveGoogleGuardEmailSentIds(sent);
+    }
     webflowLog("info", { event: "google_merchant.guard_email_sent", issue, shopifyProductId: shopifyProductId || null });
   } catch (err) {
     webflowLog("error", { event: "google_merchant.guard_email_failed", issue, message: err.message });
@@ -6251,7 +6312,19 @@ async function validateGoogleListingUrl(url, expectedSlug = "") {
       maxRedirects: 5,
       validateStatus: () => true,
     });
-    const out = resp.status >= 200 && resp.status < 400 ? { ok: true, reason: `http_${resp.status}` } : { ok: false, reason: `http_${resp.status}` };
+    const allowCanonical404 =
+      String(process.env.GOOGLE_MERCHANT_ALLOW_CANONICAL_404 || "true").trim().toLowerCase() !== "false";
+    const isCanonical404 =
+      allowCanonical404 &&
+      resp.status === 404 &&
+      // Only allow 404 bypass when canonical checks already passed above.
+      (!!slug || listingUrl.startsWith(`${prefix}/`));
+    const out =
+      resp.status >= 200 && resp.status < 400
+        ? { ok: true, reason: `http_${resp.status}` }
+        : isCanonical404
+          ? { ok: true, reason: "http_404_canonical_allowed" }
+          : { ok: false, reason: `http_${resp.status}` };
     setCachedGoogleListingValidation(listingUrl, out, !!out.ok);
     return out;
   } catch (err) {
@@ -6524,6 +6597,7 @@ async function syncGoogleMerchantFurnitureFromShopifyProduct(product, availabili
   }
   try {
     await googleMerchantInsertProduct(payload);
+    clearGoogleGuardEmailSentIds(String(product?.id || ""));
     webflowLog("info", {
       event: "google_merchant.upsert_ok",
       reason,
@@ -6628,6 +6702,7 @@ async function syncGoogleMerchantFurnitureOutOfStockFromWebflow(existing, reason
   }
   try {
     await googleMerchantInsertProduct(payload);
+    clearGoogleGuardEmailSentIds(String(pseudoProduct?.id || ""));
     webflowLog("info", {
       event: "google_merchant.mark_out_of_stock_ok",
       reason,
