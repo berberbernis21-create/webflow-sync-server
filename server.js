@@ -1859,7 +1859,7 @@ const SYNC_DEPARTMENT_TAGS = ["Furniture & Home", "Luxury Goods"];
 const LEGACY_VERTICAL_SHORTHAND_TAGS = ["Luxury", "Furniture"];
 const SYNC_CATEGORY_TAGS = [
   "Living Room", "Dining Room", "Office Den", "Rugs", "Art / Mirrors", "Bedroom", "Accessories", "Outdoor / Patio", "Lighting",
-  "Handbags", "Totes", "Crossbody", "Wallets", "Backpacks", "Luggage", "Scarves", "Belts", "Small Bags", "Other ", "Other",
+  "Handbags", "Totes", "Crossbody", "Wallets", "Backpacks", "Luggage", "Scarves", "Belts", "Jewelry", "Small Bags", "Other ", "Other",
   "Recently Sold",
 ];
 function mergeProductTagsForSync(existingTags, department, category) {
@@ -2636,16 +2636,16 @@ const TYPE_TO_FURNITURE_CATEGORY = {
 };
 
 // Existing taxonomy: Luxury Goods metafield values (exact)
-const LUXURY_TAXONOMY = ["Handbags", "Totes", "Crossbody", "Small Bags", "Backpacks", "Wallets", "Luggage", "Scarves", "Belts", "Accessories", "Other ", "Recently Sold"];
+const LUXURY_TAXONOMY = ["Handbags", "Totes", "Crossbody", "Small Bags", "Backpacks", "Wallets", "Luggage", "Scarves", "Belts", "Jewelry", "Accessories", "Other ", "Recently Sold"];
 const TYPE_TO_LUXURY_CATEGORY = {
   "handbag": "Handbags", "handbags": "Handbags", "tote": "Totes", "totes": "Totes", "crossbody": "Crossbody",
   "small bag": "Small Bags", "backpack": "Backpacks", "backpacks": "Backpacks", "wallet": "Wallets", "wallets": "Wallets",
   "luggage": "Luggage", "scarf": "Scarves", "scarves": "Scarves", "belt": "Belts", "belts": "Belts",
   "clutch": "Small Bags", "bag": "Handbags", "bags": "Handbags", "fashion accessories": "Accessories", "wearable": "Accessories", "accessories": "Accessories",
-  "jewelry": "Accessories", "jewellery": "Accessories", "earring": "Accessories", "earrings": "Accessories",
-  "bracelet": "Accessories", "bracelets": "Accessories", "necklace": "Accessories", "necklaces": "Accessories",
-  "ring": "Accessories", "rings": "Accessories", "pendant": "Accessories", "pendants": "Accessories",
-  "brooch": "Accessories", "brooches": "Accessories", "barrette": "Accessories", "barrettes": "Accessories",
+  "jewelry": "Jewelry", "jewellery": "Jewelry", "earring": "Jewelry", "earrings": "Jewelry",
+  "bracelet": "Jewelry", "bracelets": "Jewelry", "necklace": "Jewelry", "necklaces": "Jewelry",
+  "ring": "Jewelry", "rings": "Jewelry", "pendant": "Jewelry", "pendants": "Jewelry",
+  "brooch": "Jewelry", "brooches": "Jewelry", "barrette": "Jewelry", "barrettes": "Jewelry",
 };
 
 function getFurnitureCategoryFromType(productType) {
@@ -4521,6 +4521,10 @@ async function syncSingleProductCore(product, cache, options = {}) {
     const llmDetectedVertical = llmResult.category === "LUXURY" ? "luxury" : "furniture";
     const evidenceVertical = resolveVerticalFromEvidence(product, llmDetectedVertical);
     detectedVertical = evidenceVertical.vertical;
+    // Hard guard: jewelry cues must always live under Luxury Goods in Shopify/Webflow.
+    if (isJewelryProduct(product?.title || "", product?.body_html || "")) {
+      detectedVertical = "luxury";
+    }
     const correctedToLuxury = cacheEntry?.vertical === "furniture" && detectedVertical === "luxury";
     const correctedToFurniture = cacheEntry?.vertical === "luxury" && detectedVertical === "furniture";
     vertical = correctedToLuxury
