@@ -1,7 +1,7 @@
 /**
  * LLM-based category classifier: picks the exact category within a vertical.
- * - Luxury: Handbags, Totes, Crossbody, Backpacks, Small Bags, Wallets, Luggage, Scarves, Belts, Accessories, Other
- *   Rules: jewelry → Accessories; shoes → Other; miscellaneous luxury items (straps, pouches, charms, etc.) → Accessories; Other only for footwear or truly uncategorizable.
+ * - Luxury: Handbags, Totes, Crossbody, Backpacks, Small Bags, Wallets, Luggage, Scarves, Belts, Jewelry, Accessories, Other
+ *   Rules: jewelry → Jewelry; shoes → Other; miscellaneous luxury items (straps, pouches, charms, etc.) → Accessories; Other only for footwear or truly uncategorizable.
  * - Furniture: LivingRoom, DiningRoom, OfficeDen, Rugs, ArtMirrors, Bedroom, Accessories, OutdoorPatio, Lighting
  *   Rules: art/paintings/photographs/framed → ArtMirrors; umbrellas/patio → OutdoorPatio.
  * Uses same OPENAI_API_KEY as vertical classifier. Falls back to null on failure so caller can use keyword logic.
@@ -33,7 +33,7 @@ function getProductText(product) {
 
 const LUXURY_CATEGORIES = [
   "Handbags", "Totes", "Crossbody", "Backpacks", "Small Bags",
-  "Wallets", "Luggage", "Scarves", "Belts", "Accessories", "Other"
+  "Wallets", "Luggage", "Scarves", "Belts", "Jewelry", "Accessories", "Other"
 ];
 
 const FURNITURE_CATEGORIES = [
@@ -47,7 +47,7 @@ Use ONLY the product title and description to choose exactly ONE category. Do no
 Allowed categories: ${LUXURY_CATEGORIES.join(", ")}.
 
 RULES (mandatory):
-- Jewelry, earrings, bracelets, necklaces, rings, pendants, brooches, barrettes, hair accessories, clip-on earrings → always "Accessories".
+- Jewelry, earrings, bracelets, necklaces, rings, pendants, brooches, barrettes, hair accessories, clip-on earrings → always "Jewelry".
 - Keychains, key rings, bag charms, medallion charms (when worn as key ring or bag charm) → always "Accessories".
 - Shoes, sneakers, boots, heels, sandals, loafers, mules, flats, pumps, footwear → always "Other".
 - Handbags, shoulder bags, satchels, day bags → "Handbags".

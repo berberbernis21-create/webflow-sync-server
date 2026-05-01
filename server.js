@@ -2134,6 +2134,7 @@ function getPrimaryVariantInventoryQuantity(product) {
 
 function shopifyHash(product) {
   const dimensions = getDimensionsFromProduct(product);
+  const jewelryReclassVersion = isJewelryProduct(product?.title || "", product?.body_html || "") ? 1 : 0;
   return {
     title: product.title,
     vendor: product.vendor,
@@ -2144,15 +2145,18 @@ function shopifyHash(product) {
     slug: product.handle,
     dimensions: { width: dimensions.width, height: dimensions.height, length: dimensions.length, weight: dimensions.weight },
     taxonomyVersion: 10,
+    jewelryReclassVersion,
   };
 }
 
 /** Hash of only name + description; used to decide if we call the LLM (only when this changes). */
 function contentHashForLLM(product) {
+  const jewelryReclassVersion = isJewelryProduct(product?.title || "", product?.body_html || "") ? 1 : 0;
   return {
     title: product.title || "",
     body_html: normalizeHtmlForHash(product.body_html),
     taxonomyVersion: 10,
+    jewelryReclassVersion,
   };
 }
 
@@ -2184,6 +2188,7 @@ function mapCategoryForShopify(category) {
     Luggage: "Luggage",
     Scarves: "Scarves",
     Belts: "Belts",
+    Jewelry: "Jewelry",
     Accessories: "Accessories",
     "Small Bags": "Small Bags",
 
@@ -2683,7 +2688,7 @@ function isShoeProduct(title, descriptionHtml) {
   return text && SHOE_KEYWORDS.some((kw) => matchWordBoundary(text, kw));
 }
 
-/** Jewelry and accessory keywords — title + description only: force Accessories. */
+/** Jewelry keywords — title + description only: force Jewelry. */
 const JEWELRY_KEYWORDS = [
   "jewelry", "jewellery", "jewel", "earring", "earrings", "bracelet", "bracelets",
   "necklace", "necklaces", "ring", "rings", "pendant", "pendants", "brooch", "brooches",
@@ -2727,15 +2732,22 @@ function isBeltProduct(title, descriptionHtml) {
   return BELT_KEYWORDS.some((kw) => matchWordBoundary(text, kw));
 }
 
-/** True if title or description indicate jewelry or accessory (keychain, key ring, bag charm) — force Accessories. */
-function isJewelryOrAccessoryProduct(title, descriptionHtml) {
+/** True if title or description indicate jewelry — force Jewelry. */
+function isJewelryProduct(title, descriptionHtml) {
   const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
   const desc = stripHtml(descriptionHtml || "").trim();
   const text = [(title || "").trim(), desc].filter(Boolean).join(" ").toLowerCase();
   if (!text) return false;
-  if (JEWELRY_KEYWORDS.some((kw) => matchWordBoundary(text, kw))) return true;
-  if (ACCESSORY_KEYWORDS.some((kw) => matchWordBoundary(text, kw))) return true;
-  return false;
+  return JEWELRY_KEYWORDS.some((kw) => matchWordBoundary(text, kw));
+}
+
+/** True if title or description indicate accessory terms (non-jewelry) — force Accessories. */
+function isAccessoryProduct(title, descriptionHtml) {
+  const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const desc = stripHtml(descriptionHtml || "").trim();
+  const text = [(title || "").trim(), desc].filter(Boolean).join(" ").toLowerCase();
+  if (!text) return false;
+  return ACCESSORY_KEYWORDS.some((kw) => matchWordBoundary(text, kw));
 }
 
 /** Detect luxury category from title/description when product_type is empty or unmatched. Title-first: match on title before description so accessory mentions (e.g. "comes with clutch") don't override the main product. */
@@ -2746,7 +2758,7 @@ function detectLuxuryCategoryFromTitle(title, descriptionHtml) {
   const combined = [titleText, descText].filter(Boolean).join(" ");
   if (!combined) return null;
   if (SHOE_KEYWORDS.some((kw) => matchWordBoundary(combined, kw))) return null;
-  if (JEWELRY_KEYWORDS.some((kw) => matchWordBoundary(combined, kw))) return "Accessories";
+  if (JEWELRY_KEYWORDS.some((kw) => matchWordBoundary(combined, kw))) return "Jewelry";
   if (ACCESSORY_KEYWORDS.some((kw) => matchWordBoundary(combined, kw))) return "Accessories";
   // Document holders, agendas, folios, business card cases → Other (stationery/office, not handbags).
   if (matchWordBoundary(combined, "document holder") || matchWordBoundary(combined, "agenda") || matchWordBoundary(combined, "folio") || matchWordBoundary(combined, "business card case")) {
@@ -4739,7 +4751,8 @@ async function syncSingleProductCore(product, cache, options = {}) {
       else {
         if (isShoeProduct(name, description)) categoryForMetafield = "Other ";
         else categoryForMetafield = detectLuxuryCategoryFromTitle(name, description) ?? "Other ";
-        if (isJewelryOrAccessoryProduct(name, description) && !isBagOrAgendaProduct(name, description)) categoryForMetafield = "Accessories";
+        if (isJewelryProduct(name, description) && !isBagOrAgendaProduct(name, description)) categoryForMetafield = "Jewelry";
+        else if (isAccessoryProduct(name, description) && !isBagOrAgendaProduct(name, description)) categoryForMetafield = "Accessories";
         if (isBeltProduct(name, description)) categoryForMetafield = "Belts";
         if (categoryForMetafield === "Accessories" && isBagOrAgendaProduct(name, description)) categoryForMetafield = detectLuxuryCategoryFromTitle(name, description) ?? "Other ";
       }
@@ -4765,7 +4778,8 @@ async function syncSingleProductCore(product, cache, options = {}) {
           categoryForMetafield = fromTitle ?? "Other ";
         }
       }
-      if (isJewelryOrAccessoryProduct(name, description) && !isBagOrAgendaProduct(name, description)) categoryForMetafield = "Accessories";
+      if (isJewelryProduct(name, description) && !isBagOrAgendaProduct(name, description)) categoryForMetafield = "Jewelry";
+      else if (isAccessoryProduct(name, description) && !isBagOrAgendaProduct(name, description)) categoryForMetafield = "Accessories";
       if (isBeltProduct(name, description)) categoryForMetafield = "Belts";
       if (categoryForMetafield === "Accessories" && isBagOrAgendaProduct(name, description)) {
         const fromTitle = detectLuxuryCategoryFromTitle(name, description);
