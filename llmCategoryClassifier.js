@@ -47,8 +47,8 @@ Use ONLY the product title and description to choose exactly ONE category. Do no
 Allowed categories: ${LUXURY_CATEGORIES.join(", ")}.
 
 RULES (mandatory):
-- Jewelry, earrings, bracelets, necklaces, rings, pendants, brooches, barrettes, hair accessories, clip-on earrings → always "Jewelry".
-- Keychains, key rings, bag charms, medallion charms (when worn as key ring or bag charm) → always "Accessories".
+- Jewelry, earrings, bracelets, necklaces, rings, pendants, brooches, clip-on earrings → always "Jewelry".
+- Barrettes, hair accessories, keychains, key rings, bag charms, purse hooks, straps, gloves and similar wearable add-ons → always "Accessories".
 - Shoes, sneakers, boots, heels, sandals, loafers, mules, flats, pumps, footwear → always "Other".
 - Handbags, shoulder bags, satchels, day bags → "Handbags".
 - Totes, carryalls, book totes → "Totes".
@@ -59,7 +59,7 @@ RULES (mandatory):
 - Luggage, briefcases, weekender, duffle, keepall → "Luggage".
 - Scarves, shawls, wraps, stoles → "Scarves".
 - Belts, chain belts, waist belts, belt accessories (including charm bags worn on belt) → always "Belts".
-- PREFER "Accessories" for miscellaneous luxury add-ons that are not bags or pouches: dust bags, straps, bag charms, keychains, key rings, barrettes, clip-on earrings, sunglass cases, phone cases, decorative accessories, etc.
+- PREFER "Accessories" for miscellaneous luxury add-ons that are not bags or pouches: dust bags, straps, bag charms, keychains, key rings, barrettes, sunglass cases, phone cases, decorative accessories, gloves, purse hooks, etc.
 - Treat agendas, agenda covers, document holders, notebooks, notepads, folios, business card cases and similar stationery/office pieces as "Other" (not Accessories).
 - Use "Other" ONLY for: (1) footwear, or (2) these stationery/office items, or (3) truly uncategorizable/odd items that do not fit anywhere. When in doubt between "Small Bags" and "Accessories" for a pouch-like item, choose "Small Bags"; when in doubt between "Accessories" and "Other", choose "Accessories" except for the stationery/office items above.
 

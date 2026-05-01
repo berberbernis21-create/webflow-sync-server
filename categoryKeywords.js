@@ -74,13 +74,16 @@ export const CATEGORY_KEYWORDS = {
   Jewelry: [
     "jewelry", "jewellery", "jewel", "earring", "earrings", "bracelet", "bracelets",
     "necklace", "necklaces", "ring", "rings", "pendant", "pendants", "brooch", "brooches",
-    "barrette", "barrettes", "clip-on earring", "clip-on earrings", "hair accessory",
+    "clip-on earring", "clip-on earrings",
     "statement jewelry", "costume jewelry"
   ],
 
   Accessories: [
     "belt bag", "bag charm", "keychain", "key ring", "key rings", "strap",
+    "purse hook", "purse hooks", "attache purse hook", "attache hook",
     "dust bag", "sunglasses case", "eyeglass case", "phone case",
+    "barrette", "barrettes", "hair accessory", "hair accessories",
+    "glove", "gloves",
     "designer accessories"
   ]
 };

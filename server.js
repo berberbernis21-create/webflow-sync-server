@@ -2692,7 +2692,7 @@ function isShoeProduct(title, descriptionHtml) {
 const JEWELRY_KEYWORDS = [
   "jewelry", "jewellery", "jewel", "earring", "earrings", "bracelet", "bracelets",
   "necklace", "necklaces", "ring", "rings", "pendant", "pendants", "brooch", "brooches",
-  "barrette", "barrettes", "statement jewelry", "costume jewelry",
+  "clip-on earring", "clip-on earrings", "statement jewelry", "costume jewelry",
 ];
 
 /** Accessory-only terms (keychains, purse hooks, bag charms) — title + description: force Accessories. */
@@ -2700,6 +2700,8 @@ const ACCESSORY_KEYWORDS = [
   "keychain", "keychains", "key ring", "key rings", "bag charm", "bag charms",
   "purse hook", "purse hooks", "bag hook", "bag hooks",
   "attache purse hook", "attache hook",
+  "barrette", "barrettes", "hair accessory", "hair accessories",
+  "glove", "gloves",
 ];
 
 /** Belt terms — title + description: force Belts (chain belt, belt accessory, etc.). */
