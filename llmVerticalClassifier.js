@@ -86,13 +86,20 @@ function normalizeForVerticalMatch(raw) {
  * Runs before STRONG_LUXURY so mis-tagged "bag"/etc. cannot send a lamp to Luxury.
  */
 function titleTypeTagsLookLikeLighting(product) {
-  const { title, productType, tagsStr } = getProductText(product);
-  const t = normalizeForVerticalMatch(`${title} ${productType} ${tagsStr}`);
+  const { title, productType, tagsStr, description } = getProductText(product);
+  const descHead = description ? description.slice(0, 1200) : "";
+  const t = normalizeForVerticalMatch(`${title} ${productType} ${tagsStr} ${descHead}`);
   if (!t.trim()) return false;
   if (/\b(table|floor|desk|bedside|torchiere)\s+lamps?\b/.test(t)) return true;
   if (/\b(lampshades?|chandeliers?|sconces?|torchieres?)\b/.test(t)) return true;
+  if (/\bpendant\s+lights?\b/.test(t)) return true;
   if (/\blamps?\b/.test(t)) return true;
   return false;
+}
+
+/** True when name/type/tags/description clearly indicate a lamp or fixture — stops "Oval Ring … Table Lamp" matching jewelry `ring`. */
+export function productLooksLikeLightingFixture(product) {
+  return titleTypeTagsLookLikeLighting(product);
 }
 
 const SYSTEM_PROMPT = `You are a high-precision retail classification engine.
@@ -266,6 +273,7 @@ const VISION_FALLBACK_LEXICAL = [
 function shouldRunVisionVerticalFallback(product, textResult) {
   if (productLooksLikeBookFilmOrMedia(product)) return false;
   if (productLooksLikeFurnitureHomeBox(product)) return false;
+  if (productLooksLikeLightingFixture(product)) return false;
   if (textResult?.category !== "HOME_INTERIOR") return false;
   if (process.env.LLM_VERTICAL_VISION_FALLBACK === "0" || process.env.LLM_VERTICAL_VISION_FALLBACK === "false") {
     return false;
