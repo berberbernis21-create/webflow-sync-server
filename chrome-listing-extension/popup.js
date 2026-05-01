@@ -5,6 +5,16 @@ const API_LISTING = `${API_SERVER}/api/listing?name=`;
 const PICKUP_LANDMARK_LINE =
   "Pickup is right by Scottsdale Quarter at Lost and Found Resale Interiors.";
 
+const LUXURY_NATIONWIDE_SHIPPING_LINE = "Shipping available nationwide.";
+
+/** Luxury listings: append nationwide shipping after the narrative (before the --- link block). */
+function appendLuxuryNationwideShipping(text) {
+  const t = String(text || "").trim();
+  if (!t) return LUXURY_NATIONWIDE_SHIPPING_LINE;
+  if (/shipping\s+(is\s+)?available\s+nationwide|nationwide\s+shipping/i.test(t)) return t;
+  return `${t}\n\n${LUXURY_NATIONWIDE_SHIPPING_LINE}`;
+}
+
 /**
  * Marketplace/Craigslist pricing style: bump to next whole dollar only.
  * Examples: 39 -> 40, 44 -> 45, 1499 -> 1500.
@@ -16,6 +26,12 @@ function roundUpMarketplacePrice(rawPrice) {
   if (!Number.isFinite(numeric) || numeric <= 0) return raw;
   const bumped = Math.floor(numeric) + 1;
   return String(bumped);
+}
+
+/** Numeric list price from API string (for luxury auth tiering; not the +$1 display bump). */
+function parseListingPriceNumber(raw) {
+  const n = Number(String(raw ?? "").replace(/[^0-9.]/g, ""));
+  return Number.isFinite(n) ? n : NaN;
 }
 
 function showQuickLinks({ productUrl, storeUrl, handbagsShopUrl, isLuxury }) {
@@ -80,7 +96,21 @@ function sanitizeLuxuryFacebookTitle(rawTitle) {
   return cleaned.slice(0, 95).trim();
 }
 
-function sanitizeLuxuryFacebookDescription(rawText) {
+/** Strip handbag-style auth sentences when tier omits auth (Jewelry, or list price $175 and under). */
+function scrubLuxuryAuthTierListingText(rawText) {
+  let cleaned = String(rawText || "")
+    .replace(
+      /\b(?:comes?\s+with|includes?|also\s+includes?)\s+[^.!?]{0,120}?(?:authentication|authenticity|certificate\s+of\s+authenticity|\bCOA\b)[^.!?]*[.!?]/gi,
+      " "
+    )
+    .replace(/\b(?:authentication|authenticity)\s+(?:documentation|certificate|papers)[^.!?]*[.!?]/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  cleaned = cleaned.replace(/\bEverything\s+comes\s+with\s+an\s+authenticity\s+guarantee[^.!?]*\.?/gi, "").trim();
+  return cleaned;
+}
+
+function sanitizeLuxuryFacebookDescription(rawText, includeAuthGuarantee) {
   let cleaned = String(rawText || "")
     .replace(LUXURY_BRAND_PATTERN, "")
     .replace(/\(\s*\)/g, "")
@@ -90,8 +120,12 @@ function sanitizeLuxuryFacebookDescription(rawText) {
 
   const guaranteeLine =
     "Everything comes with an authenticity guarantee, and a certificate is available upon request.";
-  if (!cleaned) return guaranteeLine;
-  if (!/authenticity guarantee/i.test(cleaned)) {
+  if (!cleaned) {
+    return includeAuthGuarantee
+      ? guaranteeLine
+      : "Thanks for looking. Photos and full details are on the link below.";
+  }
+  if (includeAuthGuarantee && !/authenticity guarantee/i.test(cleaned)) {
     cleaned = `${cleaned} ${guaranteeLine}`;
   }
   return cleaned.trim();
@@ -254,7 +288,17 @@ document.getElementById("start").addEventListener("click", async () => {
   const handbagsShopUrl = "https://www.lostandfoundhandbags.com";
   const productUrl = (data.productUrl && String(data.productUrl).trim()) || storeUrl;
   const isLuxury = data.vertical === "luxury";
+  const luxuryGoodsCategory = (data.luxuryGoodsCategory && String(data.luxuryGoodsCategory).trim()) || "";
+  const isJewelryLuxury = isLuxury && /^jewelry\b/i.test(luxuryGoodsCategory);
   const marketplacePrice = roundUpMarketplacePrice(data.price);
+  const luxuryShopPriceNum = parseListingPriceNumber(data.price);
+  const omitLuxuryAuthCopy =
+    isJewelryLuxury || (Number.isFinite(luxuryShopPriceNum) && luxuryShopPriceNum <= 175);
+  const luxuryAuthenticationPromo =
+    isLuxury &&
+    Number.isFinite(luxuryShopPriceNum) &&
+    luxuryShopPriceNum > 175 &&
+    !isJewelryLuxury;
   const craigslistTitle = sanitizeCraigslistTitle(data.title || "");
   const facebookTitle = isLuxury
     ? sanitizeLuxuryFacebookTitle(data.title || "")
@@ -327,7 +371,10 @@ document.getElementById("start").addEventListener("click", async () => {
     const craigslistBlurbFacts = {
       title: craigslistTitle || data.title || "",
       price: marketplacePrice,
+      listingShopPrice: data.price != null ? String(data.price) : "",
+      listPriceForLuxuryAuth: isLuxury ? String(data.price != null ? data.price : "") : "",
       vertical: data.vertical || "furniture",
+      luxuryGoodsCategory: luxuryGoodsCategory || undefined,
       productDescription: data.description || "",
       pickupAddress: "15530 N Greenway Hayden Loop Suite 100, Scottsdale, AZ 85260",
       pickupHours: "MON - SAT 10-5, SUN 12-4",
@@ -342,7 +389,10 @@ document.getElementById("start").addEventListener("click", async () => {
       catalogFallback ||
       "See photos. Pickup right by Scottsdale Quarter at Lost and Found Resale Interiors. Use the link at the bottom of this post for details and to contact us through the site, or stop in.";
     if (isLuxury) {
-      narrative = sanitizeLuxuryFacebookDescription(narrative);
+      narrative = sanitizeLuxuryFacebookDescription(narrative, luxuryAuthenticationPromo);
+    }
+    if (omitLuxuryAuthCopy) {
+      narrative = scrubLuxuryAuthTierListingText(narrative);
     }
 
     const pickupAddress = "15530 N Greenway Hayden Loop Suite 100, Scottsdale, AZ 85260";
@@ -355,7 +405,8 @@ document.getElementById("start").addEventListener("click", async () => {
       handbagsShopUrl,
       pickupBlock,
     });
-    const craigslistDescription = `${narrative.trim()}\n\n---\n${linksFooter}`;
+    const craigslistBodyLead = isLuxury ? appendLuxuryNationwideShipping(narrative) : narrative.trim();
+    const craigslistDescription = `${craigslistBodyLead}\n\n---\n${linksFooter}`;
 
     const vendorRaw = String(data.vendor || "").trim();
     const vendor = vendorRaw && !/^unknown$/i.test(vendorRaw) ? vendorRaw : "";
@@ -436,7 +487,10 @@ document.getElementById("start").addEventListener("click", async () => {
     title: facebookTitle || "",
     sourceTitle: data.title || "",
     price: marketplacePrice,
+    listingShopPrice: data.price != null ? String(data.price) : "",
+    listPriceForLuxuryAuth: isLuxury ? String(data.price != null ? data.price : "") : "",
     vertical: data.vertical || "furniture",
+    luxuryGoodsCategory: luxuryGoodsCategory || undefined,
     productDescription: data.description || "",
     pickupAddress,
     pickupHours,
@@ -451,7 +505,10 @@ document.getElementById("start").addEventListener("click", async () => {
     catalogFallback ||
     "Thanks for looking — details are in the title and photos. Message us if you have questions.";
   if (isLuxury) {
-    narrative = sanitizeLuxuryFacebookDescription(narrative);
+    narrative = sanitizeLuxuryFacebookDescription(narrative, luxuryAuthenticationPromo);
+  }
+  if (omitLuxuryAuthCopy) {
+    narrative = scrubLuxuryAuthTierListingText(narrative);
   }
 
   if (aiNarrative) {
@@ -465,7 +522,8 @@ document.getElementById("start").addEventListener("click", async () => {
     handbagsShopUrl,
     pickupBlock,
   });
-  const fullDescription = `${narrative}\n\n---\n${linksFooter}`;
+  const facebookBodyLead = isLuxury ? appendLuxuryNationwideShipping(narrative) : String(narrative || "").trim();
+  const fullDescription = `${facebookBodyLead}\n\n---\n${linksFooter}`;
 
   const payload = {
     platform: "facebook",
