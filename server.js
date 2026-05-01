@@ -13,6 +13,7 @@ import { detectBrandFromProductFurniture } from "./brandFurniture.js";
 import {
   classifyWithLLM,
   productLooksLikeBookFilmOrMedia,
+  productLooksLikeFurnitureCaseGoods,
   productLooksLikeFurnitureHomeBox,
   productLooksLikeLightingFixture,
 } from "./llmVerticalClassifier.js";
@@ -2299,6 +2300,11 @@ function furnitureAccessoryCategoryOverrideTitle(title) {
   if (/\bchandeliers?\b/.test(t)) return "Lighting";
   if (/\bpendant lights?\b/.test(t) || /\bceiling lights?\b/.test(t) || /\blight fixtures?\b/.test(t)) return "Lighting";
   if (/\blamps?\b/.test(t)) return "Lighting";
+  if (
+    /\b(mirrored\s+chest|mirror\s+chest|door\s+chest|\d[\s-]*door\s+chest|chest\s+of\s+drawers|mirrored\s+dresser)\b/i.test(t)
+  ) {
+    return "Bedroom";
+  }
   if (/\bheadboards?\b/.test(t) || /\bbed frames?\b/.test(t) || /\bbunk beds?\b/.test(t) || /\barmoires?\b/.test(t) || /\bwardrobes?\b/.test(t)) return "Bedroom";
   if (/\btea caddies?\b/.test(t) || /\bcaddies?\b/.test(t)) return "Accessories";
   const boxIsBedroomFurniture =
@@ -2581,8 +2587,10 @@ const ART_CUES_STRONG = [
   "serigraph", "sculpture", "acrylic on canvas", "oil on canvas", "mixed media", "original art",
 ];
 const FURNITURE_HOME_CUES = [
-  "lamp", "lamps", "chandelier", "sconce", "mirror", "mirrors", "rug", "rugs", "dining table",
-  "coffee table", "side table", "nightstand", "dresser", "chair", "chairs", "sofa", "sectional",
+  "lamp", "lamps", "chandelier", "sconce", "mirror", "mirrors", "mirrored", "rug", "rugs", "dining table",
+  "coffee table", "side table", "nightstand", "dresser", "dressers", "chest", "armoire", "armoires",
+  "wardrobe", "wardrobes", "credenza", "buffet", "sideboard", "highboy", "lowboy",
+  "chair", "chairs", "sofa", "sectional",
   "console", "bookcase", "bedroom", "living room", "dining room", "outdoor", "patio", "decor",
 ];
 const LIGHTING_HARD_CUES = [
@@ -2610,6 +2618,9 @@ function resolveVerticalFromEvidence(product, llmDetectedVertical) {
   }
   if (productLooksLikeLightingFixture(product)) {
     return { vertical: "furniture", reason: "evidence_lighting_fixture" };
+  }
+  if (productLooksLikeFurnitureCaseGoods(product)) {
+    return { vertical: "furniture", reason: "evidence_case_goods" };
   }
   const title = (product?.title || "").trim().toLowerCase();
   const desc = (product?.body_html || "").replace(/<[^>]*>/g, " ").trim().toLowerCase();

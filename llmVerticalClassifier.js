@@ -139,6 +139,7 @@ Important rules:
 - A Rolex wall clock is HOME_INTERIOR (decor); a Rolex wristwatch is LUXURY.
 - Decorative or costume masks (e.g. masquerade masks, feathered masks) are HOME_INTERIOR (decor/accessories), not LUXURY.
 - Table lamps, floor lamps, chandeliers, sconces, ceiling/island/kitchen pendants, pendant lights/lamps/fixtures — including premium or ceramic lamps — are HOME_INTERIOR. Necklace / charm / chain pendants are LUXURY jewelry, not lighting. The word "flat" describing shape (e.g. "flat oval lamp base") is not footwear.
+- Mirrored chests, mirrored dressers, door chests, armoires, and similar case goods are HOME_INTERIOR furniture — not handbags or LUXURY bags even if glossy or reflective.
 - If uncertain, choose HOME_INTERIOR.
 - Never output anything except valid JSON.`;
 
@@ -279,6 +280,49 @@ export function productLooksLikeFurnitureHomeBox(product) {
   return false;
 }
 
+/** Dressers, mirrored chests, door chests — case goods; vision often mistakes mirrored furniture for handbags. */
+const CASE_GOODS_SUBSTRINGS = [
+  "mirrored chest",
+  "mirror chest",
+  "door chest",
+  "2 door chest",
+  "two door chest",
+  "3 door chest",
+  "three door chest",
+  "4 door chest",
+  "four door chest",
+  "chest of drawers",
+  "gentleman's chest",
+  "gentlemans chest",
+  "bachelor's chest",
+  "bachelors chest",
+  "lingerie chest",
+  "double dresser",
+  "triple dresser",
+  "highboy",
+  "lowboy",
+];
+
+/**
+ * @param {object} product - Shopify product
+ * @returns {boolean}
+ */
+export function productLooksLikeFurnitureCaseGoods(product) {
+  const { title, productType, tagsStr, description } = getProductText(product);
+  const descHead = description ? description.slice(0, 2000) : "";
+  const blob = normalizeForVerticalMatch(`${title} ${productType} ${tagsStr} ${descHead}`).toLowerCase();
+  if (!blob.trim()) return false;
+  for (const s of CASE_GOODS_SUBSTRINGS) {
+    if (s && blob.includes(s)) return true;
+  }
+  if (/\bmirror(?:ed)?\s+(chest|dresser|armoire|wardrobe|cabinet|nightstand|buffet|sideboard|credenza)s?\b/i.test(blob)) return true;
+  if (/\b(chest|dresser|armoire)s?\s+with\s+mirrors?\b/i.test(blob)) return true;
+  if (/\b\d[\s-]*door\b/i.test(blob) && /\bchest\b/i.test(blob)) return true;
+  if (/\bchest\b/i.test(blob) && /\b(drawers?|doors?)\b/i.test(blob)) return true;
+  if (/\bhooker\b/i.test(blob) && /\bchest\b/i.test(blob)) return true;
+  return false;
+}
+
 function getProductImageUrls(product, max = 4) {
   const imgs = product?.images;
   if (!Array.isArray(imgs)) return [];
@@ -306,6 +350,7 @@ const VISION_FALLBACK_LEXICAL = [
 function shouldRunVisionVerticalFallback(product, textResult) {
   if (productLooksLikeBookFilmOrMedia(product)) return false;
   if (productLooksLikeFurnitureHomeBox(product)) return false;
+  if (productLooksLikeFurnitureCaseGoods(product)) return false;
   if (productLooksLikeLightingFixture(product)) return false;
   if (textResult?.category !== "HOME_INTERIOR") return false;
   if (process.env.LLM_VERTICAL_VISION_FALLBACK === "0" || process.env.LLM_VERTICAL_VISION_FALLBACK === "false") {
@@ -337,9 +382,9 @@ async function classifyVerticalWithVision(product, openaiKey, logPayload = {}, l
   const { title, productType, vendor } = getProductText(product);
   const system = `You see product photo(s) from a consignment store with two websites:
 - LUXURY: designer shoes, boots, mules, heels, handbags, totes, satchels, clutches, wallets, jewelry, belts, scarves, sunglasses, small leather goods worn/carried.
-- HOME_INTERIOR: furniture, sofas, tables, dressers, lamps, chandeliers, rugs, mirrors as furniture, wall art as decor objects, home decor.
+- HOME_INTERIOR: furniture, sofas, tables, dressers, mirrored chests, door chests, armoires, nightstands, lamps, chandeliers, rugs, mirrors as furniture, wall art as decor objects, home decor.
 
-Rules: Footwear and handbags are ALWAYS LUXURY even if shiny or sculptural. A red carpet stiletto is LUXURY. A table lamp or dining chair is HOME_INTERIOR.
+Rules: Footwear and handbags are ALWAYS LUXURY even if shiny or sculptural. A red carpet stiletto is LUXURY. A table lamp or dining chair is HOME_INTERIOR. A mirrored bedroom chest or dresser is HOME_INTERIOR — not a handbag even if reflective.
 Reply with JSON only: {"category":"LUXURY" or "HOME_INTERIOR","confidence":0-1,"reasoning":"brief"}`;
 
   const userText = `Title (may be wrong): ${title || "(none)"}\nType: ${productType || "(none)"}\nVendor: ${vendor || "(none)"}\nClassify from the image(s).`;
@@ -571,6 +616,20 @@ export async function classifyWithLLM(product, logPayload = {}, logFn = null) {
     logPayload.override = "furniture_home_box";
     if (logFn) logFn("info", { event: "llm_vertical.furniture_home_box", category: "HOME_INTERIOR" });
     return boxResult;
+  }
+
+  if (productLooksLikeFurnitureCaseGoods(product)) {
+    const caseResult = {
+      category: "HOME_INTERIOR",
+      confidence: 1,
+      reasoning: "Case goods (e.g. mirrored chest, door chest, dresser); Furniture & Home, not Luxury handbags.",
+    };
+    logPayload.raw = null;
+    logPayload.parsed = null;
+    logPayload.final = caseResult;
+    logPayload.override = "furniture_case_goods";
+    if (logFn) logFn("info", { event: "llm_vertical.furniture_case_goods", category: "HOME_INTERIOR" });
+    return caseResult;
   }
 
   // Strong wearable/footwear in title/type/tags → LUXURY unless title/description clearly furniture (e.g. lamp + stray "bag" tag)
