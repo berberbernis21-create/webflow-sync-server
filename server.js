@@ -2137,12 +2137,20 @@ function getPrimaryVariantInventoryQuantity(product) {
   return normalizeInventoryQty(product?.variants?.[0]?.inventory_quantity);
 }
 
+/** Tags sorted/deduped so reordering tags does not churn hashes; used for classification skip logic. */
+function tagsFingerprintForHash(product) {
+  const raw = getProductTagsArray(product).map((x) => String(x).trim()).filter(Boolean);
+  return [...new Set(raw)].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })).join("\x1e");
+}
+
 function shopifyHash(product) {
   const dimensions = getDimensionsFromProduct(product);
   const jewelryReclassVersion = isJewelryProduct(product?.title || "", product?.body_html || "") ? 1 : 0;
   return {
-    title: product.title,
+    title: (product.title || "").trim(),
     vendor: product.vendor,
+    product_type: (product.product_type || "").trim(),
+    tagsKey: tagsFingerprintForHash(product),
     body_html: normalizeHtmlForHash(product.body_html),
     price: product.variants?.[0]?.price || null,
     qty: getPrimaryVariantInventoryQuantity(product),
@@ -2154,11 +2162,13 @@ function shopifyHash(product) {
   };
 }
 
-/** Hash of only name + description; used to decide if we call the LLM (only when this changes). */
+/** Inputs that drive vertical + category LLMs; any change must rerun classification (not only Webflow display fields). */
 function contentHashForLLM(product) {
   const jewelryReclassVersion = isJewelryProduct(product?.title || "", product?.body_html || "") ? 1 : 0;
   return {
-    title: product.title || "",
+    title: (product.title || "").trim(),
+    product_type: (product.product_type || "").trim(),
+    tagsKey: tagsFingerprintForHash(product),
     body_html: normalizeHtmlForHash(product.body_html),
     taxonomyVersion: 10,
     jewelryReclassVersion,
@@ -4282,7 +4292,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
     JSON.stringify(currentHash) === JSON.stringify(previousHashForEarlyExit);
   const previousQty = cacheEntry?.lastQty ?? null;
   const qty = getPrimaryVariantInventoryQuantity(product);
-  // Skip LLM only when: (1) we have same name/description as last time, OR (2) we have a cached webflowId but no contentHash (legacy) — treat as unchanged to avoid cost.
+  // Skip LLM only when classification inputs match cache (title, body, product_type, tags + taxonomy stamps), Shopify snapshot hash matches, and evidence agrees with cached vertical.
   const nameOrDescriptionUnchanged =
     (previousContentHash && JSON.stringify(currentContentHash) === JSON.stringify(previousContentHash)) ||
     (cacheEntry?.webflowId && previousContentHash == null);
@@ -4330,6 +4340,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
     nameOrDescriptionUnchanged &&
     shopifyDataUnchangedForCache &&
     cacheEntry?.webflowId &&
+    !verticalNeedsCorrection &&
     !forceReclassify
   ) {
     const vertical = cacheEntry.vertical ?? "luxury";
