@@ -2146,7 +2146,7 @@ function tagsFingerprintForHash(product) {
 
 function shopifyHash(product) {
   const dimensions = getDimensionsFromProduct(product);
-  const jewelryReclassVersion = isJewelryProduct(product?.title || "", product?.body_html || "") ? 1 : 0;
+  const jewelryReclassVersion = isJewelryProduct(product?.title || "", product?.body_html || "", product) ? 1 : 0;
   return {
     title: (product.title || "").trim(),
     vendor: product.vendor,
@@ -2165,7 +2165,7 @@ function shopifyHash(product) {
 
 /** Inputs that drive vertical + category LLMs; any change must rerun classification (not only Webflow display fields). */
 function contentHashForLLM(product) {
-  const jewelryReclassVersion = isJewelryProduct(product?.title || "", product?.body_html || "") ? 1 : 0;
+  const jewelryReclassVersion = isJewelryProduct(product?.title || "", product?.body_html || "", product) ? 1 : 0;
   return {
     title: (product.title || "").trim(),
     product_type: (product.product_type || "").trim(),
@@ -2825,12 +2825,32 @@ function isBeltProduct(title, descriptionHtml) {
   return BELT_KEYWORDS.some((kw) => matchWordBoundary(text, kw));
 }
 
+/** Drawer/case hardware — copy often says "ring pull(s)"; must not match jewelry keyword `ring`. */
+function textSuggestsFurnitureRingHardware(text) {
+  if (!text || typeof text !== "string") return false;
+  const lower = text.toLowerCase();
+  return (
+    /\bring\s+pulls?\b/i.test(lower) ||
+    /\bring\s+pull\s+hardware\b/i.test(lower) ||
+    /\b(drop|decorative)\s+ring\s+pulls?\b/i.test(lower) ||
+    /\bpulls?\s+with\s+(chrome|brass|bronze|nickel)?\s*rings?\b/i.test(lower)
+  );
+}
+
 /** True if title or description indicate jewelry — force Jewelry. */
-function isJewelryProduct(title, descriptionHtml) {
+function isJewelryProduct(title, descriptionHtml, product = null) {
   const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
   const desc = stripHtml(descriptionHtml || "").trim();
   const text = [(title || "").trim(), desc].filter(Boolean).join(" ").toLowerCase();
   if (!text) return false;
+  if (textSuggestsFurnitureRingHardware(text)) return false;
+  const forCase = product || {
+    title: title || "",
+    body_html: descriptionHtml || "",
+    product_type: "",
+    tags: [],
+  };
+  if (productLooksLikeFurnitureCaseGoods(forCase)) return false;
   const pseudo = { title: title || "", body_html: descriptionHtml || "", product_type: "", tags: "" };
   if (productLooksLikeBookFilmOrMedia(pseudo)) return false;
   if (productLooksLikeFurnitureHomeBox(pseudo)) return false;
@@ -2849,13 +2869,21 @@ function isAccessoryProduct(title, descriptionHtml) {
 }
 
 /** Detect luxury category from title/description when product_type is empty or unmatched. Title-first: match on title before description so accessory mentions (e.g. "comes with clutch") don't override the main product. */
-function detectLuxuryCategoryFromTitle(title, descriptionHtml) {
+function detectLuxuryCategoryFromTitle(title, descriptionHtml, product = null) {
   const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
   const titleText = (title || "").trim().toLowerCase();
   const descText = stripHtml(descriptionHtml || "").trim().toLowerCase();
   const combined = [titleText, descText].filter(Boolean).join(" ");
   if (!combined) return null;
+  if (textSuggestsFurnitureRingHardware(combined)) return null;
   if (SHOE_KEYWORDS.some((kw) => matchWordBoundary(combined, kw))) return null;
+  const pseudoForCase = product || {
+    title: title || "",
+    body_html: descriptionHtml || "",
+    product_type: "",
+    tags: [],
+  };
+  if (productLooksLikeFurnitureCaseGoods(pseudoForCase)) return null;
   const pseudoForMedia = { title: title || "", body_html: descriptionHtml || "", product_type: "", tags: "" };
   if (
     !productLooksLikeBookFilmOrMedia(pseudoForMedia) &&
@@ -4631,7 +4659,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
       !productLooksLikeBookFilmOrMedia(product) &&
       !productLooksLikeFurnitureHomeBox(product) &&
       !productLooksLikeLightingFixture(product) &&
-      isJewelryProduct(product?.title || "", product?.body_html || "")
+      isJewelryProduct(product?.title || "", product?.body_html || "", product)
     ) {
       detectedVertical = "luxury";
     }
@@ -4866,11 +4894,11 @@ async function syncSingleProductCore(product, cache, options = {}) {
       if (soldNow) categoryForMetafield = "Recently Sold";
       else {
         if (isShoeProduct(name, description)) categoryForMetafield = "Other ";
-        else categoryForMetafield = detectLuxuryCategoryFromTitle(name, description) ?? "Other ";
-        if (isJewelryProduct(name, description) && !isBagOrAgendaProduct(name, description)) categoryForMetafield = "Jewelry";
+        else categoryForMetafield = detectLuxuryCategoryFromTitle(name, description, product) ?? "Other ";
+        if (isJewelryProduct(name, description, product) && !isBagOrAgendaProduct(name, description)) categoryForMetafield = "Jewelry";
         else if (isAccessoryProduct(name, description) && !isBagOrAgendaProduct(name, description)) categoryForMetafield = "Accessories";
         if (isBeltProduct(name, description)) categoryForMetafield = "Belts";
-        if (categoryForMetafield === "Accessories" && isBagOrAgendaProduct(name, description)) categoryForMetafield = detectLuxuryCategoryFromTitle(name, description) ?? "Other ";
+        if (categoryForMetafield === "Accessories" && isBagOrAgendaProduct(name, description)) categoryForMetafield = detectLuxuryCategoryFromTitle(name, description, product) ?? "Other ";
       }
     }
   } else if (vertical === "furniture") {
@@ -4890,15 +4918,15 @@ async function syncSingleProductCore(product, cache, options = {}) {
       } else {
         if (isShoeProduct(name, description)) categoryForMetafield = "Other ";
         else {
-          const fromTitle = detectLuxuryCategoryFromTitle(name, description);
+          const fromTitle = detectLuxuryCategoryFromTitle(name, description, product);
           categoryForMetafield = fromTitle ?? "Other ";
         }
       }
-      if (isJewelryProduct(name, description) && !isBagOrAgendaProduct(name, description)) categoryForMetafield = "Jewelry";
+      if (isJewelryProduct(name, description, product) && !isBagOrAgendaProduct(name, description)) categoryForMetafield = "Jewelry";
       else if (isAccessoryProduct(name, description) && !isBagOrAgendaProduct(name, description)) categoryForMetafield = "Accessories";
       if (isBeltProduct(name, description)) categoryForMetafield = "Belts";
       if (categoryForMetafield === "Accessories" && isBagOrAgendaProduct(name, description)) {
-        const fromTitle = detectLuxuryCategoryFromTitle(name, description);
+        const fromTitle = detectLuxuryCategoryFromTitle(name, description, product);
         categoryForMetafield = fromTitle ?? "Other ";
       }
     }
