@@ -75,7 +75,8 @@ export const CATEGORY_KEYWORDS = {
     "jewelry", "jewellery", "jewel", "earring", "earrings", "bracelet", "bracelets",
     "necklace", "necklaces", "ring", "rings", "pendant", "pendants", "brooch", "brooches",
     "clip-on earring", "clip-on earrings",
-    "statement jewelry", "costume jewelry"
+    "statement jewelry", "costume jewelry",
+    "wedding band", "stacking band", "eternity band", "opera necklace",
   ],
 
   Accessories: [

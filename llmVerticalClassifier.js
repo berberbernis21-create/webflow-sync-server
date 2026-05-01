@@ -224,6 +224,19 @@ export function productLooksLikeBookFilmOrMedia(product) {
   const { title, productType, tagsStr, description } = getProductText(product);
   const blob = normalizeForVerticalMatch(`${title} ${productType} ${tagsStr} ${description}`).toLowerCase();
   if (!blob.trim()) return false;
+  // Wearable jewelry copy is never book/film inventory (e.g. "multi-media opera necklace", pendant charms).
+  if (
+    /\bnecklaces?\b/.test(blob) ||
+    /\bbracelets?\b/.test(blob) ||
+    /\bearrings?\b/.test(blob) ||
+    /\bchokers?\b/.test(blob) ||
+    /\banklets?\b/.test(blob) ||
+    /\blockets?\b/.test(blob) ||
+    /\bbrooches?\b/.test(blob) ||
+    /\bcharms?\b/.test(blob)
+  ) {
+    return false;
+  }
   for (const s of BOOK_FILM_MEDIA_SUBSTRINGS) {
     if (s && blob.includes(s)) return true;
   }

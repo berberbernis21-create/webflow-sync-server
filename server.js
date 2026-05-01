@@ -2735,7 +2735,45 @@ const JEWELRY_KEYWORDS = [
   "jewelry", "jewellery", "jewel", "earring", "earrings", "bracelet", "bracelets",
   "necklace", "necklaces", "ring", "rings", "pendant", "pendants", "brooch", "brooches",
   "clip-on earring", "clip-on earrings", "statement jewelry", "costume jewelry",
+  "wedding band", "stacking band", "eternity band", "opera necklace",
 ];
+
+/** Ring-style bands often say "band" without "ring" (e.g. hammered gold-tone band, size 8). Exclude obvious non-jewelry bands. */
+function isLikelyJewelryBandRing(text) {
+  if (!text || typeof text !== "string") return false;
+  const lower = text.toLowerCase();
+  if (!matchWordBoundary(lower, "band")) return false;
+  const blocked = [
+    "rubber band",
+    "elastic band",
+    "headband",
+    "hair band",
+    "hairband",
+    "head band",
+    "resistance band",
+    "band saw",
+    "watch band",
+    "marching band",
+    "silicone band",
+    "smart band",
+    "fitness band",
+  ];
+  if (blocked.some((b) => lower.includes(b))) return false;
+  if (/\bsize\s+[0-9]{1,3}(\.\d+)?\b/i.test(lower)) return true;
+  if (/\b(wedding|stacking|eternity)\s+bands?\b/i.test(lower)) return true;
+  if (
+    /\b(hammered|gold-tone|silver-tone|rose gold|white gold|yellow gold|sterling|vermeil|plated)\b/i.test(lower)
+  ) {
+    return true;
+  }
+  if (
+    /\b(karat|carat|carats|cz|cubic zirconia|diamond|gemstone|moissanite)\b/i.test(lower) ||
+    /\b\d{1,2}\s*kt\b/i.test(lower)
+  ) {
+    return true;
+  }
+  return false;
+}
 
 /** Accessory-only terms (keychains, purse hooks, bag charms) — title + description: force Accessories. */
 const ACCESSORY_KEYWORDS = [
@@ -2786,6 +2824,7 @@ function isJewelryProduct(title, descriptionHtml) {
   if (productLooksLikeBookFilmOrMedia(pseudo)) return false;
   if (productLooksLikeFurnitureHomeBox(pseudo)) return false;
   if (productLooksLikeLightingFixture(pseudo)) return false;
+  if (isLikelyJewelryBandRing(text)) return true;
   return JEWELRY_KEYWORDS.some((kw) => matchWordBoundary(text, kw));
 }
 
@@ -2811,7 +2850,7 @@ function detectLuxuryCategoryFromTitle(title, descriptionHtml) {
     !productLooksLikeBookFilmOrMedia(pseudoForMedia) &&
     !productLooksLikeFurnitureHomeBox(pseudoForMedia) &&
     !productLooksLikeLightingFixture(pseudoForMedia) &&
-    JEWELRY_KEYWORDS.some((kw) => matchWordBoundary(combined, kw))
+    (JEWELRY_KEYWORDS.some((kw) => matchWordBoundary(combined, kw)) || isLikelyJewelryBandRing(combined))
   ) {
     return "Jewelry";
   }

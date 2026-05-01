@@ -48,6 +48,7 @@ Allowed categories: ${LUXURY_CATEGORIES.join(", ")}.
 
 RULES (mandatory):
 - Jewelry, earrings, bracelets, necklaces, rings, pendants, brooches, clip-on earrings → always "Jewelry".
+- Wedding/stacking/eternity bands and other ring-style **bands** that include sizing (e.g. “size 8”), hammered metal, or gold/silver-tone wording → "Jewelry" (not Accessories). Opera-length / multi-strand statement necklaces, including titles that say “multi-media” as a style descriptor → "Jewelry" (not books/media).
 - Barrettes, hair accessories, keychains, key rings, bag charms, purse hooks, straps, gloves and similar wearable add-ons → always "Accessories".
 - Shoes, sneakers, boots, heels, sandals, loafers, mules, flats, pumps, footwear → always "Other".
 - Handbags, shoulder bags, satchels, day bags → "Handbags".
