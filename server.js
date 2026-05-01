@@ -6085,6 +6085,42 @@ function normalizeProductTitleForLooseMatch(name) {
   return s;
 }
 
+/** Luxury Goods child category from Shopify custom.category metafield (Handbags, Jewelry, …). */
+function luxuryGoodsCategoryFromShopifyProductNode(node) {
+  const edges = node?.metafields?.edges || [];
+  for (const e of edges) {
+    const n = e?.node;
+    if (!n || String(n.namespace || "").toLowerCase() !== "custom") continue;
+    if (String(n.key || "") !== "category") continue;
+    if (typeof n.value === "string") {
+      const v = n.value.trim();
+      return v || null;
+    }
+  }
+  return null;
+}
+
+/** Webflow luxury CMS fieldData.category display string (skip Recently Sold). */
+function luxuryGoodsCategoryFromWebflowLuxuryFd(fd) {
+  const c = fd?.category;
+  if (typeof c !== "string") return null;
+  const s = c.trim().replace(/\s+$/, "");
+  if (!s || /^recently sold$/i.test(s)) return null;
+  return s;
+}
+
+/** Listing blurbs: jewelry small goods — never handbag-style authentication claims. */
+function scrubLuxuryJewelryAuthLanguage(text) {
+  let t = String(text || "");
+  t = t.replace(
+    /\b(?:comes?\s+with|includes?|also\s+includes?)\s+[^.!?]{0,120}?(?:authentication|authenticity|certificate\s+of\s+authenticity|\bCOA\b)[^.!?]*[.!?]/gi,
+    " "
+  );
+  t = t.replace(/\b(?:authentication|authenticity)\s+(?:documentation|certificate|papers)[^.!?]*[.!?]/gi, " ");
+  t = t.replace(/\s+/g, " ").trim();
+  return t;
+}
+
 /** Try several Admin search strings; long titles with & and hyphenated dims often miss on the first query. */
 function shopifyAdminListingSearchVariants(raw) {
   const base = String(raw || "").trim();
@@ -6139,6 +6175,15 @@ async function searchShopifyProducts(name) {
               edges {
                 node {
                   url
+                }
+              }
+            }
+            metafields(first: 25) {
+              edges {
+                node {
+                  namespace
+                  key
+                  value
                 }
               }
             }
@@ -6237,6 +6282,7 @@ async function searchShopifyProducts(name) {
   }
 
   const vendor = String(node.vendor || "").trim();
+  const luxuryGoodsCategory = luxuryGoodsCategoryFromShopifyProductNode(node);
   return {
     title: node.title || "",
     price,
@@ -6247,6 +6293,7 @@ async function searchShopifyProducts(name) {
     shopifyOnlineUrl: shopifyOnlineUrl || null,
     vertical: "shopify",
     vendor: vendor || null,
+    luxuryGoodsCategory,
   };
 }
 
@@ -7242,6 +7289,7 @@ function mapLuxuryListingSearchHit(hit) {
   const base = getLuxuryListingPublicBaseUrl();
   const productUrl = slug ? `${base}/${slug}` : null;
   const vendor = String(fd.brand || itemFd.brand || "").trim();
+  const luxuryGoodsCategory = luxuryGoodsCategoryFromWebflowLuxuryFd(fd);
   return {
     title,
     price,
@@ -7252,6 +7300,7 @@ function mapLuxuryListingSearchHit(hit) {
     shopifyOnlineUrl: null,
     vertical: "luxury",
     vendor: vendor || null,
+    luxuryGoodsCategory,
   };
 }
 
@@ -7284,6 +7333,7 @@ async function mapFurnitureListingSearchHit(hit, config) {
     shopifyOnlineUrl: null,
     vertical: "furniture",
     vendor: vendor || null,
+    luxuryGoodsCategory: null,
   };
 }
 
@@ -7388,6 +7438,10 @@ app.get("/api/listing", async (req, res) => {
       shopifyOnlineUrl: listing.shopifyOnlineUrl,
       vertical: listing.vertical,
       vendor: listing.vendor != null && String(listing.vendor).trim() !== "" ? String(listing.vendor).trim() : null,
+      luxuryGoodsCategory:
+        listing.luxuryGoodsCategory != null && String(listing.luxuryGoodsCategory).trim() !== ""
+          ? String(listing.luxuryGoodsCategory).trim()
+          : null,
     });
   } catch (err) {
     webflowLog("error", { event: "api.listing", message: err?.message, source });
@@ -7400,7 +7454,9 @@ app.get("/api/listing", async (req, res) => {
 /**
  * POST /api/listing-blurb — Short listing copy via OpenAI (OPENAI_API_KEY).
  * Body JSON: title, price, vertical, productDescription, pickupAddress, pickupHours, contactEmail,
- *   isLuxury (bool, optional), outputChannel (optional: "facebook" default | "craigslist").
+ *   isLuxury (bool, optional), luxuryGoodsCategory (optional: Shopify/Webflow child category, e.g. "Jewelry"),
+ *   listingShopPrice (optional: numeric shop/list price for auth-tier rules; used instead of bumped marketplace `price`),
+ *   outputChannel (optional: "facebook" default | "craigslist").
  * Returns { text } plain text (no URLs for Facebook; Craigslist is standalone body).
  * Model: OPENAI_LISTING_MODEL (default gpt-4o-mini).
  */
@@ -7416,12 +7472,22 @@ app.post("/api/listing-blurb", async (req, res) => {
   const body = req.body && typeof req.body === "object" ? req.body : {};
   const title = String(body.title || "").trim();
   const price = body.price != null ? String(body.price).trim() : "";
+  /** Prefer catalog/Shopify list price for auth-tier rules; extension may send bumped marketplace price separately in `price`. */
+  const tierPriceRaw = String(body.listingShopPrice ?? body.price ?? "").trim();
   const vertical = String(body.vertical || "furniture").trim().toLowerCase();
   const catalog = String(body.productDescription || "").trim().slice(0, 2200);
   const pickupAddress = String(body.pickupAddress || "").trim();
   const pickupHours = String(body.pickupHours || "").trim();
   const contactEmail = String(body.contactEmail || "info@lostandfoundresale.com").trim();
   const isLuxury = body.isLuxury === true || vertical === "luxury";
+  const luxuryGoodsCategoryRaw = String(body.luxuryGoodsCategory || "").trim();
+  const isLuxuryJewelry = isLuxury && /^jewelry\b/i.test(luxuryGoodsCategoryRaw);
+  const listingListPriceNum = Number(String(tierPriceRaw || "").replace(/[^0-9.]/g, ""));
+  const luxuryListPriceParsed = Number.isFinite(listingListPriceNum) ? listingListPriceNum : NaN;
+  /** No authentication / COA copy for Jewelry or any luxury listing at $175 or below (matches extension guarantee tier). */
+  const omitLuxuryAuthenticationCopy =
+    isLuxury &&
+    (isLuxuryJewelry || (Number.isFinite(luxuryListPriceParsed) && luxuryListPriceParsed <= 175));
   const outputChannel = String(body.outputChannel || "facebook").trim().toLowerCase();
   const isCraigslist = outputChannel === "craigslist";
 
@@ -7557,13 +7623,19 @@ app.post("/api/listing-blurb", async (req, res) => {
     const clAvoidStorePitch =
       "Do NOT use or echo: consignment (as a store label), Discover, stunning, gorgeous, masterpiece, don't miss out, perfect for anyone, beautifully balances, elevate your space, timeless appeal, artisanal flair, captures the essence, anyone looking to add, yours for just, act fast, limited opportunity, shop with confidence.";
     structureGuide = isLuxury
-      ? "Write a natural Craigslist for-sale body from title + catalogDescription. Sound like a real person: a few short paragraphs or flowing sentences, not a catalog paste. Keep concrete details only when supported (materials, wear, hardware, size). Never use explicit brand or trademark names. If AS IS appears in the source, describe condition plainly. Weave in one plain pickup sentence that also mentions shipping options are available and full details are on the link below: you can pick it up right by Scottsdale Quarter at Lost and Found Resale Interiors (wayfinding, not a sales pitch). Close by steering questions, purchase, and contact through the store link at the bottom of this posting (do not type URLs in your body), or say they are welcome to come in. Do not ask people to reply here on Craigslist to coordinate. No URLs or phone numbers in your body. No markdown bullets or numbered lists. No em dash."
+      ? omitLuxuryAuthenticationCopy
+        ? "Write a natural Craigslist for-sale body from title + catalogDescription. Sound like a real person: a few short paragraphs or flowing sentences, not a catalog paste. Keep concrete details only when supported (materials, wear, hardware, size). Never use explicit brand or trademark names. If AS IS appears in the source, describe condition plainly. Do not mention authentication, authenticity certificates, COA, or designer verification (not applicable for jewelry/small accessories or for items at this price tier). Weave in one plain pickup sentence that also mentions shipping options are available and full details are on the link below: you can pick it up right by Scottsdale Quarter at Lost and Found Resale Interiors (wayfinding, not a sales pitch). Close by steering questions, purchase, and contact through the store link at the bottom of this posting (do not type URLs in your body), or say they are welcome to come in. Do not ask people to reply here on Craigslist to coordinate. No URLs or phone numbers in your body. No markdown bullets or numbered lists. No em dash."
+        : "Write a natural Craigslist for-sale body from title + catalogDescription. Sound like a real person: a few short paragraphs or flowing sentences, not a catalog paste. Keep concrete details only when supported (materials, wear, hardware, size). Never use explicit brand or trademark names. If AS IS appears in the source, describe condition plainly. Weave in one plain pickup sentence that also mentions shipping options are available and full details are on the link below: you can pick it up right by Scottsdale Quarter at Lost and Found Resale Interiors (wayfinding, not a sales pitch). Close by steering questions, purchase, and contact through the store link at the bottom of this posting (do not type URLs in your body), or say they are welcome to come in. Do not ask people to reply here on Craigslist to coordinate. No URLs or phone numbers in your body. No markdown bullets or numbered lists. No em dash."
       : "Write a natural Craigslist for-sale body from title + catalogDescription. Casual and plain, like a local seller: what it is, honest condition, size or material only if stated, one plain pickup sentence that also notes shipping options are available and details are on the link below (pickup right by Scottsdale Quarter at Lost and Found Resale Interiors). End by pointing them to the link at the bottom of this post for item details and to contact or buy through the site, or invite them to stop in. Do not ask people to reply here on Craigslist to coordinate. Strip retail or catalog voice down to human language. No URLs or phone numbers in your body. No markdown bullets or numbered lists. No em dash.";
     toneGuide = isLuxury
       ? "Collector-aware Craigslist voice: knowledgeable but still local and grounded. Avoid posh showroom tone. Sound like someone talking to collectors, resellers, and value-minded buyers."
       : "Friendly, plain Craigslist seller for mixed local buyers: collectors, yard-sale/value shoppers, and practical home buyers. Not corporate, not showroom.";
     avoidPhraseGuide = isLuxury
-      ? `${clAvoidStorePitch} Do not use explicit brand/trademark names from title or catalogDescription in output. Do not use em-dash punctuation (Unicode U+2014) or en-dash as a clause dash (U+2013); use commas, periods, or 'and'. Do not say: reply here, reply on Craigslist, coordinate through Craigslist, message me here to schedule, or similar.`
+      ? `${clAvoidStorePitch} Do not use explicit brand/trademark names from title or catalogDescription in output. Do not use em-dash punctuation (Unicode U+2014) or en-dash as a clause dash (U+2013); use commas, periods, or 'and'. Do not say: reply here, reply on Craigslist, coordinate through Craigslist, message me here to schedule, or similar.${
+          omitLuxuryAuthenticationCopy
+            ? " Do not mention authentication, authenticity guarantee, certificate of authenticity, COA, designer authentication, or verification documentation."
+            : ""
+        }`
       : `${clAvoidStorePitch} Do not use em-dash punctuation (Unicode U+2014) or en-dash as a clause dash (U+2013); use commas, periods, or 'and'. Do not say: reply here, reply on Craigslist, coordinate through Craigslist, message me here to schedule, or similar.`;
     avoidPhraseGuide += retailToneBlock;
     logisticsGuide =
@@ -7571,13 +7643,17 @@ app.post("/api/listing-blurb", async (req, res) => {
   } else {
     maxBodyChars = 420;
     structureGuide = isLuxury
-      ? "Open with the item type and standout style details in premium but natural Marketplace wording. Do NOT include explicit brand names/trademarks. Use 2-4 short lines grounded in title + catalogDescription: condition callout, materials, hardware/finish, silhouette/style, and practical use if supported by catalog facts. Mention authentication documentation is available. Keep pickup in Scottsdale (near Scottsdale Quarter is fine) and note shipping options are available with full logistics on the site link below. End with a confident natural call to action to message now or email for details. Never use an em dash; use commas or periods."
+      ? omitLuxuryAuthenticationCopy
+        ? "Open with the item type and standout style details in premium but natural Marketplace wording. Do NOT include explicit brand names/trademarks. Use 2-4 short lines grounded in title + catalogDescription: condition callout, materials, hardware/finish, silhouette/style, and practical use if supported by catalog facts. Do NOT mention authentication, authenticity certificates, COA, designer verification, or handbag-style guarantees (not offered for jewelry/small accessories or for listings at $175 and under). Keep pickup in Scottsdale (near Scottsdale Quarter is fine) and note shipping options are available with full logistics on the site link below. End with a confident natural call to action to message now or email for details. Never use an em dash; use commas or periods."
+        : "Open with the item type and standout style details in premium but natural Marketplace wording. Do NOT include explicit brand names/trademarks. Use 2-4 short lines grounded in title + catalogDescription: condition callout, materials, hardware/finish, silhouette/style, and practical use if supported by catalog facts. Mention authentication documentation is available. Keep pickup in Scottsdale (near Scottsdale Quarter is fine) and note shipping options are available with full logistics on the site link below. End with a confident natural call to action to message now or email for details. Never use an em dash; use commas or periods."
       : "Open on the item in normal Marketplace wording (e.g. 'Check out...', 'Selling...') using title + catalogDescription as the factual base: same claims, tight paraphrase; never invent brands, damage, dimensions, or materials not supported by catalog/title. No shop name or consignment pitch up front. 1-3 short lines: what it is, condition/size only if catalog says so, casual price, Scottsdale-area pickup near Scottsdale Quarter if you mention area, and that shipping options are available (which service applies is on the site; do not hedge with 'might' / 'maybe' / 'might be available'). End with one short line: full pickup/shipping/freight/checkout wording is on the website at the link below; email for questions; do not type the email address. Never use an em dash (long dash) in your output; use commas, periods, or 'and' instead.";
     toneGuide = isLuxury
       ? "Facebook voice for collectors and smart deal seekers: informed and trustworthy, but not posh, not boutique, not corporate. Short lines, no hype."
       : "Sounds like a real person on Facebook Marketplace speaking to collectors, yard-sale/value shoppers, flippers, and practical home buyers. Short, plain, conversational.";
     avoidPhraseGuide = isLuxury
-      ? "Do NOT use or echo: Lost & Found, Lost and Found, consignment (as a store label), Discover, stunning, gorgeous, masterpiece, don't miss out, perfect for anyone, beautifully balances, elevate your space, timeless appeal, artisanal flair, captures the essence, anyone looking to add, yours for just, act fast, limited opportunity, shop with confidence. Do not use explicit brand/trademark names from sourceTitle or catalogDescription in output. Do not use em-dash punctuation (Unicode U+2014) or en-dash as a clause dash (U+2013); use commas, periods, or 'and'."
+      ? omitLuxuryAuthenticationCopy
+        ? "Do NOT use or echo: Lost & Found, Lost and Found, consignment (as a store label), Discover, stunning, gorgeous, masterpiece, don't miss out, perfect for anyone, beautifully balances, elevate your space, timeless appeal, artisanal flair, captures the essence, anyone looking to add, yours for just, act fast, limited opportunity, shop with confidence. Do not use explicit brand/trademark names from sourceTitle or catalogDescription in output. Do not use em-dash punctuation (Unicode U+2014) or en-dash as a clause dash (U+2013); use commas, periods, or 'and'. Do not mention authentication, authenticity guarantee, certificate of authenticity, COA, designer authentication, or verification documentation."
+        : "Do NOT use or echo: Lost & Found, Lost and Found, consignment (as a store label), Discover, stunning, gorgeous, masterpiece, don't miss out, perfect for anyone, beautifully balances, elevate your space, timeless appeal, artisanal flair, captures the essence, anyone looking to add, yours for just, act fast, limited opportunity, shop with confidence. Do not use explicit brand/trademark names from sourceTitle or catalogDescription in output. Do not use em-dash punctuation (Unicode U+2014) or en-dash as a clause dash (U+2013); use commas, periods, or 'and'."
       : "Do NOT use or echo: Lost & Found, Lost and Found, consignment (as a store label), Discover, stunning, gorgeous, masterpiece, don't miss out, perfect for anyone, beautifully balances, elevate your space, timeless appeal, artisanal flair, captures the essence, anyone looking to add, yours for just, act fast, limited opportunity, shop with confidence. Do not use em-dash punctuation (Unicode U+2014) or en-dash as a clause dash (U+2013); use commas, periods, or 'and'.";
     logisticsGuide = isLuxury
       ? "Use storePolicyInternalOnly so you do not invent carriers, rates, or guarantees. Keep logistics short: shipping options are available and full rules are on the site link below. Never add phone numbers, dollar amounts, time windows, storage/freight numbers, or broker names in the body."
@@ -7602,10 +7678,23 @@ app.post("/api/listing-blurb", async (req, res) => {
     sellerContext: isCraigslist
       ? "Scottsdale area Craigslist listing for mixed local buyer types. Standalone body text only (no separate footer). Audience can include collectors, resellers/flippers, and value-first shoppers, so keep language practical and credible. You may use one short pickup wayfinding sentence that names Scottsdale Quarter and Lost and Found Resale Interiors. Do not stack store slogans, consignment pitch, or ‘we are Lost & Found’ branding. Do not instruct readers to reply here or coordinate through Craigslist; contact and checkout are through the link that appears after your text, or they can visit the showroom."
       : "Scottsdale resale listing for Facebook Marketplace's mixed crowd: collectors, deal hunters, flippers, and everyday home buyers. Keep voice practical and human, not posh. Do NOT name the business (no ‘Lost & Found’, no store name, no ‘furniture & home consignment’ tagline) anywhere in your text. That branding lives in the fixed block after your copy.",
-    itemCategoryHint: isLuxury ? "handbags/luxury accessory vibe if it fits the title" : "furniture/home/decor vibe if it fits the title",
+    itemCategoryHint: isLuxury
+      ? omitLuxuryAuthenticationCopy
+        ? isLuxuryJewelry
+          ? "jewelry or small wearable accessory (brooch, scarf clip, etc.); never handbag-style authentication claims"
+          : "luxury accessory at $175 or below list price; never authentication or certificate claims"
+        : "handbags/luxury accessory vibe if it fits the title"
+      : "furniture/home/decor vibe if it fits the title",
+    luxuryGoodsCategory: luxuryGoodsCategoryRaw || null,
+    listPriceNumeric: Number.isFinite(luxuryListPriceParsed) ? luxuryListPriceParsed : null,
+    omitAuthenticationCopy: omitLuxuryAuthenticationCopy,
     title: title || "(no title)",
     askingPriceFacebook: price || null,
-    inventoryKind: isLuxury ? "luxury_handbags_accessories" : "furniture_and_home_resale",
+    inventoryKind: isLuxury
+      ? isLuxuryJewelry
+        ? "luxury_jewelry_small_goods"
+        : "luxury_handbags_accessories"
+      : "furniture_and_home_resale",
     pickupArea: isCraigslist
       ? "Right by Scottsdale Quarter; storefront pickup at Lost and Found Resale Interiors (north Scottsdale / Hayden)."
       : "Near Scottsdale Quarter (north Scottsdale / Hayden).",
@@ -7640,6 +7729,7 @@ Output rules:
 - Only paraphrase catalog facts; never invent damage or brands.
 - Treat logistics and policy facts as hard constraints: do not change or contradict shipping availability, pickup location, AS IS condition language, or checkout/contact direction implied by JSON guidance.
 - If inventoryKind is luxury_handbags_accessories: never include explicit brand or trademark names in output text.
+- If inventoryKind is luxury_jewelry_small_goods: never include explicit brand or trademark names; never claim authentication, COA, designer verification, or certificates (jewelry/small goods).
 - JSON may include storePolicyInternalOnly: treat it as silent context only. Never repeat or summarize it in your reply.
 - Never use an em dash in your output (Unicode U+2014). Use a comma, a period, or the word 'and' instead. Same for en dash (U+2013) as a sentence dash; for number ranges a plain hyphen is OK (e.g. 16-29).
 - At most one exclamation mark in the whole post (usually none).`
@@ -7656,6 +7746,7 @@ Output rules:
 - Only paraphrase catalog facts; never invent damage or brands.
 - Treat logistics and policy facts as hard constraints: do not change or contradict shipping availability, pickup location, AS IS condition language, or checkout/contact direction implied by JSON guidance.
 - If inventoryKind is luxury_handbags_accessories: never include explicit brand or trademark names in output text.
+- If inventoryKind is luxury_jewelry_small_goods: never include explicit brand or trademark names; never claim authentication, COA, designer verification, or certificates (jewelry/small goods).
 - JSON may include storePolicyInternalOnly: treat it as silent context only. Never repeat or summarize it in your reply.
 - For shipping: prefer confident wording like ‘shipping options are available’ or ‘shipping’s on the site’. Do not say they might or may be available.
 - Never use an em dash in your output (Unicode U+2014, often shown as a long dash between clauses). Use a comma, a period, or the word ‘and’ instead. Same for en dash (U+2013) used as a sentence dash; for number ranges a plain hyphen is OK (e.g. 16-29).
@@ -7726,6 +7817,10 @@ Facts JSON:\n${JSON.stringify(facts)}`;
       .replace(/,\s*,/g, ",")
       .trim();
 
+    if (omitLuxuryAuthenticationCopy) {
+      text = scrubLuxuryJewelryAuthLanguage(text);
+    }
+
     const cap = isCraigslist ? 1500 : 440;
     if (text.length > cap) {
       const slice = text.slice(0, cap);
@@ -7739,6 +7834,7 @@ Facts JSON:\n${JSON.stringify(facts)}`;
       titleLen: title.length,
       catalogLen: catalog.length,
       outputChannel: isCraigslist ? "craigslist" : "facebook",
+      omitLuxuryAuthenticationCopy,
     });
     return res.json({ text, model });
   } catch (err) {
