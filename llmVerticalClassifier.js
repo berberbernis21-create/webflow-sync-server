@@ -104,6 +104,7 @@ HOME_INTERIOR: furniture, decor, lighting, artwork, home objects, even if expens
 
 Important rules:
 - Physical books, magazines, DVDs/Blu-rays, VHS, laserdiscs, and films/movies/documentaries (including silent films and royal/coronation titles) are HOME_INTERIOR — decor/media inventory — not LUXURY even if collectible or prestigious.
+- Decorative home boxes (wood or wooden box, domed box, lidded box, keepsake/storage/decorative box, jewelry/watch box as a tabletop object) are HOME_INTERIOR — not handbags — even if the photo looks rounded like a bag.
 - Expensive furniture is still HOME_INTERIOR.
 - Gold finish furniture is not LUXURY.
 - Designer style furniture is not LUXURY.
@@ -202,6 +203,42 @@ export function productLooksLikeBookFilmOrMedia(product) {
   return BOOK_FILM_MEDIA_WORDS.some((w) => hasAnyWord(blob, [w]));
 }
 
+/** Lidded / decorative boxes sold as home decor — HOME_INTERIOR, never mistaken for handbags via vision/tags. */
+const FURNITURE_HOME_BOX_SUBSTRINGS = [
+  "domed box",
+  "wood box",
+  "wooden box",
+  "box w/ lid",
+  "box w/lid",
+  "box with lid",
+  "lidded box",
+  "keepsake box",
+  "decorative box",
+  "storage box",
+  "trinket box",
+  "jewelry box",
+  "watch box",
+  "cigar box",
+  "tea box",
+  "music box",
+];
+
+/**
+ * @param {object} product - Shopify product
+ * @returns {boolean}
+ */
+export function productLooksLikeFurnitureHomeBox(product) {
+  const { title, productType, tagsStr, description } = getProductText(product);
+  const blob = normalizeForVerticalMatch(`${title} ${productType} ${tagsStr} ${description}`).toLowerCase();
+  if (!blob.trim()) return false;
+  for (const s of FURNITURE_HOME_BOX_SUBSTRINGS) {
+    if (s && blob.includes(s)) return true;
+  }
+  if (/\bwood(?:en)?\s+box\b/i.test(blob)) return true;
+  if (/\bdomed\b/i.test(blob) && /\bbox\b/i.test(blob)) return true;
+  return false;
+}
+
 function getProductImageUrls(product, max = 4) {
   const imgs = product?.images;
   if (!Array.isArray(imgs)) return [];
@@ -228,6 +265,7 @@ const VISION_FALLBACK_LEXICAL = [
 
 function shouldRunVisionVerticalFallback(product, textResult) {
   if (productLooksLikeBookFilmOrMedia(product)) return false;
+  if (productLooksLikeFurnitureHomeBox(product)) return false;
   if (textResult?.category !== "HOME_INTERIOR") return false;
   if (process.env.LLM_VERTICAL_VISION_FALLBACK === "0" || process.env.LLM_VERTICAL_VISION_FALLBACK === "false") {
     return false;
@@ -478,6 +516,20 @@ export async function classifyWithLLM(product, logPayload = {}, logFn = null) {
     logPayload.override = "book_film_media";
     if (logFn) logFn("info", { event: "llm_vertical.book_film_media", category: "HOME_INTERIOR" });
     return mediaResult;
+  }
+
+  if (productLooksLikeFurnitureHomeBox(product)) {
+    const boxResult = {
+      category: "HOME_INTERIOR",
+      confidence: 1,
+      reasoning: "Decorative or lidded home box (wood/dom/storage/etc.); Furniture & Home, not a handbag.",
+    };
+    logPayload.raw = null;
+    logPayload.parsed = null;
+    logPayload.final = boxResult;
+    logPayload.override = "furniture_home_box";
+    if (logFn) logFn("info", { event: "llm_vertical.furniture_home_box", category: "HOME_INTERIOR" });
+    return boxResult;
   }
 
   // Strong wearable/footwear in title/type/tags → LUXURY unless title/description clearly furniture (e.g. lamp + stray "bag" tag)
