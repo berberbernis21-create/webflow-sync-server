@@ -90,9 +90,29 @@ function titleTypeTagsLookLikeLighting(product) {
   const descHead = description ? description.slice(0, 1200) : "";
   const t = normalizeForVerticalMatch(`${title} ${productType} ${tagsStr} ${descHead}`);
   if (!t.trim()) return false;
+
+  const jewelryPendantPhrase =
+    /\bpendants?\s+(necklace|necklaces|charm|charms)\b/.test(t) ||
+    /\b(necklace|necklaces)\s+pendants?\b/.test(t) ||
+    /\bpendants?\s+on\s+(a\s+)?(chain|rope|cord)\b/.test(t) ||
+    /\blocket\s+pendants?\b/.test(t);
+
+  if (!jewelryPendantPhrase) {
+    if (/\bpendants?\s+(light|lights|lamp|lamps|fixture|fixtures|chandelier|chandeliers|sconce)\b/.test(t)) return true;
+    if (/\b(light|lights|lamp|lamps|fixture|fixtures|chandelier|chandeliers)\s+pendants?\b/.test(t)) return true;
+    if (/\b(ceiling|island|kitchen)\s+pendants?\b/.test(t)) return true;
+    if (/\bpendants?\s+lighting\b/.test(t)) return true;
+    if (/\bpendants?\s*[-–]\s*\d+\s*[x×]\s*\d+/i.test(t)) return true;
+    if (
+      /\bpendants?\b/.test(t) &&
+      /\b(chandelier|chandeliers|sconce|converted|canopy|hardwired|flush\s+mount|semi-flush|track\s+light|junction|luminaire|electrical)\b/.test(t)
+    ) {
+      return true;
+    }
+  }
+
   if (/\b(table|floor|desk|bedside|torchiere)\s+lamps?\b/.test(t)) return true;
   if (/\b(lampshades?|chandeliers?|sconces?|torchieres?)\b/.test(t)) return true;
-  if (/\bpendant\s+lights?\b/.test(t)) return true;
   if (/\blamps?\b/.test(t)) return true;
   return false;
 }
@@ -118,7 +138,7 @@ Important rules:
 - Wearable branded prestige goods are LUXURY.
 - A Rolex wall clock is HOME_INTERIOR (decor); a Rolex wristwatch is LUXURY.
 - Decorative or costume masks (e.g. masquerade masks, feathered masks) are HOME_INTERIOR (decor/accessories), not LUXURY.
-- Table lamps, floor lamps, chandeliers, sconces, and other lighting — including premium or ceramic lamps — are HOME_INTERIOR. The word "flat" describing shape (e.g. "flat oval lamp base") is not footwear.
+- Table lamps, floor lamps, chandeliers, sconces, ceiling/island/kitchen pendants, pendant lights/lamps/fixtures — including premium or ceramic lamps — are HOME_INTERIOR. Necklace / charm / chain pendants are LUXURY jewelry, not lighting. The word "flat" describing shape (e.g. "flat oval lamp base") is not footwear.
 - If uncertain, choose HOME_INTERIOR.
 - Never output anything except valid JSON.`;
 

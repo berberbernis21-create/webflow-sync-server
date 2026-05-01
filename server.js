@@ -2268,6 +2268,24 @@ function normalizeTitleForFurnitureAccessoryMatch(raw) {
 function furnitureAccessoryCategoryOverrideTitle(title) {
   const t = normalizeTitleForFurnitureAccessoryMatch(title);
   if (!t) return null;
+  const jewelryPendantPhrase =
+    /\bpendants?\s+(necklace|necklaces|charm|charms)\b/.test(t) ||
+    /\b(necklace|necklaces)\s+pendants?\b/.test(t) ||
+    /\bpendants?\s+on\s+(a\s+)?(chain|rope|cord)\b/.test(t) ||
+    /\blocket\s+pendants?\b/.test(t);
+  if (!jewelryPendantPhrase) {
+    if (/\bpendants?\s+(light|lights|lamp|lamps|fixture|fixtures|chandelier|chandeliers|sconce)\b/.test(t)) return "Lighting";
+    if (/\b(light|lights|lamp|lamps|fixture|fixtures|chandelier|chandeliers)\s+pendants?\b/.test(t)) return "Lighting";
+    if (/\bceiling\s+pendants?\b/.test(t)) return "Lighting";
+    if (/\bpendants?\s+lighting\b/.test(t)) return "Lighting";
+    if (/\bpendants?\s*[-–]\s*\d+\s*[x×]\s*\d+/i.test(t)) return "Lighting";
+    if (
+      /\bpendants?\b/.test(t) &&
+      /\b(chandelier|chandeliers|sconce|converted|canopy|hardwired|flush\s+mount|semi-flush|track\s+light|junction|luminaire|electrical)\b/.test(t)
+    ) {
+      return "Lighting";
+    }
+  }
   if (/\bchandeliers?\b/.test(t)) return "Lighting";
   if (/\bpendant lights?\b/.test(t) || /\bceiling lights?\b/.test(t) || /\blight fixtures?\b/.test(t)) return "Lighting";
   if (/\blamps?\b/.test(t)) return "Lighting";
