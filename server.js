@@ -10,7 +10,7 @@ import { CATEGORY_KEYWORDS } from "./categoryKeywords.js";
 import { CATEGORY_KEYWORDS_FURNITURE, CATEGORY_KEYWORDS_FURNITURE_WEAK } from "./categoryKeywordsFurniture.js";
 import { detectBrandFromProduct } from "./brand.js";
 import { detectBrandFromProductFurniture } from "./brandFurniture.js";
-import { classifyWithLLM } from "./llmVerticalClassifier.js";
+import { classifyWithLLM, productLooksLikeBookFilmOrMedia } from "./llmVerticalClassifier.js";
 import { classifyCategoryWithLLM } from "./llmCategoryClassifier.js";
 
 dotenv.config();
@@ -2569,6 +2569,9 @@ function textHasAnyWordCue(text, cues) {
  * This runs as a guard over LLM output to prevent one-word misroutes.
  */
 function resolveVerticalFromEvidence(product, llmDetectedVertical) {
+  if (productLooksLikeBookFilmOrMedia(product)) {
+    return { vertical: "furniture", reason: "evidence_book_film_media" };
+  }
   const title = (product?.title || "").trim().toLowerCase();
   const desc = (product?.body_html || "").replace(/<[^>]*>/g, " ").trim().toLowerCase();
   const text = [title, desc].filter(Boolean).join(" ");
@@ -2740,6 +2743,8 @@ function isJewelryProduct(title, descriptionHtml) {
   const desc = stripHtml(descriptionHtml || "").trim();
   const text = [(title || "").trim(), desc].filter(Boolean).join(" ").toLowerCase();
   if (!text) return false;
+  const pseudo = { title: title || "", body_html: descriptionHtml || "", product_type: "", tags: "" };
+  if (productLooksLikeBookFilmOrMedia(pseudo)) return false;
   return JEWELRY_KEYWORDS.some((kw) => matchWordBoundary(text, kw));
 }
 
@@ -2760,7 +2765,10 @@ function detectLuxuryCategoryFromTitle(title, descriptionHtml) {
   const combined = [titleText, descText].filter(Boolean).join(" ");
   if (!combined) return null;
   if (SHOE_KEYWORDS.some((kw) => matchWordBoundary(combined, kw))) return null;
-  if (JEWELRY_KEYWORDS.some((kw) => matchWordBoundary(combined, kw))) return "Jewelry";
+  const pseudoForMedia = { title: title || "", body_html: descriptionHtml || "", product_type: "", tags: "" };
+  if (!productLooksLikeBookFilmOrMedia(pseudoForMedia) && JEWELRY_KEYWORDS.some((kw) => matchWordBoundary(combined, kw))) {
+    return "Jewelry";
+  }
   if (ACCESSORY_KEYWORDS.some((kw) => matchWordBoundary(combined, kw))) return "Accessories";
   // Document holders, agendas, folios, business card cases → Other (stationery/office, not handbags).
   if (matchWordBoundary(combined, "document holder") || matchWordBoundary(combined, "agenda") || matchWordBoundary(combined, "folio") || matchWordBoundary(combined, "business card case")) {
@@ -4521,8 +4529,8 @@ async function syncSingleProductCore(product, cache, options = {}) {
     const llmDetectedVertical = llmResult.category === "LUXURY" ? "luxury" : "furniture";
     const evidenceVertical = resolveVerticalFromEvidence(product, llmDetectedVertical);
     detectedVertical = evidenceVertical.vertical;
-    // Hard guard: jewelry cues must always live under Luxury Goods in Shopify/Webflow.
-    if (isJewelryProduct(product?.title || "", product?.body_html || "")) {
+    // Hard guard: jewelry cues must always live under Luxury Goods in Shopify/Webflow (never overrides books/media).
+    if (!productLooksLikeBookFilmOrMedia(product) && isJewelryProduct(product?.title || "", product?.body_html || "")) {
       detectedVertical = "luxury";
     }
     const correctedToLuxury = cacheEntry?.vertical === "furniture" && detectedVertical === "luxury";
