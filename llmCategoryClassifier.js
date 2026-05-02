@@ -5,6 +5,8 @@
  * - Furniture: LivingRoom, DiningRoom, OfficeDen, Rugs, ArtMirrors, Bedroom, Accessories, OutdoorPatio, Lighting
  *   Rules: art/paintings/photographs/framed → ArtMirrors; umbrellas/patio → OutdoorPatio.
  * Uses same OPENAI_API_KEY as vertical classifier. Falls back to null on failure so caller can use keyword logic.
+ *
+ * Subcategory LLM runs only when evidence confidence is below LLM_CATEGORY_CONFIDENCE_THRESHOLD (default 0.8); see server.js detectCategoryFurnitureEvidence / detectLuxuryCategoryEvidence.
  */
 
 import axios from "axios";
@@ -77,6 +79,7 @@ RULES (mandatory):
 - Umbrellas, umbrella stand, patio umbrella, outdoor umbrella, patio furniture, outdoor seating, garden, deck, adirondack, hammock, fire pit → "OutdoorPatio".
 - Patio / porch / deck dining — including **patio dining table**, outdoor dining table, mosaic or tile **patio** tables — is **"OutdoorPatio"**, not "DiningRoom". Use "DiningRoom" only for **indoor** dining when there is no patio/outdoor/deck/porch context.
 - Sofas, chairs, tables, coffee table, console, ottoman, sectional, loveseat → "LivingRoom".
+- **Bench / benches** (rustic wood bench, entryway bench, mudroom bench, storage bench, settle bench, bed bench, hall bench) are **seating furniture** → **"LivingRoom"**, never "Accessories". **Grommets** or metal rings on wood describe **furniture detailing / hardware**, not handbags. **Dining bench** → **"DiningRoom"**. **Patio / outdoor / garden / porch bench** (clearly outdoor seating) → **"OutdoorPatio"**.
 - Wall units, shelving units, etageres, modular/media walls, large room dividers with shelves — case goods for living spaces → "LivingRoom" (never "Accessories" just because they hold decor).
 - Trays alone (butler tray, butlers tray, serving tray, decorative tray, ottoman tray — removable tray or tray-with-stand sold as a tray) → "Accessories". Tray **table** (explicit tray+table furniture, TV tray table, folding tray table meant as a small table) → "LivingRoom".
 - Dining table, dining chairs, buffet, sideboard, bar cart, hutch → "DiningRoom".

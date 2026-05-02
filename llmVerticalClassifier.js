@@ -1,6 +1,8 @@
 /**
  * LLM-based vertical classifier: LUXURY vs HOME_INTERIOR.
  * Replaces keyword-only logic with GPT semantic classification.
+ * Primary call is text-only. Product images are sent only when we are “unsure” (low text confidence), on lexical conflict,
+ * or for the existing HOME→luxury vision fallback. Tune via LLM_VERTICAL_UNCERTAIN_THRESHOLD (default 0.75).
  * Never returns UNKNOWN; defaults to HOME_INTERIOR on low confidence or failure.
  */
 
@@ -98,6 +100,134 @@ export function productLooksLikeFootwearLuxury(product) {
   return false;
 }
 
+/** Multi-word and phrase cues: title + type + tags + description (HTML stripped). Signed / fine art is never Luxury Goods. */
+const FINE_ART_WALL_DECOR_SUBSTRINGS = [
+  "various art",
+  "signed art",
+  "signed limited",
+  "signed edition",
+  "artist proof",
+  "wall art",
+  "framed art",
+  "fine art",
+  "fine-art",
+  "art print",
+  "fine art print",
+  "gallery wrap",
+  "lithograph",
+  "giclee",
+  "serigraph",
+  "original art",
+  "oil on canvas",
+  "acrylic on canvas",
+  "mixed media",
+  "numbered print",
+  "limited edition print",
+  "limited-edition",
+  "etching",
+  "screen print",
+  "woodcut",
+  "photograph signed",
+  "signed photograph",
+];
+
+/**
+ * Fine art / wall decor signals from full listing copy (not title-only).
+ * Used to block footwear/handbag shortcuts when copy clearly describes artwork.
+ */
+export function productLooksLikeFineArtWallDecor(product) {
+  const { title, productType, tagsStr, description } = getProductText(product);
+  const blob = normalizeForVerticalMatch(`${title} ${productType} ${tagsStr} ${description}`).toLowerCase();
+  if (!blob.trim()) return false;
+  for (const s of FINE_ART_WALL_DECOR_SUBSTRINGS) {
+    if (s && blob.includes(s)) return true;
+  }
+  if (/\bpainting\b/i.test(blob) && /\b(art|artist|signed|canvas|frame|framed|gallery|wall)\b/i.test(blob)) return true;
+  if (/\bprint\b/i.test(blob) && /\b(artist|signed|limited|edition|lithograph|giclee|serigraph)\b/i.test(blob)) return true;
+  return false;
+}
+
+/** Footwear/shoe keyword in name/type/tags conflicts with fine-art copy → do not use lexical footwear shortcuts; use model + vision. */
+export function verticalFootwearVersusFineArtConflict(product) {
+  return productLooksLikeFootwearLuxury(product) && productLooksLikeFineArtWallDecor(product);
+}
+
+/** Normalized full listing text for lexical ambiguity (title, type, tags, description). */
+function verticalClassificationBlobLower(product) {
+  const { title, productType, tagsStr, description } = getProductText(product);
+  return normalizeForVerticalMatch(`${title} ${productType} ${tagsStr} ${description}`).toLowerCase();
+}
+
+/** Personal jewelry / wearable pendant cues (not ceiling pendant fixture). */
+function jewelryPendantPersonalLuxurySignals(t) {
+  if (/\bpendants?\s+(light|lights|lamp|lamps|fixture|fixtures|chandelier|chandeliers)\b/i.test(t)) return false;
+  if (/\b(light|lights|lamp|lamps|fixture|fixtures)\s+pendants?\b/i.test(t)) return false;
+  if (/\b(ceiling|island|kitchen)\s+pendants?\b/i.test(t)) return false;
+  if (/\bpendants?\s+lighting\b/i.test(t)) return false;
+
+  if (/\bpendants?\s+(necklace|necklaces|charm|charms)\b/.test(t)) return true;
+  if (/\b(necklace|necklaces)\s+pendants?\b/.test(t)) return true;
+  if (/\bpendants?\s+on\s+(a\s+)?(chain|rope|cord)\b/.test(t)) return true;
+  if (/\blocket\s+pendants?\b/.test(t)) return true;
+  if (/\bpendants?\b/.test(t) && /\b(choker|lobster\s+clasp|bail|jump\s+ring)\b/i.test(t)) return true;
+  if (/\bpendants?\b/.test(t) && /\b(karat|carat|\d+k\b|sterling\s+silver|diamond|gemstone|fine\s+jewelry|fine\s+jewellery)\b/i.test(t)) return true;
+  return false;
+}
+
+/** Ceiling / fixture pendant lighting cues. */
+function lightingPendantFixtureSignals(t) {
+  if (/\bpendants?\s+(light|lights|lamp|lamps|fixture|fixtures|chandelier|chandeliers|sconce)\b/.test(t)) return true;
+  if (/\b(light|lights|lamp|lamps|fixture|fixtures|chandelier|chandeliers)\s+pendants?\b/.test(t)) return true;
+  if (/\b(ceiling|island|kitchen)\s+pendants?\b/.test(t)) return true;
+  if (/\bpendants?\s+lighting\b/.test(t)) return true;
+  if (/\bpendants?\s*[-–]\s*\d+\s*[x×]\s*\d+/i.test(t)) return true;
+  if (/\bpendants?\b/.test(t) && /\b(hardwired|canopy|luminaire|junction|electrical|semi-flush|flush\s+mount|track\s+light)\b/.test(t)) {
+    return true;
+  }
+  return false;
+}
+
+export function verticalPendantLightingVersusJewelryConflict(product) {
+  const t = verticalClassificationBlobLower(product);
+  return jewelryPendantPersonalLuxurySignals(t) && lightingPendantFixtureSignals(t);
+}
+
+/** Word "pendant" appears but copy does not clearly disambiguate lighting vs jewelry → force model + vision. */
+export function verticalAmbiguousPendantWord(product) {
+  const t = verticalClassificationBlobLower(product);
+  if (!/\bpendants?\b/i.test(t)) return false;
+  if (jewelryPendantPersonalLuxurySignals(t)) return false;
+  if (lightingPendantFixtureSignals(t)) return false;
+  return true;
+}
+
+/** Bath hardware vs jewelry ring copy both present. */
+export function verticalTowelRingVersusJewelryRingConflict(product) {
+  const t = verticalClassificationBlobLower(product);
+  if (!/\bring\b/i.test(t)) return false;
+  const jewelryRing =
+    /\b(diamond|gold|silver|sterling|karat|carat|engagement|wedding|cocktail ring|band ring|signet)\b/i.test(t);
+  const bathHardware =
+    /\b(towel|hand\s+towel|napkin|curtain|shower|bathroom|cabinet|hardware|mounted)\b/i.test(t);
+  return jewelryRing && bathHardware;
+}
+
+/**
+ * Lexical signals point two different vertical directions — skip deterministic shortcuts and use GPT + conflict vision.
+ * (Footwear vs signed art; pendant fixture vs jewelry pendant; bare "pendant"; towel ring vs jewelry ring;
+ * mirrored case goods vs handbag copy; fine-art listing vs handbag tags; canvas art vs bag wording.)
+ */
+export function verticalHardSignalAmbiguity(product) {
+  if (verticalFootwearVersusFineArtConflict(product)) return true;
+  if (verticalPendantLightingVersusJewelryConflict(product)) return true;
+  if (verticalAmbiguousPendantWord(product)) return true;
+  if (verticalTowelRingVersusJewelryRingConflict(product)) return true;
+  if (mirroredCaseGoodsVersusBagWearableConflict(product)) return true;
+  if (fineArtVersusHandbagClutchConflict(product)) return true;
+  if (canvasArtVersusBagWearableConflict(product)) return true;
+  return false;
+}
+
 /** Decorative/costume masks (masquerade, wall, feathered mask) → Furniture & Home Accessories, not LUXURY. */
 const DECOR_MASK_INDICATORS = ["masquerade", "feathered mask", "decorative mask", "wall mask", "costume mask"];
 
@@ -180,7 +310,8 @@ LUXURY: wearable designer goods, fine jewelry, watches, prestige fashion brands,
 HOME_INTERIOR: furniture, decor, lighting, artwork, home objects, even if expensive or premium.
 
 Important rules:
-- Footwear only (sneakers, athletic shoes, boots, sandals, heels, designer collaborations e.g. Asics x Comme des Garçons) is always LUXURY — never HOME_INTERIOR / furniture / decor.
+- Footwear only (actual wearable sneakers, athletic shoes, boots, sandals, heels — meant to be worn) is LUXURY — never HOME_INTERIOR. Do **not** treat as footwear when the listing is **fine art / wall art / signed prints**: artwork titles often reuse fashion words (e.g. a painting named "Boots II", "Clutch", "Mules") — those are HOME_INTERIOR decor, not shoes or handbags.
+- **Signed art, limited editions, lithographs, giclees, fine art prints, framed/wall art, gallery artwork** are always HOME_INTERIOR — never LUXURY — even if the title also contains boot/shoe/bag words as part of the **artwork name**.
 - Physical books, magazines, DVDs/Blu-rays, VHS, laserdiscs, and films/movies/documentaries (including silent films and royal/coronation titles) are HOME_INTERIOR — decor/media inventory — not LUXURY even if collectible or prestigious.
 - Decorative home boxes (wood or wooden box, domed box, lidded box, keepsake/storage/decorative box, jewelry/watch box as a tabletop object) are HOME_INTERIOR — not handbags — even if the photo looks rounded like a bag.
 - Expensive furniture is still HOME_INTERIOR.
@@ -189,8 +320,9 @@ Important rules:
 - Wearable branded prestige goods are LUXURY.
 - A Rolex wall clock is HOME_INTERIOR (decor); a Rolex wristwatch is LUXURY.
 - Decorative or costume masks (e.g. masquerade masks, feathered masks) are HOME_INTERIOR (decor/accessories), not LUXURY.
-- Table lamps, floor lamps, chandeliers, sconces, ceiling/island/kitchen pendants, pendant lights/lamps/fixtures — including premium or ceramic lamps — are HOME_INTERIOR. Necklace / charm / chain pendants are LUXURY jewelry, not lighting. The word "flat" describing shape (e.g. "flat oval lamp base") is not footwear.
-- Mirrored chests, mirrored dressers, door chests, armoires, and similar case goods are HOME_INTERIOR furniture — not handbags or LUXURY bags even if glossy or reflective.
+- Table lamps, floor lamps, chandeliers, sconces, ceiling/island/kitchen pendants, pendant lights/lamps/fixtures — including premium or ceramic lamps — are HOME_INTERIOR. Necklace / charm / chain pendants are LUXURY jewelry, not lighting. If BOTH lighting-style pendant language AND jewelry pendant language appear, use description to decide; **ceiling/hardwired/canopy** favors HOME_INTERIOR; **necklace/chain/karat/diamond** favors LUXURY. The word "flat" describing shape (e.g. "flat oval lamp base") is not footwear.
+- Mirrored chests, mirrored dressers, door chests, armoires, and similar case goods are HOME_INTERIOR furniture — not handbags or LUXURY bags even if glossy or reflective. If BOTH mirrored-case furniture language AND handbag/clutch/tote wording appear, read the description and images together — furniture piece vs actual bag.
+- Listings with **canvas wall art / paintings / prints** are HOME_INTERIOR even when words like **tote** or **canvas bag** create ambiguity; use images to separate **art on canvas** from **canvas handbags**.
 - If uncertain, choose HOME_INTERIOR.
 - Never output anything except valid JSON.`;
 
@@ -375,6 +507,40 @@ export function productLooksLikeFurnitureCaseGoods(product) {
   return false;
 }
 
+/** Mirrored dresser/chest language plus explicit handbag/tote/clutch cues → do not force HOME via case-goods shortcut alone. */
+export function mirroredCaseGoodsVersusBagWearableConflict(product) {
+  const t = verticalClassificationBlobLower(product);
+  const caseMirrored =
+    /\bmirror(?:ed)?\s+(chest|dresser|armoire|wardrobe|cabinet|nightstand|buffet|sideboard|credenza)s?\b/i.test(t) ||
+    /\b(chest|dresser|armoire)s?\s+with\s+mirrors?\b/i.test(t);
+  if (!caseMirrored) return false;
+  return /\b(handbag|handbags|crossbody|clutch|clutches|totes?|wristlet|shoulder\s+bag|evening\s+bag|\bhobo\b|satchel|satchels|minaudiere|wallet\s+on\s+chain|\bwoc\b)\b/i.test(
+    t
+  );
+}
+
+/** Fine-art wall decor copy plus handbag/clutch/tote in title/type/tags (not footwear+fine-art — already covered). */
+export function fineArtVersusHandbagClutchConflict(product) {
+  if (!productLooksLikeFineArtWallDecor(product)) return false;
+  if (verticalFootwearVersusFineArtConflict(product)) return false;
+  const { title, productType, tagsStr } = getProductText(product);
+  const head = normalizeForVerticalMatch(`${title} ${productType} ${tagsStr}`).toLowerCase();
+  return hasAnyWord(head, ["handbag", "handbags", "clutch", "crossbody", "tote", "totes", "wristlet", "satchel", "hobo", "minaudiere"]);
+}
+
+/** Canvas + art cues vs canvas tote/bag cues in the same listing. */
+export function canvasArtVersusBagWearableConflict(product) {
+  const t = verticalClassificationBlobLower(product);
+  if (!/\bcanvas\b/i.test(t)) return false;
+  const artSide =
+    /\b(painting|paintings|giclee|signed|artist|gallery|stretched|oil\b|acrylic|mixed\s+media|wall\s+art|fine\s+art)\b/i.test(t) ||
+    (/\bprint\b/i.test(t) && /\b(artist|signed|limited|edition|lithograph|giclee)\b/i.test(t));
+  const bagSide =
+    /\b(tote|shopper|carryall|duffel|backpack|handbag|crossbody|clutch)\b/i.test(t) ||
+    /\b(beach\s+bag|canvas\s+tote|tote\s+bag)\b/i.test(t);
+  return artSide && bagSide;
+}
+
 function getProductImageUrls(product, max = 4) {
   const imgs = product?.images;
   if (!Array.isArray(imgs)) return [];
@@ -424,22 +590,53 @@ function shouldRunVisionVerticalFallback(product, textResult) {
   return false;
 }
 
+/** Text model confidence below this (with photos present) → run vision tie-breaker. Set LLM_VERTICAL_UNCERTAIN_VISION=0 to disable. */
+function shouldRunVisionUncertainTextConfidence(product, textConfidence) {
+  if (process.env.LLM_VERTICAL_UNCERTAIN_VISION === "0" || process.env.LLM_VERTICAL_UNCERTAIN_VISION === "false") {
+    return false;
+  }
+  if (getProductImageUrls(product).length === 0) return false;
+  const raw = parseFloat(process.env.LLM_VERTICAL_UNCERTAIN_THRESHOLD ?? "0.75");
+  const threshold = Number.isFinite(raw) ? Math.min(1, Math.max(0, raw)) : 0.75;
+  const conf = typeof textConfidence === "number" && Number.isFinite(textConfidence) ? textConfidence : 0;
+  return conf < threshold;
+}
+
 /**
  * Vision-only vertical check (GPT-4o multimodal). Used when text classifier likely wrong for luxury footwear/bags.
  */
-async function classifyVerticalWithVision(product, openaiKey, logPayload = {}, logFn = null) {
+async function classifyVerticalWithVision(product, openaiKey, logPayload = {}, logFn = null, conflictMode = false) {
   const urls = getProductImageUrls(product, 4);
   if (!urls.length) return null;
 
-  const { title, productType, vendor } = getProductText(product);
-  const system = `You see product photo(s) from a consignment store with two websites:
+  const { title, productType, vendor, description } = getProductText(product);
+  const descSnippet = description ? description.slice(0, 1200) : "";
+  const system = conflictMode
+    ? `You resolve ambiguous consignment listings where TITLE/DESCRIPTION pulled two incompatible cues.
+
+1) **Art vs fashion words**: Artwork titled with shoe/bag words (e.g. "Boots II Signed Art", various art + handbag tags) → HOME_INTERIOR (flat art), not LUXURY footwear/bags.
+
+2) **Mirrored chest/dresser vs bag**: **Mirrored chest, mirrored dresser, door chest** (furniture with drawers/doors) → HOME_INTERIOR — not a handbag even if copy says clutch/tote/crossbody.
+
+3) **Canvas**: **Stretched canvas / wall art / giclée / painting** → HOME_INTERIOR. **Canvas tote / shopper / beach bag** → LUXURY.
+
+4) **Pendant**: Ceiling/island/kitchen **pendant light/lamp/fixture** (hardwired, canopy, luminaire) → HOME_INTERIOR. **Jewelry pendant** (necklace, chain, charm, karat, diamond, sterling) → LUXURY.
+
+5) **Ring**: **Towel ring / napkin ring / shower hardware** → HOME_INTERIOR. **Diamond/gold engagement/wedding/cocktail ring** → LUXURY.
+
+Use the photos: lamp/fixture/wall art/furniture/bath hardware → HOME_INTERIOR. Shoes, handbags, wearable jewelry → LUXURY.
+
+Reply with JSON only: {"category":"LUXURY" or "HOME_INTERIOR","confidence":0-1,"reasoning":"brief"}`
+    : `You see product photo(s) from a consignment store with two websites:
 - LUXURY: designer shoes, boots, mules, heels, handbags, totes, satchels, clutches, wallets, jewelry, belts, scarves, sunglasses, small leather goods worn/carried.
 - HOME_INTERIOR: furniture, sofas, tables, dressers, mirrored chests, door chests, armoires, nightstands, lamps, chandeliers, rugs, mirrors as furniture, wall art as decor objects, home decor.
 
-Rules: Footwear and handbags are ALWAYS LUXURY even if shiny or sculptural. A red carpet stiletto is LUXURY. A table lamp or dining chair is HOME_INTERIOR. A mirrored bedroom chest or dresser is HOME_INTERIOR — not a handbag even if reflective.
+Rules: Actual footwear and handbags are LUXURY even if shiny or sculptural. **Flat art, framed prints, signed artwork** are HOME_INTERIOR even if the artwork title contains words like "Boots" or "Clutch". A table lamp or dining chair is HOME_INTERIOR. A mirrored bedroom chest or dresser is HOME_INTERIOR — not a handbag even if reflective.
 Reply with JSON only: {"category":"LUXURY" or "HOME_INTERIOR","confidence":0-1,"reasoning":"brief"}`;
 
-  const userText = `Title (may be wrong): ${title || "(none)"}\nType: ${productType || "(none)"}\nVendor: ${vendor || "(none)"}\nClassify from the image(s).`;
+  const userText = conflictMode
+    ? `Title: ${title || "(none)"}\nType: ${productType || "(none)"}\nVendor: ${vendor || "(none)"}\nDescription excerpt: ${descSnippet || "(none)"}\nRead ALL of the above together with the images. Classify as HOME_INTERIOR (furniture, lighting, wall art, bath hardware) vs LUXURY (wearable jewelry, shoes, handbags).`
+    : `Title (may be wrong): ${title || "(none)"}\nType: ${productType || "(none)"}\nVendor: ${vendor || "(none)"}\nClassify from the image(s).`;
 
   const userContent = [{ type: "text", text: userText }];
   for (const url of urls) {
@@ -475,7 +672,7 @@ Reply with JSON only: {"category":"LUXURY" or "HOME_INTERIOR","confidence":0-1,"
     if (!parsed) return null;
     if (logFn) {
       logFn("info", {
-        event: "llm_vertical.vision_fallback",
+        event: conflictMode ? "llm_vertical.vision_conflict_resolution" : "llm_vertical.vision_fallback",
         category: parsed.category,
         confidence: parsed.confidence,
       });
@@ -629,17 +826,26 @@ export async function classifyWithLLM(product, logPayload = {}, logFn = null) {
   }
 
   if (titleTypeTagsLookLikeLighting(product)) {
-    const lightingResult = {
-      category: "HOME_INTERIOR",
-      confidence: 1,
-      reasoning: "Lighting fixture in title, product type, or tags (lamp/chandelier/sconce/etc.); Furniture & Home.",
-    };
-    logPayload.raw = null;
-    logPayload.parsed = null;
-    logPayload.final = lightingResult;
-    logPayload.override = "lighting_title_type_tags";
-    if (logFn) logFn("info", { event: "llm_vertical.lighting", category: "HOME_INTERIOR", reason: "lamp/lighting in name or type" });
-    return lightingResult;
+    if (verticalPendantLightingVersusJewelryConflict(product)) {
+      logPayload.conflictPendantLightingJewelry = true;
+      if (logFn)
+        logFn("info", {
+          event: "llm_vertical.conflict_pendant_lighting_jewelry",
+          message: "Skipping lighting shortcut; GPT + conflict vision",
+        });
+    } else {
+      const lightingResult = {
+        category: "HOME_INTERIOR",
+        confidence: 1,
+        reasoning: "Lighting fixture in title, product type, or tags (lamp/chandelier/sconce/etc.); Furniture & Home.",
+      };
+      logPayload.raw = null;
+      logPayload.parsed = null;
+      logPayload.final = lightingResult;
+      logPayload.override = "lighting_title_type_tags";
+      if (logFn) logFn("info", { event: "llm_vertical.lighting", category: "HOME_INTERIOR", reason: "lamp/lighting in name or type" });
+      return lightingResult;
+    }
   }
 
   if (productLooksLikeBookFilmOrMedia(product)) {
@@ -656,7 +862,7 @@ export async function classifyWithLLM(product, logPayload = {}, logFn = null) {
     return mediaResult;
   }
 
-  if (productLooksLikeFootwearLuxury(product)) {
+  if (productLooksLikeFootwearLuxury(product) && !productLooksLikeFineArtWallDecor(product)) {
     const footwearResult = {
       category: "LUXURY",
       confidence: 1,
@@ -685,52 +891,71 @@ export async function classifyWithLLM(product, logPayload = {}, logFn = null) {
   }
 
   if (productLooksLikeFurnitureCaseGoods(product)) {
-    const caseResult = {
-      category: "HOME_INTERIOR",
-      confidence: 1,
-      reasoning: "Case goods (e.g. mirrored chest, door chest, dresser); Furniture & Home, not Luxury handbags.",
-    };
-    logPayload.raw = null;
-    logPayload.parsed = null;
-    logPayload.final = caseResult;
-    logPayload.override = "furniture_case_goods";
-    if (logFn) logFn("info", { event: "llm_vertical.furniture_case_goods", category: "HOME_INTERIOR" });
-    return caseResult;
-  }
-
-  // Strong wearable/footwear in title/type/tags → LUXURY unless title/description clearly furniture (e.g. lamp + stray "bag" tag)
-  if (hasAnyWord(nameAndTypeAndTags, STRONG_LUXURY_SIGNALS)) {
-    const afterFurnitureSafety = applyFurnitureSafetyOverride(product, "LUXURY");
-    if (afterFurnitureSafety === "HOME_INTERIOR") {
-      const overrideResult = {
+    if (mirroredCaseGoodsVersusBagWearableConflict(product)) {
+      logPayload.conflictMirroredCaseGoodsBag = true;
+      if (logFn)
+        logFn("info", {
+          event: "llm_vertical.conflict_mirrored_case_goods_bag",
+          message: "Skipping case-goods shortcut; GPT + conflict vision when images exist",
+        });
+    } else {
+      const caseResult = {
         category: "HOME_INTERIOR",
         confidence: 1,
-        reasoning:
-          "Wearable keyword in type/tags but title/description indicate furniture/home (e.g. table lamp); Furniture & Home.",
+        reasoning: "Case goods (e.g. mirrored chest, door chest, dresser); Furniture & Home, not Luxury handbags.",
       };
       logPayload.raw = null;
       logPayload.parsed = null;
-      logPayload.final = overrideResult;
-      logPayload.override = "furniture_safety_over_strong_luxury";
+      logPayload.final = caseResult;
+      logPayload.override = "furniture_case_goods";
+      if (logFn) logFn("info", { event: "llm_vertical.furniture_case_goods", category: "HOME_INTERIOR" });
+      return caseResult;
+    }
+  }
+
+  // Strong wearable/footwear in title/type/tags → LUXURY unless title/description clearly furniture (e.g. lamp + stray "bag" tag).
+  // Skip shortcut when footwear tokens conflict with signed/fine-art copy — full GPT + vision decide.
+  if (hasAnyWord(nameAndTypeAndTags, STRONG_LUXURY_SIGNALS)) {
+    if (verticalHardSignalAmbiguity(product)) {
+      logPayload.verticalHardSignalAmbiguity = true;
       if (logFn)
         logFn("info", {
-          event: "llm_vertical.strong_luxury_overridden",
-          category: "HOME_INTERIOR",
-          reason: "furniture cue in title/description",
+          event: "llm_vertical.conflict_hard_signals",
+          message: "Skipping strong_luxury shortcut; OpenAI text + conflict vision when images exist",
         });
-      return overrideResult;
+    } else {
+      const afterFurnitureSafety = applyFurnitureSafetyOverride(product, "LUXURY");
+      if (afterFurnitureSafety === "HOME_INTERIOR") {
+        const overrideResult = {
+          category: "HOME_INTERIOR",
+          confidence: 1,
+          reasoning:
+            "Wearable keyword in type/tags but title/description indicate furniture/home (e.g. table lamp); Furniture & Home.",
+        };
+        logPayload.raw = null;
+        logPayload.parsed = null;
+        logPayload.final = overrideResult;
+        logPayload.override = "furniture_safety_over_strong_luxury";
+        if (logFn)
+          logFn("info", {
+            event: "llm_vertical.strong_luxury_overridden",
+            category: "HOME_INTERIOR",
+            reason: "furniture cue in title/description",
+          });
+        return overrideResult;
+      }
+      const strongLuxuryResult = {
+        category: "LUXURY",
+        confidence: 1,
+        reasoning: "Strong wearable/footwear signal in title, type, or tags (e.g. backpack, boots, handbag).",
+      };
+      logPayload.raw = null;
+      logPayload.parsed = null;
+      logPayload.final = strongLuxuryResult;
+      logPayload.override = "strong_luxury_signal";
+      if (logFn) logFn("info", { event: "llm_vertical.strong_luxury", category: "LUXURY", reason: "wearable/footwear in name or type" });
+      return strongLuxuryResult;
     }
-    const strongLuxuryResult = {
-      category: "LUXURY",
-      confidence: 1,
-      reasoning: "Strong wearable/footwear signal in title, type, or tags (e.g. backpack, boots, handbag).",
-    };
-    logPayload.raw = null;
-    logPayload.parsed = null;
-    logPayload.final = strongLuxuryResult;
-    logPayload.override = "strong_luxury_signal";
-    if (logFn) logFn("info", { event: "llm_vertical.strong_luxury", category: "LUXURY", reason: "wearable/footwear in name or type" });
-    return strongLuxuryResult;
   }
 
   const userPrompt = buildUserPrompt(product);
@@ -792,7 +1017,21 @@ export async function classifyWithLLM(product, logPayload = {}, logFn = null) {
       override = override || "furniture_safety_override";
     }
 
-    if (category === "HOME_INTERIOR" && productLooksLikeFootwearLuxury(product)) {
+    // No product photos: do not trust text-only LUXURY when title has footwear-like tokens but copy is signed/fine art.
+    if (
+      verticalFootwearVersusFineArtConflict(product) &&
+      category === "LUXURY" &&
+      getProductImageUrls(product).length === 0
+    ) {
+      category = "HOME_INTERIOR";
+      override = override ? `${override}+fine_art_conflict_no_images` : "fine_art_conflict_no_images";
+    }
+
+    if (
+      category === "HOME_INTERIOR" &&
+      productLooksLikeFootwearLuxury(product) &&
+      !productLooksLikeFineArtWallDecor(product)
+    ) {
       category = "LUXURY";
       override = override ? `${override}+footwear_luxury_rescue` : "footwear_luxury_rescue";
     }
@@ -805,8 +1044,57 @@ export async function classifyWithLLM(product, logPayload = {}, logFn = null) {
     logPayload.final = final;
     if (override) logPayload.override = override;
 
-    if (shouldRunVisionVerticalFallback(product, final)) {
-      const vision = await classifyVerticalWithVision(product, openaiKey, logPayload, logFn);
+    // Footwear-looking token vs signed/fine-art copy: vision + description breaks ties (e.g. "Boots II Signed Art").
+    if (verticalHardSignalAmbiguity(product) && getProductImageUrls(product).length > 0) {
+      const visionConflict = await classifyVerticalWithVision(product, openaiKey, logPayload, logFn, true);
+      if (visionConflict && typeof visionConflict.confidence === "number" && visionConflict.confidence >= 0.45) {
+        final = {
+          category: visionConflict.category,
+          confidence: visionConflict.confidence,
+          reasoning: `[vision conflict] ${visionConflict.reasoning || ""}`.trim(),
+        };
+        logPayload.final = final;
+        const prev = logPayload.override;
+        logPayload.override = prev ? `${prev}+vision_conflict_resolution` : "vision_conflict_resolution";
+        if (logFn) {
+          logFn("info", {
+            event: "llm_vertical.classified",
+            category: final.category,
+            confidence: final.confidence,
+            override: logPayload.override,
+            reasoning: final.reasoning?.slice(0, 150),
+          });
+        }
+        return final;
+      }
+    }
+
+    if (shouldRunVisionUncertainTextConfidence(product, final.confidence)) {
+      const visionUncertain = await classifyVerticalWithVision(product, openaiKey, logPayload, logFn, false);
+      if (visionUncertain && typeof visionUncertain.confidence === "number" && visionUncertain.confidence >= 0.5) {
+        final = {
+          category: visionUncertain.category,
+          confidence: visionUncertain.confidence,
+          reasoning: `[vision unsure] ${visionUncertain.reasoning || ""}`.trim(),
+        };
+        logPayload.final = final;
+        const prev = logPayload.override;
+        logPayload.override = prev ? `${prev}+vision_uncertain` : "vision_uncertain";
+        if (logFn) {
+          logFn("info", {
+            event: "llm_vertical.classified",
+            category: final.category,
+            confidence: final.confidence,
+            override: logPayload.override,
+            reasoning: final.reasoning?.slice(0, 150),
+          });
+        }
+        return final;
+      }
+    }
+
+    if (shouldRunVisionVerticalFallback(product, final) && !verticalHardSignalAmbiguity(product)) {
+      const vision = await classifyVerticalWithVision(product, openaiKey, logPayload, logFn, false);
       if (vision && vision.category === "LUXURY" && vision.confidence >= 0.5) {
         final = {
           category: "LUXURY",

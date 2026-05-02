@@ -13,10 +13,13 @@ import { detectBrandFromProductFurniture } from "./brandFurniture.js";
 import {
   classifyWithLLM,
   productLooksLikeBookFilmOrMedia,
+  productLooksLikeFineArtWallDecor,
   productLooksLikeFootwearLuxury,
   productLooksLikeFurnitureCaseGoods,
   productLooksLikeFurnitureHomeBox,
   productLooksLikeLightingFixture,
+  mirroredCaseGoodsVersusBagWearableConflict,
+  verticalHardSignalAmbiguity,
 } from "./llmVerticalClassifier.js";
 import { classifyCategoryWithLLM } from "./llmCategoryClassifier.js";
 
@@ -1041,8 +1044,14 @@ function getCacheEntry(cache, idStr) {
   const entry = cache[idStr];
   if (!entry) return null;
 
-  if (typeof entry === "object" && entry.hash) {
-    return { ...entry, vertical: entry.vertical ?? "luxury" };
+  if (typeof entry === "object" && entry !== null && !Array.isArray(entry)) {
+    if (entry.hash) {
+      return { ...entry, vertical: entry.vertical ?? "luxury" };
+    }
+    // Partial rows (e.g. webflowId/contentHash without hash) must not collapse to webflowId:null — that forced cold-path CMS scans every run.
+    if (entry.webflowId != null || entry.contentHash != null || entry.vertical != null) {
+      return { ...entry, vertical: entry.vertical ?? "luxury" };
+    }
   }
 
   return { hash: entry, webflowId: null, lastQty: null, vertical: "luxury" };
@@ -1281,6 +1290,59 @@ function sanitizeSkuNumericFields(fieldData) {
     }
   }
   return out;
+}
+
+/** Compare CDN image refs without query-string churn (same asset, different ?v=). */
+function skuMainImageUrlForCompare(imgField) {
+  if (imgField == null || typeof imgField !== "object") return null;
+  const raw = imgField.url;
+  if (raw == null || typeof raw !== "string") return null;
+  const n = normalizeShopifyImageSrcForHash(raw);
+  return n || null;
+}
+
+/** True when merged SKU fieldData would not change Webflow (skip PATCH → no unpublished churn). */
+function skuFieldDataEffectivelyEqual(desired, existing) {
+  if (!desired || typeof desired !== "object") desired = {};
+  if (!existing || typeof existing !== "object") existing = {};
+  const compareSlug = getFurnitureSkuCompareAtSlug();
+
+  const pDes = webflowSkuMoneyFieldToCents(desired.price);
+  const pEx = webflowSkuMoneyFieldToCents(existing.price);
+  if (pDes !== pEx) return false;
+
+  const cDes = webflowSkuMoneyFieldToCents(desired[compareSlug]);
+  const cEx = webflowSkuMoneyFieldToCents(existing[compareSlug]);
+  if (cDes !== cEx) return false;
+
+  for (const dim of ["weight", "width", "height", "length"]) {
+    const dn = desired[dim];
+    const en = existing[dim];
+    if (dn == null && en == null) continue;
+    if (dn == null || en == null) return false;
+    const a = Number(dn);
+    const b = Number(en);
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return false;
+    if (Math.abs(a - b) > 1e-6) return false;
+  }
+
+  if (skuMainImageUrlForCompare(desired["main-image"]) !== skuMainImageUrlForCompare(existing["main-image"])) {
+    return false;
+  }
+
+  const moreUrls = (fd) => {
+    const mi = fd["more-images"];
+    if (mi == null) return [];
+    if (!Array.isArray(mi)) return [];
+    const urls = mi.map(skuMainImageUrlForCompare).filter(Boolean);
+    return [...new Set(urls)].sort((x, y) => x.localeCompare(y, undefined, { sensitivity: "base" }));
+  };
+  const md = moreUrls(desired);
+  const me = moreUrls(existing);
+  if (md.length !== me.length) return false;
+  for (let i = 0; i < md.length; i++) if (md[i] !== me[i]) return false;
+
+  return true;
 }
 
 /** SKU fields that make Webflow fetch remote URLs (Shopify CDN often fails their importer). */
@@ -1551,7 +1613,18 @@ async function syncFurnitureEcommerceSku(product, webflowProductId, config) {
     });
   }
 
-  await updateWebflowEcommerceSku(config.siteId, webflowProductId, defaultSku.id, { ...defaultSku.fieldData, ...fieldData }, config.token);
+  const mergedFd = sanitizeSkuNumericFields({ ...existingFd, ...fieldData });
+  if (skuFieldDataEffectivelyEqual(mergedFd, existingFd)) {
+    webflowLog("info", {
+      event: "syncFurnitureEcommerceSku.skipped",
+      reason: "sku_field_data_unchanged",
+      webflowProductId,
+      shopifyProductId: product?.id,
+    });
+    return;
+  }
+
+  await updateWebflowEcommerceSku(config.siteId, webflowProductId, defaultSku.id, mergedFd, config.token);
   webflowLog("info", { event: "syncFurnitureEcommerceSku.exit", webflowProductId, skuId: defaultSku.id });
 }
 
@@ -2120,7 +2193,7 @@ async function removeConditionOptionIfFurniture(product) {
    HASH FOR CHANGE DETECTION
    Includes dimensions (variant + metafields + tag lines) so dimension changes still invalidate the fast path.
    body_html is normalized (collapse whitespace) so Shopify formatting drift doesn't cause false "changed".
-   taxonomyVersion: bump this when category/vertical logic changes so all items resync once.
+   taxonomyVersion: bump this when category/vertical logic changes so all items resync once (13 = vertical vision only when unsure / conflict / fallback).
    Image URLs strip query strings (CDN signature / width params often rotate without a real asset change).
    Price and dimensions are normalized so "199.0" vs "199.00" or float noise doesn't churn the cache.
 ====================================================== */
@@ -2184,6 +2257,11 @@ function tagsFingerprintForHash(product) {
 function shopifyHash(product) {
   const dimensions = normalizeDimsForHash(getDimensionsFromProduct(product));
   const jewelryReclassVersion = isJewelryProduct(product?.title || "", product?.body_html || "", product) ? 1 : 0;
+  // Sort image URLs so Shopify API order changes do not invalidate the hash every sync (was causing full Webflow passes).
+  const imagesStable = (product.images || [])
+    .map((i) => normalizeShopifyImageSrcForHash(i?.src))
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
   return {
     title: (product.title || "").trim(),
     vendor: product.vendor,
@@ -2192,10 +2270,10 @@ function shopifyHash(product) {
     body_html: normalizeHtmlForHash(product.body_html),
     price: normalizePriceForHash(product.variants?.[0]?.price),
     qty: getPrimaryVariantInventoryQuantity(product),
-    images: (product.images || []).map((i) => normalizeShopifyImageSrcForHash(i?.src)),
+    images: imagesStable,
     slug: product.handle,
     dimensions,
-    taxonomyVersion: 10,
+    taxonomyVersion: 13,
     jewelryReclassVersion,
   };
 }
@@ -2208,7 +2286,7 @@ function contentHashForLLM(product) {
     product_type: (product.product_type || "").trim(),
     tagsKey: tagsFingerprintForHash(product),
     body_html: normalizeHtmlForHash(product.body_html),
-    taxonomyVersion: 10,
+    taxonomyVersion: 13,
     jewelryReclassVersion,
   };
 }
@@ -2267,6 +2345,156 @@ function matchFurnitureKeyword(normalized, keyword) {
   } catch {
     return normalized.includes(k);
   }
+}
+
+/**
+ * Map keyword-score winner vs runner-up to confidence [0,1]. Ties stay below 0.8 so subcategory LLM runs.
+ * Used with LLM_CATEGORY_CONFIDENCE_THRESHOLD (default 0.8).
+ */
+function furnitureKeywordMatchConfidence(bestScore, secondBest) {
+  if (bestScore <= 0) return 0;
+  const margin = bestScore - secondBest;
+  if (margin <= 0) return 0.55;
+
+  if (bestScore >= 6 && margin >= 2) return 0.92;
+  if (bestScore >= 5 && margin >= 2) return 0.9;
+  if (bestScore >= 4 && margin >= 2) return 0.87;
+  if (bestScore >= 4 && margin >= 1) return 0.82;
+  if (bestScore >= 3 && margin >= 2) return 0.83;
+  if (bestScore >= 3 && margin >= 1.5) return 0.8;
+  if (bestScore >= 2 && margin >= 2) return 0.81;
+
+  const blended = 0.5 * Math.min(1, margin / 5) + 0.5 * Math.min(1, bestScore / 10);
+  return Math.min(0.79, blended);
+}
+
+/**
+ * Furniture subcategory from deterministic rules + keyword scores, with confidence for LLM gating.
+ * @returns {{ category: string, confidence: number, reason: string, bestScore?: number, secondBest?: number }}
+ */
+function detectCategoryFurnitureEvidence(title, descriptionHtml, tags, dimensions) {
+  const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const descText = stripHtml(descriptionHtml || "").trim();
+  const tagsStr = Array.isArray(tags) ? tags.join(" ") : typeof tags === "string" ? tags : "";
+  const name = ((title || "").trim()).toLowerCase();
+  const descAndTags = descText ? [descText, tagsStr].filter(Boolean).join(" ").toLowerCase() : "";
+  const hasDesc = !!descText;
+
+  if (!name && !descAndTags) {
+    return { category: "Accessories", confidence: 0, reason: "empty_listing" };
+  }
+
+  const forcedFromTitle = furnitureAccessoryCategoryOverrideTitle(title);
+  if (forcedFromTitle) {
+    return { category: forcedFromTitle, confidence: 1, reason: "title_keyword_override" };
+  }
+
+  if (furnitureSleepSurfaceIndicatesBedroom(title, descriptionHtml, tags)) {
+    return { category: "Bedroom", confidence: 1, reason: "sleep_surface" };
+  }
+  if (furnitureBedroomIndicatesBedroom(title, descriptionHtml, tags)) {
+    return { category: "Bedroom", confidence: 1, reason: "bedroom_furniture" };
+  }
+  if (furnitureRugIndicatesRugs(title, descriptionHtml, tags)) {
+    return { category: "Rugs", confidence: 1, reason: "rug_signals" };
+  }
+  const tableCategory = furnitureTableIndicatesCategory(title, descriptionHtml, tags, dimensions);
+  if (tableCategory) {
+    return { category: tableCategory, confidence: 1, reason: "table_signals" };
+  }
+
+  const artSignals = [
+    " art ",
+    " artwork",
+    " painting",
+    " paintings",
+    " wall art",
+    " canvas",
+    " tapestry",
+    " print",
+    " prints",
+    " lithograph",
+    " giclee",
+    " framed art",
+    " sculpture",
+  ];
+  const furnitureTitleAnchors = [
+    " table ",
+    " cabinet ",
+    " armoire ",
+    " wardrobe ",
+    " dresser ",
+    " nightstand ",
+    " headboard ",
+    " bed ",
+    " desk ",
+    " bookcase ",
+    " bookshelf ",
+    " sofa ",
+    " sectional ",
+    " chair ",
+    " bench ",
+    " console ",
+    " sideboard ",
+    " buffet ",
+    " hutch ",
+    " chest ",
+    " shelving ",
+  ];
+  const paddedText = ` ${[name, descAndTags].filter(Boolean).join(" ")} `;
+  const paddedTitle = ` ${name} `;
+  const explicitWallArtSignals = [" wall art", " framed art", " painting", " paintings", " lithograph", " giclee", " sculpture"];
+  const rugSignals = [" rug ", " rugs ", " runner", " runners ", " area rug", " area rugs"];
+  const hasRugSignal = rugSignals.some((s) => paddedText.includes(s));
+  const hasArtSignal = artSignals.some((s) => paddedText.includes(s));
+  const hasExplicitWallArtSignal = explicitWallArtSignals.some((s) => paddedText.includes(s));
+  const hasFurnitureAnchorInTitle = furnitureTitleAnchors.some((s) => paddedTitle.includes(s));
+  if (hasArtSignal && !hasFurnitureAnchorInTitle && !(hasRugSignal && !hasExplicitWallArtSignal)) {
+    return { category: "ArtMirrors", confidence: 1, reason: "art_signals_guard" };
+  }
+
+  const dimOverride = applyTableDimensionRules(dimensions, name, descAndTags);
+  if (dimOverride != null) {
+    return { category: dimOverride, confidence: 1, reason: "table_dimensions" };
+  }
+
+  const scores = {};
+
+  for (const [category, keywords] of Object.entries(CATEGORY_KEYWORDS_FURNITURE)) {
+    scores[category] = 0;
+    for (const kw of keywords) {
+      const isMultiWord = kw.trim().includes(" ");
+      const inName = matchFurnitureKeyword(name, kw);
+      const inDesc = hasDesc && matchFurnitureKeyword(descAndTags, kw);
+      if (inName) scores[category] += isMultiWord ? 3 : 2;
+      else if (inDesc) scores[category] += isMultiWord ? 1.5 : 1;
+    }
+  }
+
+  if (CATEGORY_KEYWORDS_FURNITURE_WEAK) {
+    for (const [category, weakKws] of Object.entries(CATEGORY_KEYWORDS_FURNITURE_WEAK)) {
+      for (const kw of weakKws) {
+        const inName = matchFurnitureKeyword(name, kw);
+        const inDesc = hasDesc && matchFurnitureKeyword(descAndTags, kw);
+        if (inName || inDesc) scores[category] = (scores[category] || 0) + 0.5;
+      }
+    }
+  }
+
+  const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1]);
+  const bestCategory = sorted[0]?.[0] ?? "Accessories";
+  const bestScore = sorted[0]?.[1] ?? 0;
+  const secondBest = sorted.length > 1 ? sorted[1][1] : 0;
+  const keywordCat = bestScore > 0 ? bestCategory : "Accessories";
+  const kwConf = furnitureKeywordMatchConfidence(bestScore, secondBest);
+
+  return {
+    category: keywordCat,
+    confidence: kwConf,
+    reason: "keyword_scores",
+    bestScore,
+    secondBest,
+  };
 }
 
 /**
@@ -2337,6 +2565,11 @@ function furnitureAccessoryCategoryOverrideTitle(title) {
   if (/\bchandeliers?\b/.test(t)) return "Lighting";
   if (/\bpendant lights?\b/.test(t) || /\bceiling lights?\b/.test(t) || /\blight fixtures?\b/.test(t)) return "Lighting";
   if (/\blamps?\b/.test(t)) return "Lighting";
+  if (/\b(patio|outdoor|garden|porch|deck)\s+benches?\b/i.test(t) || /\bbenches?\s+for\s+(the\s+)?(patio|outdoor|garden|porch|deck)\b/i.test(t)) {
+    return "OutdoorPatio";
+  }
+  if (/\bdining\s+benches?\b/i.test(t)) return "DiningRoom";
+  if (/\bbenches?\b/i.test(t)) return "LivingRoom";
   if (
     /\b(mirrored\s+chest|mirror\s+chest|door\s+chest|\d[\s-]*door\s+chest|chest\s+of\s+drawers|mirrored\s+dresser)\b/i.test(t)
   ) {
@@ -2433,110 +2666,7 @@ function furnitureTableIndicatesCategory(title, descriptionHtml, tags, dimension
 }
 
 function detectCategoryFurniture(title, descriptionHtml, tags, dimensions) {
-  const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-  const descText = stripHtml(descriptionHtml || "").trim();
-  const tagsStr = Array.isArray(tags) ? tags.join(" ") : typeof tags === "string" ? tags : "";
-  const name = ((title || "").trim()).toLowerCase();
-  const descAndTags = descText ? [descText, tagsStr].filter(Boolean).join(" ").toLowerCase() : "";
-  const hasDesc = !!descText;
-
-  if (!name && !descAndTags) return "Accessories";
-
-  const forcedFromTitle = furnitureAccessoryCategoryOverrideTitle(title);
-  if (forcedFromTitle === "Accessories" || forcedFromTitle === "Lighting" || forcedFromTitle === "Bedroom") {
-    return forcedFromTitle;
-  }
-
-  if (furnitureSleepSurfaceIndicatesBedroom(title, descriptionHtml, tags)) return "Bedroom";
-  if (furnitureBedroomIndicatesBedroom(title, descriptionHtml, tags)) return "Bedroom";
-  if (furnitureRugIndicatesRugs(title, descriptionHtml, tags)) return "Rugs";
-  const tableCategory = furnitureTableIndicatesCategory(title, descriptionHtml, tags, dimensions);
-  if (tableCategory) return tableCategory;
-
-  // Hard guard for clear art items, but do not hijack obvious furniture titles.
-  const artSignals = [
-    " art ",
-    " artwork",
-    " painting",
-    " paintings",
-    " wall art",
-    " canvas",
-    " tapestry",
-    " print",
-    " prints",
-    " lithograph",
-    " giclee",
-    " framed art",
-    " sculpture",
-  ];
-  const furnitureTitleAnchors = [
-    " table ",
-    " cabinet ",
-    " armoire ",
-    " wardrobe ",
-    " dresser ",
-    " nightstand ",
-    " headboard ",
-    " bed ",
-    " desk ",
-    " bookcase ",
-    " bookshelf ",
-    " sofa ",
-    " sectional ",
-    " chair ",
-    " console ",
-    " sideboard ",
-    " buffet ",
-    " hutch ",
-    " chest ",
-    " shelving ",
-  ];
-  const paddedText = ` ${[name, descAndTags].filter(Boolean).join(" ")} `;
-  const paddedTitle = ` ${name} `;
-  const explicitWallArtSignals = [" wall art", " framed art", " painting", " paintings", " lithograph", " giclee", " sculpture"];
-  const rugSignals = [" rug ", " rugs ", " runner", " runners ", " area rug", " area rugs"];
-  const hasRugSignal = rugSignals.some((s) => paddedText.includes(s));
-  const hasArtSignal = artSignals.some((s) => paddedText.includes(s));
-  const hasExplicitWallArtSignal = explicitWallArtSignals.some((s) => paddedText.includes(s));
-  const hasFurnitureAnchorInTitle = furnitureTitleAnchors.some((s) => paddedTitle.includes(s));
-  if (hasArtSignal && !hasFurnitureAnchorInTitle && !(hasRugSignal && !hasExplicitWallArtSignal)) return "ArtMirrors";
-
-  // Dimension-based override for tables (height/depth/width rules)
-  const dimOverride = applyTableDimensionRules(dimensions, name, descAndTags);
-  if (dimOverride != null) return dimOverride;
-
-  const scores = {};
-
-  for (const [category, keywords] of Object.entries(CATEGORY_KEYWORDS_FURNITURE)) {
-    scores[category] = 0;
-    for (const kw of keywords) {
-      const isMultiWord = kw.trim().includes(" ");
-      const inName = matchFurnitureKeyword(name, kw);
-      const inDesc = hasDesc && matchFurnitureKeyword(descAndTags, kw);
-      if (inName) scores[category] += isMultiWord ? 3 : 2;
-      else if (inDesc) scores[category] += isMultiWord ? 1.5 : 1;
-    }
-  }
-
-  if (CATEGORY_KEYWORDS_FURNITURE_WEAK) {
-    for (const [category, weakKws] of Object.entries(CATEGORY_KEYWORDS_FURNITURE_WEAK)) {
-      for (const kw of weakKws) {
-        const inName = matchFurnitureKeyword(name, kw);
-        const inDesc = hasDesc && matchFurnitureKeyword(descAndTags, kw);
-        if (inName || inDesc) scores[category] = (scores[category] || 0) + 0.5;
-      }
-    }
-  }
-
-  let bestCategory = "Accessories";
-  let bestScore = 0;
-  for (const [category, score] of Object.entries(scores)) {
-    if (score > bestScore) {
-      bestScore = score;
-      bestCategory = category;
-    }
-  }
-  return bestScore > 0 ? bestCategory : "Accessories";
+  return detectCategoryFurnitureEvidence(title, descriptionHtml, tags, dimensions).category;
 }
 
 const FURNITURE_CATEGORY_TO_SHOPIFY = {
@@ -2650,16 +2780,16 @@ function resolveVerticalFromEvidence(product, llmDetectedVertical) {
   if (productLooksLikeBookFilmOrMedia(product)) {
     return { vertical: "furniture", reason: "evidence_book_film_media" };
   }
-  if (productLooksLikeLightingFixture(product)) {
+  if (productLooksLikeLightingFixture(product) && !verticalHardSignalAmbiguity(product)) {
     return { vertical: "furniture", reason: "evidence_lighting_fixture" };
   }
-  if (productLooksLikeFootwearLuxury(product)) {
+  if (productLooksLikeFootwearLuxury(product) && !productLooksLikeFineArtWallDecor(product)) {
     return { vertical: "luxury", reason: "evidence_footwear_always_luxury" };
   }
   if (productLooksLikeFurnitureHomeBox(product)) {
     return { vertical: "furniture", reason: "evidence_home_decor_box" };
   }
-  if (productLooksLikeFurnitureCaseGoods(product)) {
+  if (productLooksLikeFurnitureCaseGoods(product) && !mirroredCaseGoodsVersusBagWearableConflict(product)) {
     return { vertical: "furniture", reason: "evidence_case_goods" };
   }
   const title = (product?.title || "").trim().toLowerCase();
@@ -2678,8 +2808,8 @@ function resolveVerticalFromEvidence(product, llmDetectedVertical) {
     return { vertical: "furniture", reason: "evidence_lighting_hard_cue" };
   }
 
-  // Wearables always stay Luxury, even if words like "canvas" appear.
-  if (hasWearableCue) {
+  // Wearables stay Luxury unless copy deliberately mixes incompatible cues (art vs bag, mirrored chest vs handbag, etc.).
+  if (hasWearableCue && !verticalHardSignalAmbiguity(product)) {
     return { vertical: "luxury", reason: "evidence_wearable_cue" };
   }
   // Art/furniture only wins when supported by meaningful context, not one isolated token.
@@ -2908,36 +3038,60 @@ function isAccessoryProduct(title, descriptionHtml) {
   return ACCESSORY_KEYWORDS.some((kw) => matchWordBoundary(text, kw));
 }
 
-/** Detect luxury category from title/description when product_type is empty or unmatched. Title-first: match on title before description so accessory mentions (e.g. "comes with clutch") don't override the main product. */
-function detectLuxuryCategoryFromTitle(title, descriptionHtml, product = null) {
+/** Luxury keyword evidence + confidence for LLM_CATEGORY_CONFIDENCE_THRESHOLD gating. */
+function detectLuxuryCategoryEvidence(title, descriptionHtml, product = null) {
   const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
   const titleText = (title || "").trim().toLowerCase();
   const descText = stripHtml(descriptionHtml || "").trim().toLowerCase();
   const combined = [titleText, descText].filter(Boolean).join(" ");
-  if (!combined) return null;
-  if (textSuggestsFurnitureRingHardware(combined)) return null;
-  if (SHOE_KEYWORDS.some((kw) => matchWordBoundary(combined, kw))) return null;
+  if (!combined) return { category: null, confidence: 0, reason: "empty" };
+
+  if (textSuggestsFurnitureRingHardware(combined)) return { category: null, confidence: 0, reason: "furniture_ring_pull" };
+
+  if (SHOE_KEYWORDS.some((kw) => matchWordBoundary(combined, kw))) {
+    return { category: "Other ", confidence: 1, reason: "footwear" };
+  }
+
   const pseudoForCase = product || {
     title: title || "",
     body_html: descriptionHtml || "",
     product_type: "",
     tags: [],
   };
-  if (productLooksLikeFurnitureCaseGoods(pseudoForCase)) return null;
+  if (productLooksLikeFurnitureCaseGoods(pseudoForCase)) return { category: null, confidence: 0, reason: "case_goods" };
+
   const pseudoForMedia = { title: title || "", body_html: descriptionHtml || "", product_type: "", tags: "" };
+  const blockedMedia =
+    productLooksLikeBookFilmOrMedia(pseudoForMedia) ||
+    productLooksLikeFurnitureHomeBox(pseudoForMedia) ||
+    productLooksLikeLightingFixture(pseudoForMedia);
+
   if (
-    !productLooksLikeBookFilmOrMedia(pseudoForMedia) &&
-    !productLooksLikeFurnitureHomeBox(pseudoForMedia) &&
-    !productLooksLikeLightingFixture(pseudoForMedia) &&
+    !blockedMedia &&
     (JEWELRY_KEYWORDS.some((kw) => matchWordBoundary(combined, kw)) || isLikelyJewelryBandRing(combined))
   ) {
-    return "Jewelry";
+    const jewelryTitle =
+      JEWELRY_KEYWORDS.some((kw) => matchWordBoundary(titleText, kw)) || isLikelyJewelryBandRing(titleText);
+    return { category: "Jewelry", confidence: jewelryTitle ? 0.9 : 0.82, reason: "jewelry_keywords" };
   }
-  if (ACCESSORY_KEYWORDS.some((kw) => matchWordBoundary(combined, kw))) return "Accessories";
-  // Document holders, agendas, folios, business card cases → Other (stationery/office, not handbags).
-  if (matchWordBoundary(combined, "document holder") || matchWordBoundary(combined, "agenda") || matchWordBoundary(combined, "folio") || matchWordBoundary(combined, "business card case")) {
-    return "Other ";
+
+  if (ACCESSORY_KEYWORDS.some((kw) => matchWordBoundary(combined, kw))) {
+    const titleAcc = ACCESSORY_KEYWORDS.some((kw) => matchWordBoundary(titleText, kw));
+    return { category: "Accessories", confidence: titleAcc ? 0.85 : 0.74, reason: "accessory_keywords" };
   }
+
+  const stationeryHit = (txt) =>
+    !!txt &&
+    (matchWordBoundary(txt, "document holder") ||
+      matchWordBoundary(txt, "agenda") ||
+      matchWordBoundary(txt, "folio") ||
+      matchWordBoundary(txt, "business card case"));
+
+  if (stationeryHit(combined)) {
+    const titleSt = stationeryHit(titleText);
+    return { category: "Other ", confidence: titleSt ? 0.88 : 0.76, reason: "stationery" };
+  }
+
   const tryMatch = (text) => {
     if (!text) return null;
     for (const [category, keywords] of Object.entries(CATEGORY_KEYWORDS)) {
@@ -2948,7 +3102,18 @@ function detectLuxuryCategoryFromTitle(title, descriptionHtml, product = null) {
     }
     return null;
   };
-  return tryMatch(titleText) ?? tryMatch(descText);
+
+  const titleHit = tryMatch(titleText);
+  if (titleHit) return { category: titleHit, confidence: 0.86, reason: "luxury_title_keyword" };
+  const descHit = tryMatch(descText);
+  if (descHit) return { category: descHit, confidence: 0.72, reason: "luxury_description_keyword" };
+
+  return { category: null, confidence: 0, reason: "no_keyword_match" };
+}
+
+/** Detect luxury category from title/description when product_type is empty or unmatched. Title-first: match on title before description so accessory mentions (e.g. "comes with clutch") don't override the main product. */
+function detectLuxuryCategoryFromTitle(title, descriptionHtml, product = null) {
+  return detectLuxuryCategoryEvidence(title, descriptionHtml, product).category;
 }
 
 /** In-memory map: display name (and slug) -> Webflow category item ID. Filled by loadFurnitureCategoryMap(). */
@@ -4922,6 +5087,10 @@ async function syncSingleProductCore(product, cache, options = {}) {
   const department = vertical === "furniture" ? "Furniture & Home" : "Luxury Goods";
   let dimensionsStatus = null;
   const dimensions = getDimensionsFromProduct(product);
+  const categoryConfidenceThresholdRaw = parseFloat(process.env.LLM_CATEGORY_CONFIDENCE_THRESHOLD ?? "0.8");
+  const categoryConfidenceThreshold = Number.isFinite(categoryConfidenceThresholdRaw)
+    ? Math.min(1, Math.max(0, categoryConfidenceThresholdRaw))
+    : 0.8;
   let categoryForMetafield;
   if (recoveredFromWebflow) {
     // Cache-missing path: no LLM; use keyword-only category.
@@ -4942,26 +5111,78 @@ async function syncSingleProductCore(product, cache, options = {}) {
       }
     }
   } else if (vertical === "furniture") {
-    const llmCategory = await classifyCategoryWithLLM(product, "furniture", {}, webflowLog);
-    let resolved = llmCategory?.category ?? detectCategoryFurniture(name, description, getProductTagsArray(product), dimensions);
-    const forcedCat = furnitureAccessoryCategoryOverrideTitle(name);
-    if (forcedCat) resolved = forcedCat;
+    const evidence = detectCategoryFurnitureEvidence(name, description, getProductTagsArray(product), dimensions);
+    let resolved = evidence.category;
+    if (evidence.confidence < categoryConfidenceThreshold) {
+      const llmPayload = {};
+      const llmCategory = await classifyCategoryWithLLM(product, "furniture", llmPayload, webflowLog);
+      if (llmCategory?.category) resolved = llmCategory.category;
+      webflowLog("info", {
+        event: "furniture_category.subcategory",
+        shopifyProductId,
+        evidenceConfidence: evidence.confidence,
+        evidenceReason: evidence.reason,
+        threshold: categoryConfidenceThreshold,
+        bestScore: evidence.bestScore,
+        secondBest: evidence.secondBest,
+        usedLlm: true,
+        resolved,
+      });
+    } else {
+      webflowLog("info", {
+        event: "furniture_category.subcategory",
+        shopifyProductId,
+        evidenceConfidence: evidence.confidence,
+        evidenceReason: evidence.reason,
+        threshold: categoryConfidenceThreshold,
+        bestScore: evidence.bestScore,
+        secondBest: evidence.secondBest,
+        usedLlm: false,
+        resolved,
+      });
+    }
     if (furnitureSleepSurfaceIndicatesBedroom(name, description, getProductTagsArray(product))) resolved = "Bedroom";
     categoryForMetafield = mapFurnitureCategoryForShopify(resolved);
   } else {
     if (soldNow) {
       categoryForMetafield = "Recently Sold";
     } else {
-      const llmCategory = await classifyCategoryWithLLM(product, "luxury", {}, webflowLog);
-      if (llmCategory?.category) {
-        categoryForMetafield = mapCategoryForShopify(llmCategory.category);
-      } else {
-        if (isShoeProduct(name, description)) categoryForMetafield = "Other ";
-        else {
-          const fromTitle = detectLuxuryCategoryFromTitle(name, description, product);
-          categoryForMetafield = fromTitle ?? "Other ";
+      const luxuryEvidence = detectLuxuryCategoryEvidence(name, description, product);
+      let resolvedLux = luxuryEvidence.category;
+      const needLuxuryLlm =
+        luxuryEvidence.confidence < categoryConfidenceThreshold || luxuryEvidence.category == null;
+
+      if (needLuxuryLlm) {
+        const llmPayload = {};
+        const llmCategory = await classifyCategoryWithLLM(product, "luxury", llmPayload, webflowLog);
+        if (llmCategory?.category) {
+          resolvedLux = llmCategory.category;
+        } else if (!resolvedLux) {
+          if (isShoeProduct(name, description)) resolvedLux = "Other ";
+          else resolvedLux = detectLuxuryCategoryFromTitle(name, description, product) ?? "Other ";
         }
+        webflowLog("info", {
+          event: "luxury_category.subcategory",
+          shopifyProductId,
+          evidenceConfidence: luxuryEvidence.confidence,
+          evidenceReason: luxuryEvidence.reason,
+          threshold: categoryConfidenceThreshold,
+          usedLlm: true,
+          resolved: resolvedLux,
+        });
+      } else {
+        webflowLog("info", {
+          event: "luxury_category.subcategory",
+          shopifyProductId,
+          evidenceConfidence: luxuryEvidence.confidence,
+          evidenceReason: luxuryEvidence.reason,
+          threshold: categoryConfidenceThreshold,
+          usedLlm: false,
+          resolved: resolvedLux,
+        });
       }
+
+      categoryForMetafield = mapCategoryForShopify(resolvedLux);
       if (isJewelryProduct(name, description, product) && !isBagOrAgendaProduct(name, description)) categoryForMetafield = "Jewelry";
       else if (isAccessoryProduct(name, description) && !isBagOrAgendaProduct(name, description)) categoryForMetafield = "Accessories";
       if (isBeltProduct(name, description)) categoryForMetafield = "Belts";
@@ -5971,11 +6192,16 @@ function fieldDataEffectivelyEqual(newFD, existingFD) {
       if (n.url != null && e.url != null && n.url === e.url) continue;
       if (JSON.stringify(n) === JSON.stringify(e)) continue;
     }
-    if (key === "description" || key === "body_html") {
+    if (key === "description" || key === "body_html" || key === "main-description-2") {
       if (strNorm(n) === strNorm(e)) continue;
     }
     if (key === "price" && priceNorm(n) === priceNorm(e)) continue;
-    if (["name", "brand", "slug", "shopify-product-id", "shopify-url"].includes(key) && strNorm(n) === strNorm(e)) continue;
+    if (
+      ["name", "brand", "slug", "shopify-product-id", "shopify-url", "shopify-slug-2", "ec-product-type"].includes(key) &&
+      strNorm(n) === strNorm(e)
+    ) {
+      continue;
+    }
     if (key === "category") {
       const nRef = typeof n === "string" && WEBFLOW_ITEM_REF_REGEX.test(n);
       const eRef = typeof e === "string" && WEBFLOW_ITEM_REF_REGEX.test(e);
