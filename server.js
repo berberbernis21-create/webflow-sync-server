@@ -13,6 +13,7 @@ import { detectBrandFromProductFurniture } from "./brandFurniture.js";
 import {
   classifyWithLLM,
   productLooksLikeBookFilmOrMedia,
+  productLooksLikeFootwearLuxury,
   productLooksLikeFurnitureCaseGoods,
   productLooksLikeFurnitureHomeBox,
   productLooksLikeLightingFixture,
@@ -2120,10 +2121,46 @@ async function removeConditionOptionIfFurniture(product) {
    Includes dimensions (variant + metafields + tag lines) so dimension changes still invalidate the fast path.
    body_html is normalized (collapse whitespace) so Shopify formatting drift doesn't cause false "changed".
    taxonomyVersion: bump this when category/vertical logic changes so all items resync once.
+   Image URLs strip query strings (CDN signature / width params often rotate without a real asset change).
+   Price and dimensions are normalized so "199.0" vs "199.00" or float noise doesn't churn the cache.
 ====================================================== */
 function normalizeHtmlForHash(html) {
   if (html == null || typeof html !== "string") return html;
   return html.replace(/\s+/g, " ").trim();
+}
+
+/** Shopify CDN URLs often gain/lose ?v= / width= params between requests — same asset, different string. */
+function normalizeShopifyImageSrcForHash(src) {
+  if (src == null || typeof src !== "string") return "";
+  const s = src.trim();
+  if (!s) return "";
+  const q = s.indexOf("?");
+  return (q >= 0 ? s.slice(0, q) : s).trim();
+}
+
+/** Variant price string vs number parity so hash matches across Shopify payloads. */
+function normalizePriceForHash(raw) {
+  if (raw == null || raw === "") return null;
+  const n = Number(String(raw).replace(/[^0-9.-]/g, ""));
+  if (!Number.isFinite(n)) return String(raw).trim();
+  return Math.round(n * 100) / 100;
+}
+
+/** Limit float jitter from metafields/tag parsing (79.999 vs 80). */
+function normalizeDimsForHash(dims) {
+  if (!dims || typeof dims !== "object") return { weight: null, width: null, height: null, length: null };
+  const r = (x) => {
+    if (x == null || x === "") return null;
+    const n = Number(x);
+    if (!Number.isFinite(n)) return null;
+    return Math.round(n * 1000) / 1000;
+  };
+  return {
+    width: r(dims.width),
+    height: r(dims.height),
+    length: r(dims.length),
+    weight: r(dims.weight),
+  };
 }
 
 /** Shopify often sends inventory as number or string; null = unknown / not tracked on variant. */
@@ -2145,7 +2182,7 @@ function tagsFingerprintForHash(product) {
 }
 
 function shopifyHash(product) {
-  const dimensions = getDimensionsFromProduct(product);
+  const dimensions = normalizeDimsForHash(getDimensionsFromProduct(product));
   const jewelryReclassVersion = isJewelryProduct(product?.title || "", product?.body_html || "", product) ? 1 : 0;
   return {
     title: (product.title || "").trim(),
@@ -2153,11 +2190,11 @@ function shopifyHash(product) {
     product_type: (product.product_type || "").trim(),
     tagsKey: tagsFingerprintForHash(product),
     body_html: normalizeHtmlForHash(product.body_html),
-    price: product.variants?.[0]?.price || null,
+    price: normalizePriceForHash(product.variants?.[0]?.price),
     qty: getPrimaryVariantInventoryQuantity(product),
-    images: (product.images || []).map((i) => i.src),
+    images: (product.images || []).map((i) => normalizeShopifyImageSrcForHash(i?.src)),
     slug: product.handle,
-    dimensions: { width: dimensions.width, height: dimensions.height, length: dimensions.length, weight: dimensions.weight },
+    dimensions,
     taxonomyVersion: 10,
     jewelryReclassVersion,
   };
@@ -2613,11 +2650,14 @@ function resolveVerticalFromEvidence(product, llmDetectedVertical) {
   if (productLooksLikeBookFilmOrMedia(product)) {
     return { vertical: "furniture", reason: "evidence_book_film_media" };
   }
-  if (productLooksLikeFurnitureHomeBox(product)) {
-    return { vertical: "furniture", reason: "evidence_home_decor_box" };
-  }
   if (productLooksLikeLightingFixture(product)) {
     return { vertical: "furniture", reason: "evidence_lighting_fixture" };
+  }
+  if (productLooksLikeFootwearLuxury(product)) {
+    return { vertical: "luxury", reason: "evidence_footwear_always_luxury" };
+  }
+  if (productLooksLikeFurnitureHomeBox(product)) {
+    return { vertical: "furniture", reason: "evidence_home_decor_box" };
   }
   if (productLooksLikeFurnitureCaseGoods(product)) {
     return { vertical: "furniture", reason: "evidence_case_goods" };

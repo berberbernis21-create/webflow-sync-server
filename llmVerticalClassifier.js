@@ -48,6 +48,56 @@ const LUXURY_HOUSE_SIGNALS = [
 ];
 // Note: "flat"/"flats" intentionally omitted — matches geometry (e.g. "Flat Oval … Lamp") and home decor; shoe flats still classify via LLM + other shoe terms.
 
+/** Footwear — always Luxury Goods, never Furniture & Home (title / type / tags only). */
+const FOOTWEAR_LUXURY_TERMS = [
+  "sneaker",
+  "sneakers",
+  "shoe",
+  "shoes",
+  "footwear",
+  "trainer",
+  "trainers",
+  "boot",
+  "boots",
+  "mule",
+  "mules",
+  "loafer",
+  "loafers",
+  "oxford",
+  "oxfords",
+  "sandal",
+  "sandals",
+  "heel",
+  "heels",
+  "pump",
+  "pumps",
+  "espadrille",
+  "espadrilles",
+  "slide",
+  "slides",
+  "stiletto",
+  "stilettos",
+  "wedge",
+  "wedges",
+  "cleat",
+  "cleats",
+  "slingback",
+  "slingbacks",
+];
+
+/**
+ * Sneakers, boots, sandals, mules, and all footwear — always Luxury (never HOME_INTERIOR).
+ * Includes compound product names ending in mule/mules (e.g. "Pyramule") where \bmule\b would miss.
+ */
+export function productLooksLikeFootwearLuxury(product) {
+  const { title, productType, tagsStr } = getProductText(product);
+  const head = `${title} ${productType} ${tagsStr}`.toLowerCase();
+  if (!head.trim()) return false;
+  if (hasAnyWord(head, FOOTWEAR_LUXURY_TERMS)) return true;
+  if (/\w*mules?\b/i.test(head)) return true;
+  return false;
+}
+
 /** Decorative/costume masks (masquerade, wall, feathered mask) → Furniture & Home Accessories, not LUXURY. */
 const DECOR_MASK_INDICATORS = ["masquerade", "feathered mask", "decorative mask", "wall mask", "costume mask"];
 
@@ -130,6 +180,7 @@ LUXURY: wearable designer goods, fine jewelry, watches, prestige fashion brands,
 HOME_INTERIOR: furniture, decor, lighting, artwork, home objects, even if expensive or premium.
 
 Important rules:
+- Footwear only (sneakers, athletic shoes, boots, sandals, heels, designer collaborations e.g. Asics x Comme des Garçons) is always LUXURY — never HOME_INTERIOR / furniture / decor.
 - Physical books, magazines, DVDs/Blu-rays, VHS, laserdiscs, and films/movies/documentaries (including silent films and royal/coronation titles) are HOME_INTERIOR — decor/media inventory — not LUXURY even if collectible or prestigious.
 - Decorative home boxes (wood or wooden box, domed box, lidded box, keepsake/storage/decorative box, jewelry/watch box as a tabletop object) are HOME_INTERIOR — not handbags — even if the photo looks rounded like a bag.
 - Expensive furniture is still HOME_INTERIOR.
@@ -308,6 +359,7 @@ const CASE_GOODS_SUBSTRINGS = [
  * @returns {boolean}
  */
 export function productLooksLikeFurnitureCaseGoods(product) {
+  if (productLooksLikeFootwearLuxury(product)) return false;
   const { title, productType, tagsStr, description } = getProductText(product);
   const descHead = description ? description.slice(0, 2000) : "";
   const blob = normalizeForVerticalMatch(`${title} ${productType} ${tagsStr} ${descHead}`).toLowerCase();
@@ -604,6 +656,20 @@ export async function classifyWithLLM(product, logPayload = {}, logFn = null) {
     return mediaResult;
   }
 
+  if (productLooksLikeFootwearLuxury(product)) {
+    const footwearResult = {
+      category: "LUXURY",
+      confidence: 1,
+      reasoning: "Footwear (shoes, boots, mules, sandals); always Luxury Goods, never Furniture & Home.",
+    };
+    logPayload.raw = null;
+    logPayload.parsed = null;
+    logPayload.final = footwearResult;
+    logPayload.override = "footwear_always_luxury";
+    if (logFn) logFn("info", { event: "llm_vertical.footwear", category: "LUXURY" });
+    return footwearResult;
+  }
+
   if (productLooksLikeFurnitureHomeBox(product)) {
     const boxResult = {
       category: "HOME_INTERIOR",
@@ -724,6 +790,11 @@ export async function classifyWithLLM(product, logPayload = {}, logFn = null) {
     if (afterSafety !== category) {
       category = afterSafety;
       override = override || "furniture_safety_override";
+    }
+
+    if (category === "HOME_INTERIOR" && productLooksLikeFootwearLuxury(product)) {
+      category = "LUXURY";
+      override = override ? `${override}+footwear_luxury_rescue` : "footwear_luxury_rescue";
     }
 
     let final = {
