@@ -3749,18 +3749,18 @@ function webflowSkuMoneyFieldToCents(field) {
   return Math.round(n);
 }
 
-/** Suffix for furniture ecommerce product name when marked sold (appended once). */
-const FURNITURE_NO_LONGER_AVAILABLE_SUFFIX = " (No Longer Available)";
+/** Suffix for furniture ecommerce + luxury CMS product name when marked sold (appended once). */
+const NO_LONGER_AVAILABLE_SUFFIX = " (No Longer Available)";
 
-function appendFurnitureNoLongerAvailableToTitle(currentTitle) {
+function appendNoLongerAvailableToTitle(currentTitle) {
   if (currentTitle == null) return null;
   const s = String(currentTitle);
   if (!s.trim()) return null;
   if (s.includes("(No Longer Available)")) return s;
-  return s + FURNITURE_NO_LONGER_AVAILABLE_SUFFIX;
+  return s + NO_LONGER_AVAILABLE_SUFFIX;
 }
 
-function furnitureTitleMissingNoLongerAvailableSuffix(existing) {
+function titleMissingNoLongerAvailableSuffix(existing) {
   const currentName = existing?.fieldData?.name;
   if (currentName == null) return false;
   const s = String(currentName);
@@ -3817,9 +3817,9 @@ async function markAsSold(existing, vertical, config) {
       fieldData[furnitureSoldSinceSlug] = soldDate;
     }
   }
-  // Furniture: append "(No Longer Available)" to product name once (same PATCH as sold + date-sold).
-  if (vertical === "furniture") {
-    const withSuffix = appendFurnitureNoLongerAvailableToTitle(fieldData.name);
+  // Furniture + luxury: append "(No Longer Available)" to product name once (same PATCH as sold + date-sold).
+  if (vertical === "furniture" || vertical === "luxury") {
+    const withSuffix = appendNoLongerAvailableToTitle(fieldData.name);
     if (withSuffix != null) fieldData.name = withSuffix;
   }
 
@@ -3975,9 +3975,10 @@ function needsWebflowSoldRepair(existing, vertical, qty) {
   return shopifyQtySaysSold(qty) && !webflowListingLooksSold(existing, vertical);
 }
 
-/** Sold furniture listing must also carry "(No Longer Available)" once in the title. */
-function needsFurnitureNoLongerAvailableRepair(existing, vertical, qty) {
-  return vertical === "furniture" && shopifyQtySaysSold(qty) && furnitureTitleMissingNoLongerAvailableSuffix(existing);
+/** Sold furniture or luxury listing must also carry "(No Longer Available)" once in the title. */
+function needsNoLongerAvailableRepair(existing, vertical, qty) {
+  if (vertical !== "furniture" && vertical !== "luxury") return false;
+  return shopifyQtySaysSold(qty) && titleMissingNoLongerAvailableSuffix(existing);
 }
 
 /**
@@ -4654,7 +4655,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
         return { operation: "skip", id: existing.id };
       }
       const repairSold = needsWebflowSoldRepair(existing, vertical, qty);
-      const repairNoLongerAvailable = needsFurnitureNoLongerAvailableRepair(existing, vertical, qty);
+      const repairNoLongerAvailable = needsNoLongerAvailableRepair(existing, vertical, qty);
       const mustMarkSold = shouldMarkSoldTransition(previousQty, qty) || repairSold || repairNoLongerAvailable;
       if (mustMarkSold) {
         const fromQtyDrop =
@@ -5489,7 +5490,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
     }
 
     const repairSold = needsWebflowSoldRepair(existing, vertical, qty);
-    const repairNoLongerAvailable = needsFurnitureNoLongerAvailableRepair(existing, vertical, qty);
+    const repairNoLongerAvailable = needsNoLongerAvailableRepair(existing, vertical, qty);
     const mustMarkSold =
       shouldMarkSoldTransition(previousQty, qty) || repairSold || repairNoLongerAvailable;
 
@@ -5797,7 +5798,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
         }
       }
       const guardRepair = needsWebflowSoldRepair(guardExisting, detectedVertical, qty);
-      const guardNoLongerAvailableRepair = needsFurnitureNoLongerAvailableRepair(guardExisting, detectedVertical, qty);
+      const guardNoLongerAvailableRepair = needsNoLongerAvailableRepair(guardExisting, detectedVertical, qty);
       const guardMustSold = shouldMarkSoldTransition(previousQty, qty) || guardRepair || guardNoLongerAvailableRepair;
       if (guardMustSold) {
         const fromQtyDrop =
@@ -6292,8 +6293,9 @@ function buildWebflowFieldData(opts) {
   const isLuxuryCategory = category && LUXURY_TAXONOMY.includes(category);
   const luxuryCategory = isLuxuryCategory ? category : "Other ";
   const webflowCategory = (luxuryCategory && luxuryCategory.trimEnd() === "Other") ? "Other" : (luxuryCategory ?? "");
+  const luxuryName = soldNow ? (appendNoLongerAvailableToTitle(name) ?? name) : name;
   const base = {
-    name,
+    name: luxuryName,
     brand,
     price,
     description,
