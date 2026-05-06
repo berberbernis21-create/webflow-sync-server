@@ -277,6 +277,132 @@ function detectCategory(title) {
 }
 
 /* ======================================================
+   FURNITURE CATEGORY OVERRIDE VIA E-COMMERCE TAG LETTER
+====================================================== */
+const FURNITURE_TAG_CATEGORY_MAP = {
+  A: "Art / Mirrors",
+  B: "Bedroom",
+  D: "Dining Room",
+  L: "Living Room",
+  O: "Office Den",
+  R: "Rugs",
+  X: "Accessories",
+  P: "Outdoor / Patio",
+  G: "Lighting",
+};
+
+const HANDBAGS_TAG_CATEGORY_MAP = {
+  A: "Accessories",
+  B: "Backpacks",
+  C: "Crossbody",
+  H: "Handbags",
+  L: "Luggage",
+  O: "Other",
+  S: "Small Bags",
+  T: "Totes",
+  J: "Jewelry",
+  R: "Scarves",
+  E: "Belts",
+  W: "Wallets",
+};
+
+function detectFurnitureCategoryOverrideFromTags(tagsValue) {
+  if (!tagsValue) return null;
+
+  const tags = String(tagsValue)
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+
+  for (const tag of tags) {
+    const normalized = tag.toUpperCase();
+
+    // Accept either a bare letter tag ("A")
+    // or prefixed tags like "E-COMMERCE:A", "ECOMMERCE-A", etc.
+    const directMatch = normalized.match(/^([ABDLORXPG])$/);
+    if (directMatch) return FURNITURE_TAG_CATEGORY_MAP[directMatch[1]];
+
+    const prefixedMatch = normalized.match(
+      /^(?:E[\s-]?COMMERCE|ECOMMERCE|E_COMMERCE)\s*[:\- ]\s*([ABDLORXPG])$/
+    );
+    if (prefixedMatch) return FURNITURE_TAG_CATEGORY_MAP[prefixedMatch[1]];
+  }
+
+  return null;
+}
+
+function detectHandbagsCategoryOverrideFromTags(tagsValue) {
+  if (!tagsValue) return null;
+
+  const tags = String(tagsValue)
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+
+  for (const tag of tags) {
+    const normalized = tag.toUpperCase();
+
+    const directMatch = normalized.match(/^([ABCHLOSTJREW])$/);
+    if (directMatch) return HANDBAGS_TAG_CATEGORY_MAP[directMatch[1]];
+
+    const prefixedMatch = normalized.match(
+      /^(?:E[\s-]?COMMERCE|ECOMMERCE|E_COMMERCE)\s*[:\- ]\s*([ABCHLOSTJREW])$/
+    );
+    if (prefixedMatch) return HANDBAGS_TAG_CATEGORY_MAP[prefixedMatch[1]];
+  }
+
+  return null;
+}
+
+function isFurnitureVertical(product) {
+  const productType = String(product?.product_type || "")
+    .trim()
+    .toLowerCase();
+  const tags = String(product?.tags || "")
+    .split(",")
+    .map((tag) => tag.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (productType.includes("furniture")) return true;
+  if (tags.includes("furniture")) return true;
+  if (tags.includes("furn")) return true;
+
+  return false;
+}
+
+function isHandbagsVertical(baseDetectedCategory, product) {
+  const handbagsCategories = new Set([
+    "Handbags",
+    "Totes",
+    "Crossbody",
+    "Wallets",
+    "Backpacks",
+    "Luggage",
+    "Scarves",
+    "Belts",
+    "Accessories",
+    "Small Bags",
+    "Jewelry",
+  ]);
+
+  if (handbagsCategories.has(baseDetectedCategory)) return true;
+
+  const productType = String(product?.product_type || "")
+    .trim()
+    .toLowerCase();
+  const tags = String(product?.tags || "")
+    .split(",")
+    .map((tag) => tag.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (productType.includes("handbag") || productType.includes("luxury")) return true;
+  if (tags.includes("handbags") || tags.includes("handbag")) return true;
+  if (tags.includes("luxury")) return true;
+
+  return false;
+}
+
+/* ======================================================
    MAP CATEGORY TO SHOPIFY METAFIELD VALUES
    (Shopify dropdown requires exact matches)
 ====================================================== */
@@ -470,7 +596,16 @@ async function syncSingleProduct(product, cache) {
   const soldNow = qty !== null && qty <= 0;
 
   // Detect category for Webflow
-const detectedCategory = detectCategory(name);
+const baseDetectedCategory = detectCategory(name);
+const furnitureTagOverrideCategory = isFurnitureVertical(product)
+  ? detectFurnitureCategoryOverrideFromTags(product.tags)
+  : null;
+const handbagsTagOverrideCategory =
+  !furnitureTagOverrideCategory && isHandbagsVertical(baseDetectedCategory, product)
+    ? detectHandbagsCategoryOverrideFromTags(product.tags)
+    : null;
+const detectedCategory =
+  furnitureTagOverrideCategory || handbagsTagOverrideCategory || baseDetectedCategory;
 
 // Webflow category uses detected category (free text)
 let category = detectedCategory;
