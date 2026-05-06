@@ -2330,6 +2330,67 @@ function mapCategoryForShopify(category) {
   return map[category] || map.default;
 }
 
+const FURNITURE_ECOMMERCE_LETTER_TO_CATEGORY = {
+  A: "Art / Mirrors",
+  B: "Bedroom",
+  D: "Dining Room",
+  L: "Living Room",
+  O: "Office Den",
+  R: "Rugs",
+  X: "Accessories",
+  P: "Outdoor / Patio",
+  G: "Lighting",
+};
+
+const LUXURY_ECOMMERCE_LETTER_TO_CATEGORY = {
+  A: "Accessories",
+  B: "Backpacks",
+  C: "Crossbody",
+  H: "Handbags",
+  L: "Luggage",
+  O: "Other ",
+  S: "Small Bags",
+  T: "Totes",
+  J: "Jewelry",
+  R: "Scarves",
+  E: "Belts",
+  W: "Wallets",
+};
+
+function getEcommerceCategoryLetterFromTags(tags) {
+  if (!Array.isArray(tags) || !tags.length) return null;
+
+  for (const rawTag of tags) {
+    const tag = String(rawTag || "").trim();
+    if (!tag) continue;
+    const normalized = tag.toUpperCase();
+
+    const direct = normalized.match(/^([A-Z])$/);
+    if (direct) return direct[1];
+
+    const prefixed = normalized.match(
+      /\b(?:E[\s_-]?COMMERCE|ECOMMERCE)\b[^A-Z0-9]*([A-Z])\b/
+    );
+    if (prefixed) return prefixed[1];
+  }
+
+  return null;
+}
+
+function getFurnitureCategoryOverrideFromEcommerceTags(tags) {
+  const letter = getEcommerceCategoryLetterFromTags(tags);
+  if (!letter) return null;
+  const category = FURNITURE_ECOMMERCE_LETTER_TO_CATEGORY[letter];
+  return category ? { letter, category } : null;
+}
+
+function getLuxuryCategoryOverrideFromEcommerceTags(tags) {
+  const letter = getEcommerceCategoryLetterFromTags(tags);
+  if (!letter) return null;
+  const category = LUXURY_ECOMMERCE_LETTER_TO_CATEGORY[letter];
+  return category ? { letter, category } : null;
+}
+
 /* ======================================================
    FURNITURE CATEGORY — detect + map to Shopify display
    Fallback: Accessories when no keyword matches.
@@ -5088,6 +5149,13 @@ async function syncSingleProductCore(product, cache, options = {}) {
   const department = vertical === "furniture" ? "Furniture & Home" : "Luxury Goods";
   let dimensionsStatus = null;
   const dimensions = getDimensionsFromProduct(product);
+  const productTags = getProductTagsArray(product);
+  const furnitureEcommerceOverride = vertical === "furniture"
+    ? getFurnitureCategoryOverrideFromEcommerceTags(productTags)
+    : null;
+  const luxuryEcommerceOverride = vertical === "luxury"
+    ? getLuxuryCategoryOverrideFromEcommerceTags(productTags)
+    : null;
   const categoryConfidenceThresholdRaw = parseFloat(process.env.LLM_CATEGORY_CONFIDENCE_THRESHOLD ?? "0.8");
   const categoryConfidenceThreshold = Number.isFinite(categoryConfidenceThresholdRaw)
     ? Math.min(1, Math.max(0, categoryConfidenceThresholdRaw))
@@ -5096,100 +5164,140 @@ async function syncSingleProductCore(product, cache, options = {}) {
   if (recoveredFromWebflow) {
     // Cache-missing path: no LLM; use keyword-only category.
     if (vertical === "furniture") {
-      const forcedCat = furnitureAccessoryCategoryOverrideTitle(name);
-      let resolved = forcedCat ?? detectCategoryFurniture(name, description, getProductTagsArray(product), dimensions);
-      if (furnitureSleepSurfaceIndicatesBedroom(name, description, getProductTagsArray(product))) resolved = "Bedroom";
-      categoryForMetafield = mapFurnitureCategoryForShopify(resolved);
+      if (furnitureEcommerceOverride) {
+        categoryForMetafield = furnitureEcommerceOverride.category;
+        webflowLog("info", {
+          event: "furniture_category.override_tag",
+          shopifyProductId,
+          letter: furnitureEcommerceOverride.letter,
+          resolved: categoryForMetafield,
+        });
+      } else {
+        const forcedCat = furnitureAccessoryCategoryOverrideTitle(name);
+        let resolved = forcedCat ?? detectCategoryFurniture(name, description, productTags, dimensions);
+        if (furnitureSleepSurfaceIndicatesBedroom(name, description, productTags)) resolved = "Bedroom";
+        categoryForMetafield = mapFurnitureCategoryForShopify(resolved);
+      }
     } else {
       if (soldNow) categoryForMetafield = "Recently Sold";
       else {
-        if (isShoeProduct(name, description)) categoryForMetafield = "Other ";
-        else categoryForMetafield = detectLuxuryCategoryFromTitle(name, description, product) ?? "Other ";
-        if (isJewelryProduct(name, description, product) && !isBagOrAgendaProduct(name, description)) categoryForMetafield = "Jewelry";
-        else if (isAccessoryProduct(name, description) && !isBagOrAgendaProduct(name, description)) categoryForMetafield = "Accessories";
-        if (isBeltProduct(name, description)) categoryForMetafield = "Belts";
-        if (categoryForMetafield === "Accessories" && isBagOrAgendaProduct(name, description)) categoryForMetafield = detectLuxuryCategoryFromTitle(name, description, product) ?? "Other ";
+        if (luxuryEcommerceOverride) {
+          categoryForMetafield = luxuryEcommerceOverride.category;
+          webflowLog("info", {
+            event: "luxury_category.override_tag",
+            shopifyProductId,
+            letter: luxuryEcommerceOverride.letter,
+            resolved: categoryForMetafield,
+          });
+        } else {
+          if (isShoeProduct(name, description)) categoryForMetafield = "Other ";
+          else categoryForMetafield = detectLuxuryCategoryFromTitle(name, description, product) ?? "Other ";
+          if (isJewelryProduct(name, description, product) && !isBagOrAgendaProduct(name, description)) categoryForMetafield = "Jewelry";
+          else if (isAccessoryProduct(name, description) && !isBagOrAgendaProduct(name, description)) categoryForMetafield = "Accessories";
+          if (isBeltProduct(name, description)) categoryForMetafield = "Belts";
+          if (categoryForMetafield === "Accessories" && isBagOrAgendaProduct(name, description)) categoryForMetafield = detectLuxuryCategoryFromTitle(name, description, product) ?? "Other ";
+        }
       }
     }
   } else if (vertical === "furniture") {
-    const evidence = detectCategoryFurnitureEvidence(name, description, getProductTagsArray(product), dimensions);
-    let resolved = evidence.category;
-    if (evidence.confidence < categoryConfidenceThreshold) {
-      const llmPayload = {};
-      const llmCategory = await classifyCategoryWithLLM(product, "furniture", llmPayload, webflowLog);
-      if (llmCategory?.category) resolved = llmCategory.category;
+    if (furnitureEcommerceOverride) {
+      categoryForMetafield = furnitureEcommerceOverride.category;
       webflowLog("info", {
-        event: "furniture_category.subcategory",
+        event: "furniture_category.override_tag",
         shopifyProductId,
-        evidenceConfidence: evidence.confidence,
-        evidenceReason: evidence.reason,
-        threshold: categoryConfidenceThreshold,
-        bestScore: evidence.bestScore,
-        secondBest: evidence.secondBest,
-        usedLlm: true,
-        resolved,
+        letter: furnitureEcommerceOverride.letter,
+        resolved: categoryForMetafield,
       });
     } else {
-      webflowLog("info", {
-        event: "furniture_category.subcategory",
-        shopifyProductId,
-        evidenceConfidence: evidence.confidence,
-        evidenceReason: evidence.reason,
-        threshold: categoryConfidenceThreshold,
-        bestScore: evidence.bestScore,
-        secondBest: evidence.secondBest,
-        usedLlm: false,
-        resolved,
-      });
+      const evidence = detectCategoryFurnitureEvidence(name, description, productTags, dimensions);
+      let resolved = evidence.category;
+      if (evidence.confidence < categoryConfidenceThreshold) {
+        const llmPayload = {};
+        const llmCategory = await classifyCategoryWithLLM(product, "furniture", llmPayload, webflowLog);
+        if (llmCategory?.category) resolved = llmCategory.category;
+        webflowLog("info", {
+          event: "furniture_category.subcategory",
+          shopifyProductId,
+          evidenceConfidence: evidence.confidence,
+          evidenceReason: evidence.reason,
+          threshold: categoryConfidenceThreshold,
+          bestScore: evidence.bestScore,
+          secondBest: evidence.secondBest,
+          usedLlm: true,
+          resolved,
+        });
+      } else {
+        webflowLog("info", {
+          event: "furniture_category.subcategory",
+          shopifyProductId,
+          evidenceConfidence: evidence.confidence,
+          evidenceReason: evidence.reason,
+          threshold: categoryConfidenceThreshold,
+          bestScore: evidence.bestScore,
+          secondBest: evidence.secondBest,
+          usedLlm: false,
+          resolved,
+        });
+      }
+      if (furnitureSleepSurfaceIndicatesBedroom(name, description, productTags)) resolved = "Bedroom";
+      categoryForMetafield = mapFurnitureCategoryForShopify(resolved);
     }
-    if (furnitureSleepSurfaceIndicatesBedroom(name, description, getProductTagsArray(product))) resolved = "Bedroom";
-    categoryForMetafield = mapFurnitureCategoryForShopify(resolved);
   } else {
     if (soldNow) {
       categoryForMetafield = "Recently Sold";
     } else {
-      const luxuryEvidence = detectLuxuryCategoryEvidence(name, description, product);
-      let resolvedLux = luxuryEvidence.category;
-      const needLuxuryLlm =
-        luxuryEvidence.confidence < categoryConfidenceThreshold || luxuryEvidence.category == null;
-
-      if (needLuxuryLlm) {
-        const llmPayload = {};
-        const llmCategory = await classifyCategoryWithLLM(product, "luxury", llmPayload, webflowLog);
-        if (llmCategory?.category) {
-          resolvedLux = llmCategory.category;
-        } else if (!resolvedLux) {
-          if (isShoeProduct(name, description)) resolvedLux = "Other ";
-          else resolvedLux = detectLuxuryCategoryFromTitle(name, description, product) ?? "Other ";
-        }
+      if (luxuryEcommerceOverride) {
+        categoryForMetafield = luxuryEcommerceOverride.category;
         webflowLog("info", {
-          event: "luxury_category.subcategory",
+          event: "luxury_category.override_tag",
           shopifyProductId,
-          evidenceConfidence: luxuryEvidence.confidence,
-          evidenceReason: luxuryEvidence.reason,
-          threshold: categoryConfidenceThreshold,
-          usedLlm: true,
-          resolved: resolvedLux,
+          letter: luxuryEcommerceOverride.letter,
+          resolved: categoryForMetafield,
         });
       } else {
-        webflowLog("info", {
-          event: "luxury_category.subcategory",
-          shopifyProductId,
-          evidenceConfidence: luxuryEvidence.confidence,
-          evidenceReason: luxuryEvidence.reason,
-          threshold: categoryConfidenceThreshold,
-          usedLlm: false,
-          resolved: resolvedLux,
-        });
-      }
+        const luxuryEvidence = detectLuxuryCategoryEvidence(name, description, product);
+        let resolvedLux = luxuryEvidence.category;
+        const needLuxuryLlm =
+          luxuryEvidence.confidence < categoryConfidenceThreshold || luxuryEvidence.category == null;
 
-      categoryForMetafield = mapCategoryForShopify(resolvedLux);
-      if (isJewelryProduct(name, description, product) && !isBagOrAgendaProduct(name, description)) categoryForMetafield = "Jewelry";
-      else if (isAccessoryProduct(name, description) && !isBagOrAgendaProduct(name, description)) categoryForMetafield = "Accessories";
-      if (isBeltProduct(name, description)) categoryForMetafield = "Belts";
-      if (categoryForMetafield === "Accessories" && isBagOrAgendaProduct(name, description)) {
-        const fromTitle = detectLuxuryCategoryFromTitle(name, description, product);
-        categoryForMetafield = fromTitle ?? "Other ";
+        if (needLuxuryLlm) {
+          const llmPayload = {};
+          const llmCategory = await classifyCategoryWithLLM(product, "luxury", llmPayload, webflowLog);
+          if (llmCategory?.category) {
+            resolvedLux = llmCategory.category;
+          } else if (!resolvedLux) {
+            if (isShoeProduct(name, description)) resolvedLux = "Other ";
+            else resolvedLux = detectLuxuryCategoryFromTitle(name, description, product) ?? "Other ";
+          }
+          webflowLog("info", {
+            event: "luxury_category.subcategory",
+            shopifyProductId,
+            evidenceConfidence: luxuryEvidence.confidence,
+            evidenceReason: luxuryEvidence.reason,
+            threshold: categoryConfidenceThreshold,
+            usedLlm: true,
+            resolved: resolvedLux,
+          });
+        } else {
+          webflowLog("info", {
+            event: "luxury_category.subcategory",
+            shopifyProductId,
+            evidenceConfidence: luxuryEvidence.confidence,
+            evidenceReason: luxuryEvidence.reason,
+            threshold: categoryConfidenceThreshold,
+            usedLlm: false,
+            resolved: resolvedLux,
+          });
+        }
+
+        categoryForMetafield = mapCategoryForShopify(resolvedLux);
+        if (isJewelryProduct(name, description, product) && !isBagOrAgendaProduct(name, description)) categoryForMetafield = "Jewelry";
+        else if (isAccessoryProduct(name, description) && !isBagOrAgendaProduct(name, description)) categoryForMetafield = "Accessories";
+        if (isBeltProduct(name, description)) categoryForMetafield = "Belts";
+        if (categoryForMetafield === "Accessories" && isBagOrAgendaProduct(name, description)) {
+          const fromTitle = detectLuxuryCategoryFromTitle(name, description, product);
+          categoryForMetafield = fromTitle ?? "Other ";
+        }
       }
     }
   }
