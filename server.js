@@ -8662,6 +8662,102 @@ app.post("/sync-all", async (req, res) => {
   }
 });
 
+app.post("/sync-by-ids", async (req, res) => {
+  syncRequestId = crypto.randomUUID().slice(0, 8);
+  syncStartTime = Date.now();
+  const rawIds = req.body?.shopifyProductIds ?? req.body?.ids ?? [];
+  const ids = Array.isArray(rawIds) ? rawIds.map((id) => String(id).trim()).filter(Boolean) : [];
+  if (!ids.length) {
+    return res.status(400).json({ error: "shopifyProductIds (array) is required" });
+  }
+  const forceReclassify = req.body?.forceReclassify !== false;
+  webflowLog("info", { event: "sync-by-ids.entry", count: ids.length, forceReclassify });
+  try {
+    await loadFurnitureCategoryMap();
+    luxuryItemIndex = null;
+    furnitureProductIndex = null;
+    furnitureSkuIndex = null;
+    await Promise.all([
+      loadLuxuryItemIndex(),
+      loadFurnitureProductIndex(),
+      loadFurnitureSkuIndex(),
+    ]);
+    const cache = loadCache();
+    const duplicateEmailSentFor = new Set();
+    const shopifyWriteEmailSentFor = new Set();
+    let created = 0,
+      updated = 0,
+      skipped = 0,
+      failed = 0;
+    const results = [];
+
+    for (const shopifyProductId of ids) {
+      try {
+        const product = await fetchShopifyProductById(shopifyProductId);
+        if (!product) {
+          failed++;
+          results.push({ shopifyProductId, error: "shopify_product_not_found" });
+          continue;
+        }
+        const result = await syncSingleProduct(product, cache, {
+          duplicateEmailSentFor,
+          shopifyWriteEmailSentFor,
+          forceReclassify,
+        });
+        const op = result?.operation ?? "unknown";
+        if (op === "create") created++;
+        else if (op === "update" || op === "sold") updated++;
+        else skipped++;
+        results.push({
+          shopifyProductId,
+          title: product.title || "",
+          operation: op,
+          webflowId: result?.id ?? null,
+        });
+      } catch (err) {
+        failed++;
+        results.push({ shopifyProductId, error: err.message || String(err) });
+        webflowLog("error", {
+          event: "sync-by-ids.product_failed",
+          shopifyProductId,
+          message: err.message,
+        });
+      }
+    }
+
+    saveCache(cache);
+    const durationMs = syncStartTime != null ? Date.now() - syncStartTime : null;
+    webflowLog("info", {
+      event: "sync-by-ids.exit",
+      count: ids.length,
+      created,
+      updated,
+      skipped,
+      failed,
+      durationMs,
+    });
+    res.json({
+      status: "ok",
+      requested: ids.length,
+      created,
+      updated,
+      skipped,
+      failed,
+      durationMs,
+      results,
+    });
+  } catch (err) {
+    webflowLog("error", { event: "sync-by-ids.error", message: err.message });
+    res.status(500).json({ error: err.message });
+  } finally {
+    syncRequestId = null;
+    luxuryItemIndex = null;
+    furnitureProductIndex = null;
+    furnitureSkuIndex = null;
+    syncStartTime = null;
+  }
+});
+
 /* ======================================================
    SERVER
 ====================================================== */
