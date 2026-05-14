@@ -2809,6 +2809,7 @@ const LUXURY_WEARABLE_CUES = [
   "shoulder bag", "satchel", "luggage", "duffle", "duffel", "briefcase",
   "bangle", "bangles", "bracelet", "bracelets",
   "necklace", "necklaces", "earring", "earrings", "brooch", "brooches",
+  "watch", "watches", "wristwatch", "wristwatches", "timepiece", "timepieces",
 ];
 const ART_CUES_STRONG = [
   "signed art", "wall art", "framed art", "painting", "paintings", "lithograph", "giclee",
@@ -2840,6 +2841,9 @@ function textHasAnyWordCue(text, cues) {
 function resolveVerticalFromEvidence(product, llmDetectedVertical) {
   if (productLooksLikeBookFilmOrMedia(product)) {
     return { vertical: "furniture", reason: "evidence_book_film_media" };
+  }
+  if (productLooksLikeWristwatchLuxury(product)) {
+    return { vertical: "luxury", reason: "evidence_wristwatch" };
   }
   if (productLooksLikeLightingFixture(product) && !verticalHardSignalAmbiguity(product)) {
     return { vertical: "furniture", reason: "evidence_lighting_fixture" };
@@ -3024,7 +3028,32 @@ const ACCESSORY_KEYWORDS = [
   "attache purse hook", "attache hook",
   "barrette", "barrettes", "hair accessory", "hair accessories",
   "glove", "gloves",
+  "watch", "watches", "wristwatch", "wristwatches", "timepiece", "timepieces",
 ];
+
+const WRISTWATCH_FURNITURE_PHRASES = [
+  "watch box", "watch boxes", "watch case", "watch cases", "watch winder", "watch winders",
+  "watch stand", "watch stands", "watch holder", "watch holders", "watch display",
+  "watch storage", "watch organizer", "watch chest", "watch tray", "watch trays",
+  "wall clock", "wall clocks", "mantel clock", "mantle clock", "grandfather clock",
+];
+
+/** Wearable wristwatch/timepiece — Luxury + Accessories (not furniture; not jewelry; not Other). */
+function isWristwatchProduct(title, descriptionHtml, product = null) {
+  const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const tagsStr = product ? getProductTagsArray(product).join(" ") : "";
+  const text = [(title || "").trim(), stripHtml(descriptionHtml || ""), tagsStr].filter(Boolean).join(" ").toLowerCase();
+  if (!text) return false;
+  if (WRISTWATCH_FURNITURE_PHRASES.some((phrase) => text.includes(phrase))) return false;
+  return ["watch", "watches", "wristwatch", "wristwatches", "timepiece", "timepieces"].some((kw) =>
+    matchWordBoundary(text, kw)
+  );
+}
+
+function productLooksLikeWristwatchLuxury(product) {
+  if (!product) return false;
+  return isWristwatchProduct(product.title || "", product.body_html || "", product);
+}
 
 /** Belt terms — title + description: force Belts (chain belt, belt accessory, etc.). */
 const BELT_KEYWORDS = [
@@ -3070,6 +3099,7 @@ function textSuggestsFurnitureRingHardware(text) {
 
 /** True if title or description indicate jewelry — force Jewelry. */
 function isJewelryProduct(title, descriptionHtml, product = null) {
+  if (isWristwatchProduct(title, descriptionHtml, product)) return false;
   const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
   const desc = stripHtml(descriptionHtml || "").trim();
   const text = [(title || "").trim(), desc].filter(Boolean).join(" ").toLowerCase();
@@ -3106,6 +3136,10 @@ function detectLuxuryCategoryEvidence(title, descriptionHtml, product = null) {
   const descText = stripHtml(descriptionHtml || "").trim().toLowerCase();
   const combined = [titleText, descText].filter(Boolean).join(" ");
   if (!combined) return { category: null, confidence: 0, reason: "empty" };
+
+  if (isWristwatchProduct(title, descriptionHtml, product)) {
+    return { category: "Accessories", confidence: 1, reason: "wristwatch" };
+  }
 
   if (textSuggestsFurnitureRingHardware(combined)) return { category: null, confidence: 0, reason: "furniture_ring_pull" };
 
@@ -4904,7 +4938,11 @@ async function syncSingleProductCore(product, cache, options = {}) {
     ];
     const titleLooksFurniture = furnitureTitleHints.some((w) => title.includes(w));
     const soldVertical =
-      pt.includes("furniture") || pt.includes("home") || titleLooksFurniture ? "furniture" : "luxury";
+      productLooksLikeWristwatchLuxury(product)
+        ? "luxury"
+        : pt.includes("furniture") || pt.includes("home") || titleLooksFurniture
+          ? "furniture"
+          : "luxury";
     recoveredFromWebflow = { vertical: soldVertical, soldNoLlm: true };
     webflowLog("info", {
       event: "sync_product.skip_llm_sold",
@@ -4921,6 +4959,10 @@ async function syncSingleProductCore(product, cache, options = {}) {
     const llmDetectedVertical = llmResult.category === "LUXURY" ? "luxury" : "furniture";
     const evidenceVertical = resolveVerticalFromEvidence(product, llmDetectedVertical);
     detectedVertical = evidenceVertical.vertical;
+    // Hard guard: wristwatches/timepieces are always Luxury (never furniture bedroom/other).
+    if (productLooksLikeWristwatchLuxury(product)) {
+      detectedVertical = "luxury";
+    }
     // Hard guard: jewelry cues must always live under Luxury Goods in Shopify/Webflow (never overrides books/media, boxes, or lamps).
     if (
       !productLooksLikeBookFilmOrMedia(product) &&
@@ -4938,6 +4980,19 @@ async function syncSingleProductCore(product, cache, options = {}) {
         ? "furniture"
         : (cacheEntry?.vertical ?? detectedVertical);
     verticalCorrected = correctedToLuxury;
+    if (productLooksLikeWristwatchLuxury(product)) {
+      if (vertical !== "luxury") {
+        verticalCorrected = cacheEntry?.vertical === "furniture";
+        webflowLog("info", {
+          event: "vertical.override_wristwatch_cache",
+          shopifyProductId,
+          cacheVertical: cacheEntry?.vertical ?? null,
+          previousVertical: vertical,
+        });
+      }
+      vertical = "luxury";
+      detectedVertical = "luxury";
+    }
     webflowLog("info", {
     event: "vertical.resolved",
     shopifyProductId,
@@ -5122,6 +5177,21 @@ async function syncSingleProductCore(product, cache, options = {}) {
         message: "Recovered vertical was overridden by evidence guard",
       });
     }
+    if (productLooksLikeWristwatchLuxury(product)) {
+      vertical = "luxury";
+      detectedVertical = "luxury";
+    }
+  }
+
+  if (productLooksLikeWristwatchLuxury(product) && vertical !== "luxury") {
+    webflowLog("info", {
+      event: "vertical.override_wristwatch_final",
+      shopifyProductId,
+      productTitle: product.title || "",
+      previousVertical: vertical,
+    });
+    vertical = "luxury";
+    detectedVertical = "luxury";
   }
 
   const config = getWebflowConfig(vertical);
@@ -5164,7 +5234,14 @@ async function syncSingleProductCore(product, cache, options = {}) {
   if (recoveredFromWebflow) {
     // Cache-missing path: no LLM; use keyword-only category.
     if (vertical === "furniture") {
-      if (furnitureEcommerceOverride) {
+      if (isWristwatchProduct(name, description, product)) {
+        categoryForMetafield = "Accessories";
+        webflowLog("warn", {
+          event: "furniture_category.blocked_wristwatch",
+          shopifyProductId,
+          message: "Wristwatch must not use furniture category; forcing Accessories",
+        });
+      } else if (furnitureEcommerceOverride) {
         categoryForMetafield = furnitureEcommerceOverride.category;
         webflowLog("info", {
           event: "furniture_category.override_tag",
@@ -5180,7 +5257,14 @@ async function syncSingleProductCore(product, cache, options = {}) {
       }
     } else {
       if (soldNow) categoryForMetafield = "Recently Sold";
-      else {
+      else if (isWristwatchProduct(name, description, product)) {
+        categoryForMetafield = "Accessories";
+        webflowLog("info", {
+          event: "luxury_category.override_wristwatch",
+          shopifyProductId,
+          resolved: categoryForMetafield,
+        });
+      } else {
         if (luxuryEcommerceOverride) {
           categoryForMetafield = luxuryEcommerceOverride.category;
           webflowLog("info", {
@@ -5200,7 +5284,14 @@ async function syncSingleProductCore(product, cache, options = {}) {
       }
     }
   } else if (vertical === "furniture") {
-    if (furnitureEcommerceOverride) {
+    if (isWristwatchProduct(name, description, product)) {
+      categoryForMetafield = "Accessories";
+      webflowLog("warn", {
+        event: "furniture_category.blocked_wristwatch",
+        shopifyProductId,
+        message: "Wristwatch must not use furniture category; forcing Accessories",
+      });
+    } else if (furnitureEcommerceOverride) {
       categoryForMetafield = furnitureEcommerceOverride.category;
       webflowLog("info", {
         event: "furniture_category.override_tag",
@@ -5245,6 +5336,13 @@ async function syncSingleProductCore(product, cache, options = {}) {
   } else {
     if (soldNow) {
       categoryForMetafield = "Recently Sold";
+    } else if (isWristwatchProduct(name, description, product)) {
+      categoryForMetafield = "Accessories";
+      webflowLog("info", {
+        event: "luxury_category.override_wristwatch",
+        shopifyProductId,
+        resolved: categoryForMetafield,
+      });
     } else {
       if (luxuryEcommerceOverride) {
         categoryForMetafield = luxuryEcommerceOverride.category;
@@ -5300,6 +5398,9 @@ async function syncSingleProductCore(product, cache, options = {}) {
         }
       }
     }
+  }
+  if (isWristwatchProduct(name, description, product)) {
+    categoryForMetafield = "Accessories";
   }
   const shopifyDepartment = department;
   const shopifyCategoryValue = categoryForMetafield;

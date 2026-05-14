@@ -17,6 +17,7 @@ const FURNITURE_TRAP_PHRASES = [
   "shoe rack", "shoe shelf", "shoe cabinet", "shoe organizer", "shoe storage",
   "jewelry box", "jewelry armoire", "jewelry cabinet", "jewelry display", "jewelry organizer",
   "jewelry stand", "jewelry holder", "jewelry tray", "jewelry chest", "jewelry case",
+  "watch box", "watch boxes", "watch stand", "watch winder", "watch display",
 ];
 
 const FURNITURE_SIGNALS = [
@@ -133,6 +134,7 @@ const SHOE_JEWELRY_TITLE_WORDS = [
   "sandal", "sandals", "loafer", "loafers", "pump", "pumps", "mule", "mules", "slide", "slides", "flat", "flats",
   "jewelry", "jewellery", "jewel", "earring", "earrings", "bracelet", "bracelets",
   "necklace", "necklaces", "ring", "rings", "pendant", "pendants", "brooch", "barrette", "barrettes",
+  "watch", "watches", "wristwatch", "wristwatches", "timepiece", "timepieces",
 ];
 
 /** Description phrases that mean "this product is a furniture item" (e.g. jewelry box, shoe rack). */
@@ -157,6 +159,7 @@ const TITLE_LUXURY_WORDS = [
   "purse", "purses", "card holder", "key pouch", "woc", "wallet on chain",
   "ballet flats", "flats", "heels", "pumps", "sneakers", "loafers", "boots", "sandals", "mules", "slides", "shoes",
   "jewelry", "earring", "earrings", "bracelet", "bracelets", "necklace", "necklaces", "pouch", "barrette", "barrettes",
+  "watch", "watches", "wristwatch", "wristwatches", "timepiece", "timepieces",
 ];
 
 /** Substring signals for luxury — avoid phrases that are furniture (e.g. luggage rack). */

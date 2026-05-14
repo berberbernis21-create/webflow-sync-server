@@ -85,6 +85,7 @@ export const CATEGORY_KEYWORDS = {
     "dust bag", "sunglasses case", "eyeglass case", "phone case",
     "barrette", "barrettes", "hair accessory", "hair accessories",
     "glove", "gloves",
+    "watch", "watches", "wristwatch", "wristwatches", "timepiece", "timepieces",
     "designer accessories"
   ]
 };
