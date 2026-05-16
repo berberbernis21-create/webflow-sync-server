@@ -20,6 +20,7 @@ const FURNITURE_TRAP_PHRASES = [
   "watch box", "watch boxes", "watch stand", "watch winder", "watch display",
   "curio cabinet", "curio cabinets", "china cabinet", "china hutch", "display cabinet",
   "wall clock", "wall clocks", "mantel clock", "mantle clock", "grandfather clock",
+  "wood doll", "wooden doll", "vintage doll", "nesting doll", "matryoshka", "dollhouse",
 ];
 
 const FURNITURE_SIGNALS = [

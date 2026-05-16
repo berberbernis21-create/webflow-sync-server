@@ -2848,6 +2848,9 @@ function resolveVerticalFromEvidence(product, llmDetectedVertical) {
   if (productLooksLikeFurnitureCurio(product)) {
     return { vertical: "furniture", reason: "evidence_curio_cabinet" };
   }
+  if (productLooksLikeFurnitureDoll(product)) {
+    return { vertical: "furniture", reason: "evidence_doll" };
+  }
   if (productLooksLikeWristwatchLuxury(product)) {
     return { vertical: "luxury", reason: "evidence_wristwatch" };
   }
@@ -3056,6 +3059,12 @@ const FURNITURE_CURIO_PHRASES = [
   "collectors cabinet", "vitrine", "hutch",
 ];
 
+const FURNITURE_DOLL_PHRASES = [
+  "wood doll", "wooden doll", "vintage doll", "collectible doll", "collector doll",
+  "nesting doll", "nesting dolls", "matryoshka", "matryoshkas", "babushka doll",
+  "russian doll", "porcelain doll", "dollhouse", "doll house",
+];
+
 /** Wearable wristwatch/timepiece — Luxury + Accessories (not furniture; not jewelry; not Other). */
 function isWristwatchProduct(title, descriptionHtml, product = null) {
   const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
@@ -3105,6 +3114,15 @@ function productLooksLikeFurnitureCurio(product) {
   return FURNITURE_CURIO_PHRASES.some(
     (phrase) => text.includes(phrase) || matchWordBoundary(text, phrase)
   );
+}
+
+/** Decorative/collectible dolls — always Furniture (never Luxury wearables). */
+function productLooksLikeFurnitureDoll(product) {
+  if (!product) return false;
+  const text = productClassificationText(product);
+  if (!text) return false;
+  if (FURNITURE_DOLL_PHRASES.some((phrase) => text.includes(phrase))) return true;
+  return matchWordBoundary(text, "doll") || matchWordBoundary(text, "dolls");
 }
 
 /** Belt terms — title + description: force Belts (chain belt, belt accessory, etc.). */
@@ -5246,7 +5264,9 @@ async function syncSingleProductCore(product, cache, options = {}) {
     detectedVertical = "luxury";
   }
   if (
-    (productLooksLikeHomeClock(product) || productLooksLikeFurnitureCurio(product)) &&
+    (productLooksLikeHomeClock(product) ||
+      productLooksLikeFurnitureCurio(product) ||
+      productLooksLikeFurnitureDoll(product)) &&
     vertical !== "furniture"
   ) {
     webflowLog("info", {
@@ -5256,6 +5276,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
       previousVertical: vertical,
       homeClock: productLooksLikeHomeClock(product),
       curio: productLooksLikeFurnitureCurio(product),
+      doll: productLooksLikeFurnitureDoll(product),
     });
     vertical = "furniture";
     detectedVertical = "furniture";
