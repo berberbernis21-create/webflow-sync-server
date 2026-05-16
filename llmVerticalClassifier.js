@@ -484,6 +484,11 @@ const CASE_GOODS_SUBSTRINGS = [
   "triple dresser",
   "highboy",
   "lowboy",
+  "curio cabinet",
+  "curio cabinets",
+  "china cabinet",
+  "china hutch",
+  "display cabinet",
 ];
 
 /**

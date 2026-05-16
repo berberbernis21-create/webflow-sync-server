@@ -18,6 +18,8 @@ const FURNITURE_TRAP_PHRASES = [
   "jewelry box", "jewelry armoire", "jewelry cabinet", "jewelry display", "jewelry organizer",
   "jewelry stand", "jewelry holder", "jewelry tray", "jewelry chest", "jewelry case",
   "watch box", "watch boxes", "watch stand", "watch winder", "watch display",
+  "curio cabinet", "curio cabinets", "china cabinet", "china hutch", "display cabinet",
+  "wall clock", "wall clocks", "mantel clock", "mantle clock", "grandfather clock",
 ];
 
 const FURNITURE_SIGNALS = [

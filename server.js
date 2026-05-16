@@ -2842,6 +2842,12 @@ function resolveVerticalFromEvidence(product, llmDetectedVertical) {
   if (productLooksLikeBookFilmOrMedia(product)) {
     return { vertical: "furniture", reason: "evidence_book_film_media" };
   }
+  if (productLooksLikeHomeClock(product)) {
+    return { vertical: "furniture", reason: "evidence_home_clock" };
+  }
+  if (productLooksLikeFurnitureCurio(product)) {
+    return { vertical: "furniture", reason: "evidence_curio_cabinet" };
+  }
   if (productLooksLikeWristwatchLuxury(product)) {
     return { vertical: "luxury", reason: "evidence_wristwatch" };
   }
@@ -3031,11 +3037,23 @@ const ACCESSORY_KEYWORDS = [
   "watch", "watches", "wristwatch", "wristwatches", "timepiece", "timepieces",
 ];
 
+const HOME_CLOCK_PHRASES = [
+  "wall clock", "wall clocks", "mantel clock", "mantle clock", "grandfather clock",
+  "grandmother clock", "desk clock", "table clock", "alarm clock", "floor clock",
+  "cuckoo clock", "regulator clock", "pendulum clock",
+];
+
 const WRISTWATCH_FURNITURE_PHRASES = [
   "watch box", "watch boxes", "watch case", "watch cases", "watch winder", "watch winders",
   "watch stand", "watch stands", "watch holder", "watch holders", "watch display",
   "watch storage", "watch organizer", "watch chest", "watch tray", "watch trays",
-  "wall clock", "wall clocks", "mantel clock", "mantle clock", "grandfather clock",
+  ...HOME_CLOCK_PHRASES,
+];
+
+const FURNITURE_CURIO_PHRASES = [
+  "curio cabinet", "curio cabinets", "curio", "china cabinet", "china cabinets",
+  "china hutch", "display cabinet", "display cabinets", "collector cabinet",
+  "collectors cabinet", "vitrine", "hutch",
 ];
 
 /** Wearable wristwatch/timepiece — Luxury + Accessories (not furniture; not jewelry; not Other). */
@@ -3053,6 +3071,40 @@ function isWristwatchProduct(title, descriptionHtml, product = null) {
 function productLooksLikeWristwatchLuxury(product) {
   if (!product) return false;
   return isWristwatchProduct(product.title || "", product.body_html || "", product);
+}
+
+function productClassificationText(product) {
+  const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const tagsStr = product ? getProductTagsArray(product).join(" ") : "";
+  return [
+    (product?.title || "").trim(),
+    stripHtml(product?.body_html || ""),
+    (product?.product_type || "").trim(),
+    tagsStr,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+/** Home decor clocks (wall/mantel/desk/etc.) — always Furniture, never Luxury wristwear. */
+function productLooksLikeHomeClock(product) {
+  if (!product) return false;
+  const text = productClassificationText(product);
+  if (!text) return false;
+  if (HOME_CLOCK_PHRASES.some((phrase) => text.includes(phrase))) return true;
+  if (isWristwatchProduct(product.title || "", product.body_html || "", product)) return false;
+  return matchWordBoundary(text, "clock") || matchWordBoundary(text, "clocks");
+}
+
+/** Curio / china / display cabinets — always Furniture (never Luxury). */
+function productLooksLikeFurnitureCurio(product) {
+  if (!product) return false;
+  const text = productClassificationText(product);
+  if (!text) return false;
+  return FURNITURE_CURIO_PHRASES.some(
+    (phrase) => text.includes(phrase) || matchWordBoundary(text, phrase)
+  );
 }
 
 /** Belt terms — title + description: force Belts (chain belt, belt accessory, etc.). */
@@ -5192,6 +5244,21 @@ async function syncSingleProductCore(product, cache, options = {}) {
     });
     vertical = "luxury";
     detectedVertical = "luxury";
+  }
+  if (
+    (productLooksLikeHomeClock(product) || productLooksLikeFurnitureCurio(product)) &&
+    vertical !== "furniture"
+  ) {
+    webflowLog("info", {
+      event: "vertical.override_furniture_home_goods_final",
+      shopifyProductId,
+      productTitle: product.title || "",
+      previousVertical: vertical,
+      homeClock: productLooksLikeHomeClock(product),
+      curio: productLooksLikeFurnitureCurio(product),
+    });
+    vertical = "furniture";
+    detectedVertical = "furniture";
   }
 
   const config = getWebflowConfig(vertical);
