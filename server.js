@@ -22,6 +22,7 @@ import {
   verticalHardSignalAmbiguity,
 } from "./llmVerticalClassifier.js";
 import { classifyCategoryWithLLM } from "./llmCategoryClassifier.js";
+import consignmentRouter from "./routes/consignmentSubmission.js";
 
 dotenv.config();
 
@@ -428,7 +429,24 @@ function getWebflowConfig(vertical) {
 }
 
 const app = express();
-app.use(cors());
+
+/** Webflow consignment form origins (also allows no-origin for webhooks / server-to-server). */
+const CONSIGNMENT_CORS_ORIGINS = [
+  "https://www.lostandfoundresale.com",
+  "https://lostandfoundresale.com",
+];
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin) return callback(null, true);
+      if (CONSIGNMENT_CORS_ORIGINS.includes(origin)) return callback(null, origin);
+      return callback(null, true);
+    },
+  })
+);
+
+app.use("/api", consignmentRouter);
 app.use(
   express.json({
     verify: (req, res, buf) => {
