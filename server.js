@@ -180,14 +180,14 @@ async function sendShopifyWriteFailureEmail(detail, perRunDedupeSet) {
     detail?.responseBody || "(none)",
     "",
     "This product continued through sync, but Shopify write did not complete.",
-    "— Lost & Found Webflow Sync",
+    "- Lost & Found Webflow Sync",
   ]
     .filter(Boolean)
     .join("\n");
 
   try {
     await sendInternalNotification({
-      subject: `[Backend / Webflow sync] Shopify write failed after retries — ${productId || "unknown product"}`,
+      subject: `[Backend / Webflow sync] Shopify write failed after retries - ${productId || "unknown product"}`,
       text: body,
     });
     if (perRunDedupeSet) perRunDedupeSet.add(dedupeKey);
@@ -777,14 +777,14 @@ async function sendMissingWeightAlertEmail(product, dimensions, verticalLabel) {
     "",
     "The product description will include: (Please validate weight if weight is ever missing.) until weight is set.",
     "",
-    "— Lost & Found Webflow Sync",
+    "- Lost & Found Webflow Sync",
   ]
     .filter(Boolean)
     .join("\n");
 
   try {
     await sendInternalNotification({
-      subject: `[Webflow Sync] Missing weight — ${title.slice(0, 60)}${title.length > 60 ? "…" : ""}`,
+      subject: `[Webflow Sync] Missing weight - ${title.slice(0, 60)}${title.length > 60 ? "…" : ""}`,
       text: body,
     });
     sent.add(shopifyProductId);
@@ -846,13 +846,13 @@ async function sendGoogleFeedDataIssueEmail({
     "",
     "Note: This alert sends once per product+issue and will re-alert only after a successful sync clears the issue state.",
     "",
-    "— Lost & Found Webflow Sync",
+    "- Lost & Found Webflow Sync",
   ]
     .filter(Boolean)
     .join("\n");
   try {
     await sendInternalNotification({
-      subject: `[Webflow Sync] Google guard: ${issue} — ${title.slice(0, 60)}${title.length > 60 ? "…" : ""}`,
+      subject: `[Webflow Sync] Google guard: ${issue} - ${title.slice(0, 60)}${title.length > 60 ? "…" : ""}`,
       text: body,
     });
     if (shopifyProductId) {
@@ -936,14 +936,14 @@ async function sendSkuImageImportFailureEmail({ siteId, productId, skuId, op, pr
     "The sync continued by saving price/text without main-image / more-images / download-files for this update so the product is not stuck.",
     "You can re-upload images in Webflow or fix the source URLs in Shopify and run sync again.",
     "",
-    "— Lost & Found Webflow Sync",
+    "- Lost & Found Webflow Sync",
   ]
     .filter(Boolean)
     .join("\n");
 
   try {
     await sendInternalNotification({
-      subject: `[Webflow Sync] SKU images failed after ${attempts} tries — ${(productTitle || productId || "product").toString().slice(0, 55)}`,
+      subject: `[Webflow Sync] SKU images failed after ${attempts} tries - ${(productTitle || productId || "product").toString().slice(0, 55)}`,
       text: body,
     });
     lastMap[key] = Date.now();
