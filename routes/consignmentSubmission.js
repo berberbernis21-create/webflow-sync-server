@@ -8,12 +8,18 @@ import {
   getPricingConfigStatus,
 } from "../lib/consignmentPricingAnalysis.js";
 import { generateConsignmentPdf } from "../lib/consignmentPdf.js";
+import { applyConsignmentCorsHeaders } from "../lib/consignmentCors.js";
 import {
   groupPhotosByItemNumber,
   validateConsignmentSubmission,
 } from "../lib/consignmentValidation.js";
 
 const router = express.Router();
+
+router.use((req, res, next) => {
+  applyConsignmentCorsHeaders(req, res);
+  next();
+});
 
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 const MAX_FILES = 30;
@@ -169,7 +175,8 @@ async function processConsignmentSubmission({ body, items, photoGroups, submitte
   });
 }
 
-router.options("/consignment-submission", (_req, res) => {
+router.options("/consignment-submission", (req, res) => {
+  applyConsignmentCorsHeaders(req, res);
   res.sendStatus(204);
 });
 
