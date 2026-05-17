@@ -2,7 +2,7 @@ import express from "express";
 import multer from "multer";
 import { isResendConfigured, sendInternalNotificationWithAttachments } from "../emailService.js";
 import { buildPdfFilename } from "../lib/consignmentFilenames.js";
-import { buildConsignmentEmail } from "../lib/consignmentEmail.js";
+import { buildConsignmentEmail, sendCustomerConfirmationEmail } from "../lib/consignmentEmail.js";
 import { generateConsignmentPdf } from "../lib/consignmentPdf.js";
 import {
   groupPhotosByItemNumber,
@@ -109,6 +109,15 @@ router.post(
         replyTo: String(body.customerEmail || "").trim() || undefined,
         attachments: emailPayload.attachments,
       });
+
+      try {
+        await sendCustomerConfirmationEmail(body, items, photoGroups, { submittedAt });
+      } catch (customerErr) {
+        console.error(
+          "[consignment] customer confirmation email failed:",
+          customerErr?.message || customerErr
+        );
+      }
 
       // Memory storage only — buffers released after response; no disk temp files
       return res.json({
