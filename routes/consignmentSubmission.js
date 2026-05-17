@@ -4,7 +4,7 @@ import { isResendConfigured, sendInternalNotificationWithAttachments } from "../
 import { buildPdfFilename } from "../lib/consignmentFilenames.js";
 import { buildConsignmentEmail, sendCustomerConfirmationEmail } from "../lib/consignmentEmail.js";
 import {
-  analyzeConsignmentItemsPricing,
+  analyzeConsignmentItemsPricingWithBudget,
   getPricingConfigStatus,
 } from "../lib/consignmentPricingAnalysis.js";
 import { generateConsignmentPdf } from "../lib/consignmentPdf.js";
@@ -47,6 +47,56 @@ function multerErrorMessage(err) {
   return "Invalid file upload.";
 }
 
+async function generateInternalPdfSafe({ body, items, photoGroups, submittedAt }) {
+  try {
+    return await generateConsignmentPdf({ body, items, photoGroups, submittedAt });
+  } catch (pdfErr) {
+    console.error(
+      "[consignment] internal PDF generation failed (continuing):",
+      pdfErr?.message || pdfErr
+    );
+    return null;
+  }
+}
+
+async function runPricingSafe({ items, photoGroups }) {
+  try {
+    const pricing = await analyzeConsignmentItemsPricingWithBudget({ items, photoGroups });
+    const pricingResults = pricing.results;
+    const pricingModelsUsed = pricing.modelsUsed || [];
+
+    if (pricing.skipped) {
+      console.warn("[consignment] pricing disabled via CONSIGNMENT_PRICING_ENABLED");
+    } else if (pricing.timedOut) {
+      console.warn("[consignment] pricing budget exceeded — internal email sent without full comps", {
+        itemCount: items.length,
+      });
+    } else if (!pricing.configured && !pricing.configStatus) {
+      console.warn("[consignment] pricing skipped — not fully configured", {
+        config: getPricingConfigStatus(),
+      });
+    } else if (pricingResults?.length) {
+      console.log("[consignment] pricing analysis complete", {
+        items: pricingResults.length,
+        models: pricingModelsUsed,
+        available: pricingResults.filter((r) => r.available).length,
+        timedOut: Boolean(pricing.timedOut),
+        reasons: pricingResults
+          .filter((r) => !r.available)
+          .map((r) => ({ item: r.itemNumber, reason: r.reason })),
+      });
+    }
+
+    return { pricingResults, pricingModelsUsed };
+  } catch (pricingErr) {
+    console.error(
+      "[consignment] pricing analysis failed (continuing):",
+      pricingErr?.message || pricingErr
+    );
+    return { pricingResults: null, pricingModelsUsed: [] };
+  }
+}
+
 /**
  * POST /api/consignment-submission
  * multipart/form-data from Webflow; photos grouped by item_N_photos field names.
@@ -76,7 +126,6 @@ router.post(
       const body = req.body || {};
       const files = req.files || [];
 
-      // Group uploads by item number from field names item_1_photos, item_2_photos, etc.
       const photoGroups = groupPhotosByItemNumber(files);
 
       const validation = validateConsignmentSubmission(body, photoGroups);
@@ -87,54 +136,53 @@ router.post(
       const items = validation.items;
       const submittedAt = formatSubmittedAt();
 
-      const pdfBuffer = await generateConsignmentPdf({ body, items, photoGroups, submittedAt });
+      const [pdfBuffer, { pricingResults }] = await Promise.all([
+        generateInternalPdfSafe({ body, items, photoGroups, submittedAt }),
+        runPricingSafe({ items, photoGroups }),
+      ]);
+
       const pdfFilename = buildPdfFilename(body.customerName);
 
-      let pricingResults = null;
-      let pricingModelsUsed = [];
+      let emailPayload;
       try {
-        const pricing = await analyzeConsignmentItemsPricing({ items, photoGroups });
-        pricingResults = pricing.results;
-        pricingModelsUsed = pricing.modelsUsed || [];
-        if (!pricing.configured) {
-          console.warn("[consignment] pricing skipped — not fully configured", {
-            config: pricing.configStatus || getPricingConfigStatus(),
-          });
-        } else if (pricingResults?.length) {
-          console.log("[consignment] pricing analysis complete", {
-            items: pricingResults.length,
-            models: pricingModelsUsed,
-            available: pricingResults.filter((r) => r.available).length,
-            reasons: pricingResults
-              .filter((r) => !r.available)
-              .map((r) => ({ item: r.itemNumber, reason: r.reason })),
-          });
-        }
-      } catch (pricingErr) {
+        emailPayload = buildConsignmentEmail({
+          body,
+          items,
+          photoGroups,
+          pdfBuffer,
+          pdfFilename,
+          submittedAt,
+          pricingResults,
+        });
+      } catch (emailBuildErr) {
         console.error(
-          "[consignment] pricing analysis failed (continuing):",
-          pricingErr?.message || pricingErr
+          "[consignment] internal email build failed:",
+          emailBuildErr?.message || emailBuildErr
         );
+        return res.status(500).json({
+          success: false,
+          error: "Submission failed. Please try again.",
+        });
       }
 
-      // Email: summary + per-item sections; inline CID photos + renamed attachments
-      const emailPayload = buildConsignmentEmail({
-        body,
-        items,
-        photoGroups,
-        pdfBuffer,
-        pdfFilename,
-        submittedAt,
-        pricingResults,
-      });
-
-      await sendInternalNotificationWithAttachments({
-        subject: emailPayload.subject,
-        html: emailPayload.html,
-        text: emailPayload.text,
-        replyTo: String(body.customerEmail || "").trim() || undefined,
-        attachments: emailPayload.attachments,
-      });
+      try {
+        await sendInternalNotificationWithAttachments({
+          subject: emailPayload.subject,
+          html: emailPayload.html,
+          text: emailPayload.text,
+          replyTo: String(body.customerEmail || "").trim() || undefined,
+          attachments: emailPayload.attachments,
+        });
+      } catch (internalEmailErr) {
+        console.error(
+          "[consignment] internal notification email failed:",
+          internalEmailErr?.message || internalEmailErr
+        );
+        return res.status(500).json({
+          success: false,
+          error: "Submission failed. Please try again.",
+        });
+      }
 
       try {
         await sendCustomerConfirmationEmail(body, items, photoGroups, { submittedAt });
@@ -145,7 +193,6 @@ router.post(
         );
       }
 
-      // Memory storage only — buffers released after response; no disk temp files
       return res.json({
         success: true,
         message: "Submission received successfully.",

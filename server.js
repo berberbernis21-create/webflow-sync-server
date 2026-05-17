@@ -22,6 +22,10 @@ import {
   verticalHardSignalAmbiguity,
 } from "./llmVerticalClassifier.js";
 import { classifyCategoryWithLLM } from "./llmCategoryClassifier.js";
+import {
+  createConsignmentCorsMiddleware,
+  isAllowedConsignmentOrigin,
+} from "./lib/consignmentCors.js";
 import consignmentRouter from "./routes/consignmentSubmission.js";
 
 dotenv.config();
@@ -430,21 +434,7 @@ function getWebflowConfig(vertical) {
 
 const app = express();
 
-/** Webflow consignment form origins (also allows no-origin for webhooks / server-to-server). */
-const CONSIGNMENT_CORS_ORIGINS = [
-  "https://www.lostandfoundresale.com",
-  "https://lostandfoundresale.com",
-];
-
-app.use(
-  cors({
-    origin(origin, callback) {
-      if (!origin) return callback(null, true);
-      if (CONSIGNMENT_CORS_ORIGINS.includes(origin)) return callback(null, origin);
-      return callback(null, true);
-    },
-  })
-);
+app.use(createConsignmentCorsMiddleware());
 
 app.use("/api", consignmentRouter);
 app.use(
@@ -8833,6 +8823,17 @@ app.post("/sync-by-ids", async (req, res) => {
 /* ======================================================
    SERVER
 ====================================================== */
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  const origin = req.headers.origin;
+  if (origin && isAllowedConsignmentOrigin(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+    res.setHeader("Vary", "Origin");
+  }
+  console.error("[server] unhandled error:", err?.message || err);
+  res.status(500).json({ success: false, error: "Server error. Please try again." });
+});
+
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`🔥 Sync server running on ${PORT}`);
