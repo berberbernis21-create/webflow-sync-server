@@ -1,8 +1,9 @@
 import express from "express";
 import multer from "multer";
 import { isResendConfigured, sendInternalNotificationWithAttachments } from "../emailService.js";
-import { buildPdfFilename } from "../lib/consignmentFilenames.js";
+import { buildCustomerPdfFilename, buildPdfFilename } from "../lib/consignmentFilenames.js";
 import { buildConsignmentEmail, sendCustomerConfirmationEmail } from "../lib/consignmentEmail.js";
+import { generateCustomerConsignmentPdf } from "../lib/consignmentCustomerPdf.js";
 import { analyzeConsignmentItemsPricing } from "../lib/consignmentPricingAnalysis.js";
 import { generateConsignmentPdf } from "../lib/consignmentPdf.js";
 import {
@@ -85,13 +86,12 @@ router.post(
       const submittedAt = formatSubmittedAt();
 
       // PDF generation: professional layout with images under each item section
-      const pdfBuffer = await generateConsignmentPdf({
-        body,
-        items,
-        photoGroups,
-        submittedAt,
-      });
+      const [pdfBuffer, customerPdfBuffer] = await Promise.all([
+        generateConsignmentPdf({ body, items, photoGroups, submittedAt }),
+        generateCustomerConsignmentPdf({ body, items, photoGroups, submittedAt }),
+      ]);
       const pdfFilename = buildPdfFilename(body.customerName);
+      const customerPdfFilename = buildCustomerPdfFilename(body.customerName);
 
       let pricingResults = null;
       let pricingModelsUsed = [];
@@ -132,7 +132,11 @@ router.post(
       });
 
       try {
-        await sendCustomerConfirmationEmail(body, items, photoGroups, { submittedAt });
+        await sendCustomerConfirmationEmail(body, items, photoGroups, {
+          submittedAt,
+          customerPdfBuffer,
+          customerPdfFilename,
+        });
       } catch (customerErr) {
         console.error(
           "[consignment] customer confirmation email failed:",
