@@ -4,8 +4,8 @@ import cors from "cors";
 import crypto from "crypto";
 import dotenv from "dotenv";
 import fs from "fs";
-import nodemailer from "nodemailer";
 import twilio from "twilio";
+import { isResendConfigured, parseRecipients, sendInternalNotification } from "./emailService.js";
 import { CATEGORY_KEYWORDS } from "./categoryKeywords.js";
 import { CATEGORY_KEYWORDS_FURNITURE, CATEGORY_KEYWORDS_FURNITURE_WEAK } from "./categoryKeywordsFurniture.js";
 import { detectBrandFromProduct } from "./brand.js";
@@ -26,8 +26,9 @@ import { classifyCategoryWithLLM } from "./llmCategoryClassifier.js";
 dotenv.config();
 
 /* ======================================================
-   DUPLICATE PLACEMENT — Email alert (Gmail SMTP)
-   Env: GMAIL_SMTP_USER, GMAIL_SMTP_PASSWORD, REPORT_EMAIL_TO (comma-separated)
+   DUPLICATE PLACEMENT — Email alert (Resend)
+   Env: RESEND_API_KEY, FROM_EMAIL, INTERNAL_NOTIFY_EMAIL (comma-separated)
+   Legacy Gmail (no longer used for send): GMAIL_SMTP_USER, GMAIL_SMTP_PASSWORD, REPORT_EMAIL_TO
 ====================================================== */
 /** @param {Set<string>} [duplicateEmailSentFor] - Per-run dedupe: only one email per shopifyProductId per run. We also persist sent IDs so we never send again for the same item unless a significant change happens. */
 async function sendDuplicatePlacementEmail(conflictLog, duplicateEmailSentFor) {
@@ -50,12 +51,17 @@ async function sendDuplicatePlacementEmail(conflictLog, duplicateEmailSentFor) {
     webflowLog("info", { event: "duplicate_placement.email_skipped", reason: "already_sent_previous_run", shopifyProductId: id });
     return;
   }
-  const to = process.env.REPORT_EMAIL_TO;
-  if (!to || !process.env.GMAIL_SMTP_USER || !process.env.GMAIL_SMTP_PASSWORD) {
-    webflowLog("warn", { event: "duplicate_placement.email_skipped", reason: "missing_env", REPORT_EMAIL_TO: !!to });
+  if (!isResendConfigured()) {
+    webflowLog("warn", {
+      event: "duplicate_placement.email_skipped",
+      reason: "missing_env",
+      INTERNAL_NOTIFY_EMAIL: !!process.env.INTERNAL_NOTIFY_EMAIL,
+      FROM_EMAIL: !!process.env.FROM_EMAIL,
+      RESEND_API_KEY: !!process.env.RESEND_API_KEY,
+    });
     return;
   }
-  const recipients = to.split(",").map((e) => e.trim()).filter(Boolean);
+  const recipients = parseRecipients(process.env.INTERNAL_NOTIFY_EMAIL);
   const subject = `[Backend / Webflow sync] Product was on the wrong site (we fixed it)`;
   const prev = String(previousVertical || "").toLowerCase();
   const prevLabel =
@@ -108,22 +114,7 @@ async function sendDuplicatePlacementEmail(conflictLog, duplicateEmailSentFor) {
   `;
 
   try {
-    const transporter = nodemailer.createTransport({
-      host: "smtp.gmail.com",
-      port: 587,
-      secure: false,
-      auth: {
-        user: process.env.GMAIL_SMTP_USER,
-        pass: process.env.GMAIL_SMTP_PASSWORD,
-      },
-    });
-    await transporter.sendMail({
-      from: process.env.GMAIL_SMTP_USER,
-      to: recipients,
-      subject,
-      text: body,
-      html: htmlBody,
-    });
+    await sendInternalNotification({ subject, text: body, html: htmlBody });
     webflowLog("info", { event: "duplicate_placement.email_sent", to: recipients, shopifyProductId });
     if (duplicateEmailSentFor) duplicateEmailSentFor.add(id);
     saveDuplicatePlacementSentId(id);
@@ -153,22 +144,19 @@ function shopifyWriteFailureEmailText(err) {
   };
 }
 
-/** Email when Shopify write retries are exhausted; same SMTP/REPORT_EMAIL_TO setup as duplicate-placement alerts. */
+/** Email when Shopify write retries are exhausted; same Resend setup as duplicate-placement alerts. */
 async function sendShopifyWriteFailureEmail(detail, perRunDedupeSet) {
   const productId = String(detail?.shopifyProductId ?? "");
   const op = String(detail?.op ?? "shopify_write");
   const dedupeKey = `${productId}:${op}`;
   if (perRunDedupeSet?.has(dedupeKey)) return;
 
-  const to = process.env.REPORT_EMAIL_TO;
-  const user = process.env.GMAIL_SMTP_USER;
-  const pass = process.env.GMAIL_SMTP_PASSWORD;
-  if (!to || !user || !pass) {
+  if (!isResendConfigured()) {
     webflowLog("warn", { event: "shopify_write.email_skipped", reason: "missing_env", shopifyProductId: productId || null, op });
     return;
   }
 
-  const recipients = to.split(",").map((e) => e.trim()).filter(Boolean);
+  const recipients = parseRecipients(process.env.INTERNAL_NOTIFY_EMAIL);
   const body = [
     "Shopify write failed after automatic retries.",
     "",
@@ -194,15 +182,7 @@ async function sendShopifyWriteFailureEmail(detail, perRunDedupeSet) {
     .join("\n");
 
   try {
-    const transporter = nodemailer.createTransport({
-      host: "smtp.gmail.com",
-      port: 587,
-      secure: false,
-      auth: { user, pass },
-    });
-    await transporter.sendMail({
-      from: user,
-      to: recipients.join(", "),
+    await sendInternalNotification({
       subject: `[Backend / Webflow sync] Shopify write failed after retries — ${productId || "unknown product"}`,
       text: body,
     });
@@ -756,19 +736,18 @@ function clearGoogleGuardEmailSentIds(shopifyProductId) {
   if (changed) saveGoogleGuardEmailSentIds(set);
 }
 
-/** One email per product until weight is added; uses same Gmail SMTP as duplicate-placement alerts. */
+/** One email per product until weight is added; uses same Resend setup as duplicate-placement alerts. */
 async function sendMissingWeightAlertEmail(product, dimensions, verticalLabel) {
   const shopifyProductId = String(product?.id ?? "");
   if (!shopifyProductId) return;
   const sent = loadWeightMissingEmailSentIds();
   if (sent.has(shopifyProductId)) return;
 
-  const user = process.env.GMAIL_SMTP_USER;
-  const pass = process.env.GMAIL_SMTP_PASSWORD;
-  if (!user || !pass) {
-    webflowLog("warn", { event: "weight_missing.email_skipped", reason: "missing_smtp", shopifyProductId });
+  if (!isResendConfigured()) {
+    webflowLog("warn", { event: "weight_missing.email_skipped", reason: "missing_env", shopifyProductId });
     return;
   }
+  const recipients = parseRecipients(process.env.INTERNAL_NOTIFY_EMAIL);
 
   const store = process.env.SHOPIFY_STORE || "";
   const adminUrl = store ? `https://admin.shopify.com/store/${store}/products/${shopifyProductId}` : "";
@@ -780,7 +759,6 @@ async function sendMissingWeightAlertEmail(product, dimensions, verticalLabel) {
     .join(", ");
 
   const label = verticalLabel || "Product";
-  const recipients = ["info@lostandfoundresale.com", "berberbernis21@gmail.com"];
   const body = [
     `A ${label} product is missing weight in Shopify (variant weight / tags / metafields).`,
     "Please add weight (variant or tags, e.g. Weight: 2 lb) so Webflow sync and listings stay complete.",
@@ -798,15 +776,7 @@ async function sendMissingWeightAlertEmail(product, dimensions, verticalLabel) {
     .join("\n");
 
   try {
-    const transporter = nodemailer.createTransport({
-      host: "smtp.gmail.com",
-      port: 587,
-      secure: false,
-      auth: { user, pass },
-    });
-    await transporter.sendMail({
-      from: user,
-      to: recipients.join(", "),
+    await sendInternalNotification({
       subject: `[Webflow Sync] Missing weight — ${title.slice(0, 60)}${title.length > 60 ? "…" : ""}`,
       text: body,
     });
@@ -826,12 +796,11 @@ async function sendGoogleFeedDataIssueEmail({
   shippingWeight = null,
   reason = "google_sync_guard",
 }) {
-  const user = process.env.GMAIL_SMTP_USER;
-  const pass = process.env.GMAIL_SMTP_PASSWORD;
-  if (!user || !pass) {
-    webflowLog("warn", { event: "google_merchant.guard_email_skipped", issue, reason: "missing_smtp" });
+  if (!isResendConfigured()) {
+    webflowLog("warn", { event: "google_merchant.guard_email_skipped", issue, reason: "missing_env" });
     return;
   }
+  const recipients = parseRecipients(process.env.INTERNAL_NOTIFY_EMAIL);
   const shopifyProductId = String(product?.id || "").trim();
   const issueKey = googleGuardIssueKey(shopifyProductId, issue);
   const sent = loadGoogleGuardEmailSentIds();
@@ -849,7 +818,6 @@ async function sendGoogleFeedDataIssueEmail({
   const adminUrl = store && shopifyProductId
     ? `https://admin.shopify.com/store/${store}/products/${shopifyProductId}`
     : "";
-  const recipients = ["info@lostandfoundresale.com", "berberbernis21@gmail.com"];
   const body = [
     "Google Merchant sync skipped this product because a feed guardrail failed.",
     "",
@@ -876,15 +844,7 @@ async function sendGoogleFeedDataIssueEmail({
     .filter(Boolean)
     .join("\n");
   try {
-    const transporter = nodemailer.createTransport({
-      host: "smtp.gmail.com",
-      port: 587,
-      secure: false,
-      auth: { user, pass },
-    });
-    await transporter.sendMail({
-      from: user,
-      to: recipients.join(", "),
+    await sendInternalNotification({
       subject: `[Webflow Sync] Google guard: ${issue} — ${title.slice(0, 60)}${title.length > 60 ? "…" : ""}`,
       text: body,
     });
@@ -892,7 +852,7 @@ async function sendGoogleFeedDataIssueEmail({
       sent.add(issueKey);
       saveGoogleGuardEmailSentIds(sent);
     }
-    webflowLog("info", { event: "google_merchant.guard_email_sent", issue, shopifyProductId: shopifyProductId || null });
+    webflowLog("info", { event: "google_merchant.guard_email_sent", issue, shopifyProductId: shopifyProductId || null, to: recipients });
   } catch (err) {
     webflowLog("error", { event: "google_merchant.guard_email_failed", issue, message: err.message });
   }
@@ -940,19 +900,16 @@ async function sendSkuImageImportFailureEmail({ siteId, productId, skuId, op, pr
     return;
   }
 
-  const to = process.env.REPORT_EMAIL_TO;
-  const user = process.env.GMAIL_SMTP_USER;
-  const pass = process.env.GMAIL_SMTP_PASSWORD;
-  if (!to || !user || !pass) {
+  if (!isResendConfigured()) {
     webflowLog("warn", {
       event: "sku_image_import.email_skipped",
       reason: "missing_env",
-      REPORT_EMAIL_TO: !!to,
+      INTERNAL_NOTIFY_EMAIL: !!process.env.INTERNAL_NOTIFY_EMAIL,
     });
     return;
   }
 
-  const recipients = to.split(",").map((e) => e.trim()).filter(Boolean);
+  const recipients = parseRecipients(process.env.INTERNAL_NOTIFY_EMAIL);
   const msg = webflowApiErrorText(lastError).slice(0, 2000);
   const status = lastError?.response?.status;
   const body = [
@@ -978,15 +935,7 @@ async function sendSkuImageImportFailureEmail({ siteId, productId, skuId, op, pr
     .join("\n");
 
   try {
-    const transporter = nodemailer.createTransport({
-      host: "smtp.gmail.com",
-      port: 587,
-      secure: false,
-      auth: { user, pass },
-    });
-    await transporter.sendMail({
-      from: user,
-      to: recipients,
+    await sendInternalNotification({
       subject: `[Webflow Sync] SKU images failed after ${attempts} tries — ${(productTitle || productId || "product").toString().slice(0, 55)}`,
       text: body,
     });
@@ -7962,6 +7911,23 @@ app.get("/", (req, res) => {
   res.send(
     "Lost & Found — Clean Sync Server (No Duplicates, Sold Logic Fixed, Deep Scan Matcher + Logging)"
   );
+});
+
+app.get("/test-resend", async (req, res) => {
+  try {
+    await sendInternalNotification({
+      subject: "Resend test from Lost & Found Resale",
+      text: "This is a test email from the Lost & Found Webflow sync server (Resend).",
+      html: "<p>This is a test email from the Lost &amp; Found Webflow sync server (Resend).</p>",
+    });
+    return res.json({ ok: true, message: "Test email sent" });
+  } catch (err) {
+    const message = String(err?.message || "Failed to send test email");
+    const apiKey = process.env.RESEND_API_KEY;
+    const safeMessage = apiKey && message.includes(apiKey) ? "Failed to send test email" : message;
+    webflowLog("error", { event: "resend.test_failed", message: safeMessage });
+    return res.status(500).json({ ok: false, message: safeMessage });
+  }
 });
 
 app.get("/api/listing", async (req, res) => {
