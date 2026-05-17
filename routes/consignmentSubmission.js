@@ -17,14 +17,29 @@ const router = express.Router();
 
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 const MAX_FILES = 30;
+const MAX_TOTAL_UPLOAD_BYTES = MAX_FILE_SIZE_BYTES * MAX_FILES;
 
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
     fileSize: MAX_FILE_SIZE_BYTES,
     files: MAX_FILES,
+    fieldSize: 2 * 1024 * 1024,
+    fields: 64,
+    parts: MAX_FILES + 64,
   },
 });
+
+function rejectOversizedUpload(req, res, next) {
+  const contentLength = parseInt(req.headers["content-length"] || "0", 10);
+  if (Number.isFinite(contentLength) && contentLength > MAX_TOTAL_UPLOAD_BYTES) {
+    return res.status(413).json({
+      success: false,
+      error: "Upload is too large. Please use fewer or smaller photos (10 MB max each).",
+    });
+  }
+  next();
+}
 
 function formatSubmittedAt(date = new Date()) {
   return date.toLocaleString("en-US", {
@@ -111,15 +126,24 @@ async function processConsignmentSubmission({ body, items, photoGroups, submitte
 
   const pdfFilename = buildPdfFilename(body.customerName);
 
-  const emailPayload = buildConsignmentEmail({
-    body,
-    items,
-    photoGroups,
-    pdfBuffer,
-    pdfFilename,
-    submittedAt,
-    pricingResults,
-  });
+  let emailPayload;
+  try {
+    emailPayload = buildConsignmentEmail({
+      body,
+      items,
+      photoGroups,
+      pdfBuffer,
+      pdfFilename,
+      submittedAt,
+      pricingResults,
+    });
+  } catch (emailBuildErr) {
+    console.error(
+      "[consignment] internal email build failed:",
+      emailBuildErr?.message || emailBuildErr
+    );
+    return;
+  }
 
   await sendInternalNotificationWithAttachments({
     subject: emailPayload.subject,
@@ -145,12 +169,17 @@ async function processConsignmentSubmission({ body, items, photoGroups, submitte
   });
 }
 
+router.options("/consignment-submission", (_req, res) => {
+  res.sendStatus(204);
+});
+
 /**
  * POST /api/consignment-submission
  * multipart/form-data from Webflow; photos grouped by item_N_photos field names.
  */
 router.post(
   "/consignment-submission",
+  rejectOversizedUpload,
   (req, res, next) => {
     upload.any()(req, res, (err) => {
       if (err) {
