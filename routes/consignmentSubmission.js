@@ -1,10 +1,12 @@
 import express from "express";
 import multer from "multer";
 import { isResendConfigured, sendInternalNotificationWithAttachments } from "../emailService.js";
-import { buildCustomerPdfFilename, buildPdfFilename } from "../lib/consignmentFilenames.js";
+import { buildPdfFilename } from "../lib/consignmentFilenames.js";
 import { buildConsignmentEmail, sendCustomerConfirmationEmail } from "../lib/consignmentEmail.js";
-import { generateCustomerConsignmentPdf } from "../lib/consignmentCustomerPdf.js";
-import { analyzeConsignmentItemsPricing } from "../lib/consignmentPricingAnalysis.js";
+import {
+  analyzeConsignmentItemsPricing,
+  getPricingConfigStatus,
+} from "../lib/consignmentPricingAnalysis.js";
 import { generateConsignmentPdf } from "../lib/consignmentPdf.js";
 import {
   groupPhotosByItemNumber,
@@ -85,13 +87,8 @@ router.post(
       const items = validation.items;
       const submittedAt = formatSubmittedAt();
 
-      // PDF generation: professional layout with images under each item section
-      const [pdfBuffer, customerPdfBuffer] = await Promise.all([
-        generateConsignmentPdf({ body, items, photoGroups, submittedAt }),
-        generateCustomerConsignmentPdf({ body, items, photoGroups, submittedAt }),
-      ]);
+      const pdfBuffer = await generateConsignmentPdf({ body, items, photoGroups, submittedAt });
       const pdfFilename = buildPdfFilename(body.customerName);
-      const customerPdfFilename = buildCustomerPdfFilename(body.customerName);
 
       let pricingResults = null;
       let pricingModelsUsed = [];
@@ -99,10 +96,18 @@ router.post(
         const pricing = await analyzeConsignmentItemsPricing({ items, photoGroups });
         pricingResults = pricing.results;
         pricingModelsUsed = pricing.modelsUsed || [];
-        if (pricing.configured && pricingResults?.length) {
+        if (!pricing.configured) {
+          console.warn("[consignment] pricing skipped — not fully configured", {
+            config: pricing.configStatus || getPricingConfigStatus(),
+          });
+        } else if (pricingResults?.length) {
           console.log("[consignment] pricing analysis complete", {
             items: pricingResults.length,
             models: pricingModelsUsed,
+            available: pricingResults.filter((r) => r.available).length,
+            reasons: pricingResults
+              .filter((r) => !r.available)
+              .map((r) => ({ item: r.itemNumber, reason: r.reason })),
           });
         }
       } catch (pricingErr) {
@@ -132,11 +137,7 @@ router.post(
       });
 
       try {
-        await sendCustomerConfirmationEmail(body, items, photoGroups, {
-          submittedAt,
-          customerPdfBuffer,
-          customerPdfFilename,
-        });
+        await sendCustomerConfirmationEmail(body, items, photoGroups, { submittedAt });
       } catch (customerErr) {
         console.error(
           "[consignment] customer confirmation email failed:",
