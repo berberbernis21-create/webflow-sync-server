@@ -71,9 +71,9 @@ async function runPricingSafe({ items, photoGroups }) {
       console.warn("[consignment] pricing budget exceeded — internal email sent without full comps", {
         itemCount: items.length,
       });
-    } else if (!pricing.configured && !pricing.configStatus) {
+    } else if (!pricing.configured) {
       console.warn("[consignment] pricing skipped — not fully configured", {
-        config: getPricingConfigStatus(),
+        config: pricing.configStatus || getPricingConfigStatus(),
       });
     } else if (pricingResults?.length) {
       console.log("[consignment] pricing analysis complete", {
@@ -95,6 +95,54 @@ async function runPricingSafe({ items, photoGroups }) {
     );
     return { pricingResults: null, pricingModelsUsed: [] };
   }
+}
+
+/**
+ * PDF, pricing, and emails run after the HTTP response so Render/browser timeouts
+ * (often ~30s) do not surface as net::ERR_FAILED on the Webflow form.
+ */
+async function processConsignmentSubmission({ body, items, photoGroups, submittedAt }) {
+  const startedMs = Date.now();
+
+  const [pdfBuffer, { pricingResults }] = await Promise.all([
+    generateInternalPdfSafe({ body, items, photoGroups, submittedAt }),
+    runPricingSafe({ items, photoGroups }),
+  ]);
+
+  const pdfFilename = buildPdfFilename(body.customerName);
+
+  const emailPayload = buildConsignmentEmail({
+    body,
+    items,
+    photoGroups,
+    pdfBuffer,
+    pdfFilename,
+    submittedAt,
+    pricingResults,
+  });
+
+  await sendInternalNotificationWithAttachments({
+    subject: emailPayload.subject,
+    html: emailPayload.html,
+    text: emailPayload.text,
+    replyTo: String(body.customerEmail || "").trim() || undefined,
+    attachments: emailPayload.attachments,
+  });
+
+  try {
+    await sendCustomerConfirmationEmail(body, items, photoGroups, { submittedAt });
+  } catch (customerErr) {
+    console.error(
+      "[consignment] customer confirmation email failed:",
+      customerErr?.message || customerErr
+    );
+  }
+
+  console.log("[consignment] background processing complete", {
+    ms: Date.now() - startedMs,
+    itemCount: items.length,
+    photoCount: [...photoGroups.values()].reduce((n, p) => n + p.length, 0),
+  });
 }
 
 /**
@@ -136,73 +184,22 @@ router.post(
       const items = validation.items;
       const submittedAt = formatSubmittedAt();
 
-      const [pdfBuffer, { pricingResults }] = await Promise.all([
-        generateInternalPdfSafe({ body, items, photoGroups, submittedAt }),
-        runPricingSafe({ items, photoGroups }),
-      ]);
-
-      const pdfFilename = buildPdfFilename(body.customerName);
-
-      let emailPayload;
-      try {
-        emailPayload = buildConsignmentEmail({
-          body,
-          items,
-          photoGroups,
-          pdfBuffer,
-          pdfFilename,
-          submittedAt,
-          pricingResults,
-        });
-      } catch (emailBuildErr) {
-        console.error(
-          "[consignment] internal email build failed:",
-          emailBuildErr?.message || emailBuildErr
-        );
-        return res.status(500).json({
-          success: false,
-          error: "Submission failed. Please try again.",
-        });
-      }
-
-      try {
-        await sendInternalNotificationWithAttachments({
-          subject: emailPayload.subject,
-          html: emailPayload.html,
-          text: emailPayload.text,
-          replyTo: String(body.customerEmail || "").trim() || undefined,
-          attachments: emailPayload.attachments,
-        });
-      } catch (internalEmailErr) {
-        console.error(
-          "[consignment] internal notification email failed:",
-          internalEmailErr?.message || internalEmailErr
-        );
-        return res.status(500).json({
-          success: false,
-          error: "Submission failed. Please try again.",
-        });
-      }
-
-      try {
-        await sendCustomerConfirmationEmail(body, items, photoGroups, { submittedAt });
-      } catch (customerErr) {
-        console.error(
-          "[consignment] customer confirmation email failed:",
-          customerErr?.message || customerErr
-        );
-      }
-
-      return res.json({
+      res.json({
         success: true,
         message: "Submission received successfully.",
       });
+
+      void processConsignmentSubmission({ body, items, photoGroups, submittedAt }).catch((err) => {
+        console.error("[consignment] background processing failed:", err?.message || err);
+      });
     } catch (err) {
       console.error("[consignment] submission failed:", err?.message || err);
-      return res.status(500).json({
-        success: false,
-        error: "Submission failed. Please try again.",
-      });
+      if (!res.headersSent) {
+        return res.status(500).json({
+          success: false,
+          error: "Submission failed. Please try again.",
+        });
+      }
     }
   }
 );
