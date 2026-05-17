@@ -3,6 +3,7 @@ import multer from "multer";
 import { isResendConfigured, sendInternalNotificationWithAttachments } from "../emailService.js";
 import { buildPdfFilename } from "../lib/consignmentFilenames.js";
 import { buildConsignmentEmail, sendCustomerConfirmationEmail } from "../lib/consignmentEmail.js";
+import { analyzeConsignmentItemsPricing } from "../lib/consignmentPricingAnalysis.js";
 import { generateConsignmentPdf } from "../lib/consignmentPdf.js";
 import {
   groupPhotosByItemNumber,
@@ -92,6 +93,25 @@ router.post(
       });
       const pdfFilename = buildPdfFilename(body.customerName);
 
+      let pricingResults = null;
+      let pricingModelsUsed = [];
+      try {
+        const pricing = await analyzeConsignmentItemsPricing({ items, photoGroups });
+        pricingResults = pricing.results;
+        pricingModelsUsed = pricing.modelsUsed || [];
+        if (pricing.configured && pricingResults?.length) {
+          console.log("[consignment] pricing analysis complete", {
+            items: pricingResults.length,
+            models: pricingModelsUsed,
+          });
+        }
+      } catch (pricingErr) {
+        console.error(
+          "[consignment] pricing analysis failed (continuing):",
+          pricingErr?.message || pricingErr
+        );
+      }
+
       // Email: summary + per-item sections; inline CID photos + renamed attachments
       const emailPayload = buildConsignmentEmail({
         body,
@@ -100,6 +120,7 @@ router.post(
         pdfBuffer,
         pdfFilename,
         submittedAt,
+        pricingResults,
       });
 
       await sendInternalNotificationWithAttachments({
