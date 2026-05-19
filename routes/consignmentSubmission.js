@@ -84,7 +84,11 @@ async function generateInternalPdfSafe({ body, items, photoGroups, submittedAt }
 
 async function runPricingSafe({ items, photoGroups }) {
   try {
-    const pricing = await analyzeConsignmentItemsPricingWithBudget({ items, photoGroups });
+    const pricing = await analyzeConsignmentItemsPricingWithBudget({
+      items,
+      photoGroups,
+      background: true,
+    });
     const pricingResults = pricing.results;
     const pricingModelsUsed = pricing.modelsUsed || [];
 
