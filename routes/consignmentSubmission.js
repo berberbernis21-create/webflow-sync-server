@@ -9,6 +9,8 @@ import {
 } from "../lib/consignmentPricingAnalysis.js";
 import { generateConsignmentPdf } from "../lib/consignmentPdf.js";
 import { applyConsignmentCorsHeaders } from "../lib/consignmentCors.js";
+import { resolveConsignmentBrand } from "../lib/consignmentBrand.js";
+import { MAX_CONSIGNMENT_PHOTOS, MAX_UPLOAD_FILES } from "../lib/consignmentLimits.js";
 import {
   groupPhotosByItemNumber,
   validateConsignmentSubmission,
@@ -22,7 +24,7 @@ router.use((req, res, next) => {
 });
 
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
-const MAX_FILES = 30;
+const MAX_FILES = MAX_UPLOAD_FILES;
 const MAX_TOTAL_UPLOAD_BYTES = MAX_FILE_SIZE_BYTES * MAX_FILES;
 
 const upload = multer({
@@ -60,7 +62,7 @@ function multerErrorMessage(err) {
     return "Each photo must be 10 MB or smaller.";
   }
   if (err.code === "LIMIT_FILE_COUNT" || err.code === "LIMIT_UNEXPECTED_FILE") {
-    return `You can upload at most ${MAX_FILES} photos per submission.`;
+    return `You can upload at most ${MAX_CONSIGNMENT_PHOTOS} photos per submission (10 items max). Please remove extra photos or submit in a second request.`;
   }
   if (err.code === "LIMIT_PART_COUNT") {
     return "Too many form fields in this submission.";
@@ -124,6 +126,14 @@ async function runPricingSafe({ items, photoGroups }) {
  */
 async function processConsignmentSubmission({ body, items, photoGroups, submittedAt }) {
   const startedMs = Date.now();
+  const brandKey = resolveConsignmentBrand(body, items);
+  console.log("[consignment] processing submission", {
+    brand: brandKey,
+    source: body?.source || null,
+    submissionCategory: body?.submissionCategory || null,
+    itemCount: items.length,
+    photoCount: [...photoGroups.values()].reduce((n, p) => n + p.length, 0),
+  });
 
   const [pdfBuffer, { pricingResults }] = await Promise.all([
     generateInternalPdfSafe({ body, items, photoGroups, submittedAt }),
