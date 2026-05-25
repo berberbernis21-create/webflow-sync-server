@@ -70,9 +70,15 @@ function multerErrorMessage(err) {
   return "Invalid file upload.";
 }
 
-async function generateInternalPdfSafe({ body, items, photoGroups, submittedAt }) {
+async function generateInternalPdfSafe({ body, items, photoGroups, submittedAt, pricingResults }) {
   try {
-    return await generateConsignmentPdf({ body, items, photoGroups, submittedAt });
+    return await generateConsignmentPdf({
+      body,
+      items,
+      photoGroups,
+      submittedAt,
+      pricingResults,
+    });
   } catch (pdfErr) {
     console.error(
       "[consignment] internal PDF generation failed (continuing):",
@@ -139,10 +145,14 @@ async function processConsignmentSubmission({ body, items, photoGroups, submitte
     photoCount: [...photoGroups.values()].reduce((n, p) => n + p.length, 0),
   });
 
-  const [pdfBuffer, { pricingResults }] = await Promise.all([
-    generateInternalPdfSafe({ body, items, photoGroups, submittedAt }),
-    runPricingSafe({ items, photoGroups }),
-  ]);
+  const { pricingResults } = await runPricingSafe({ items, photoGroups });
+  const pdfBuffer = await generateInternalPdfSafe({
+    body,
+    items,
+    photoGroups,
+    submittedAt,
+    pricingResults,
+  });
 
   const pdfFilename = buildPdfFilename(body.customerName);
 
