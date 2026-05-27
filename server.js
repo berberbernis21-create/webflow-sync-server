@@ -211,6 +211,16 @@ const WEBFLOW_STRICT_NOOP_UPDATES = process.env.WEBFLOW_STRICT_NOOP_UPDATES !== 
 
 let syncRequestId = null;
 let syncStartTime = null;
+
+/** Background sync-all job state (for cron / long runs — HTTP returns 202 immediately). */
+const syncAllJobState = {
+  running: false,
+  jobId: null,
+  startedAt: null,
+  finishedAt: null,
+  result: null,
+  error: null,
+};
 let googleMerchantAccessTokenCache = { token: null, expiresAtMs: 0 };
 const googleListingUrlValidationCache = new Map();
 const GOOGLE_LISTING_URL_CACHE_OK_TTL_MS = Math.max(
@@ -8518,18 +8528,14 @@ app.post("/google/furniture/full-push", async (req, res) => {
   }
 });
 
-app.post("/sync-all", async (req, res) => {
-  syncRequestId = crypto.randomUUID().slice(0, 8);
+/**
+ * Full Shopify → Webflow sync (same logic as before; runs in background after POST /sync-all).
+ */
+async function executeSyncAll({ reclassifyAll = false, reclassifyIdsSet = null, jobId } = {}) {
+  syncRequestId = jobId || crypto.randomUUID().slice(0, 8);
   syncStartTime = Date.now();
-  webflowLog("info", { event: "sync-all.entry", message: "sync-all started" });
+  webflowLog("info", { event: "sync-all.entry", message: "sync-all started", jobId: syncRequestId });
   try {
-    // Optional: force LLM reclassification for this run. "all" = every product; or array of Shopify product IDs.
-    const reclassify = req.body?.reclassify;
-    const reclassifyAll = reclassify === "all" || reclassify === true;
-    const reclassifyIdsSet =
-      Array.isArray(reclassify) && reclassify.length > 0
-        ? new Set(reclassify.map((id) => String(id)))
-        : null;
     if (reclassifyAll || reclassifyIdsSet) {
       webflowLog("info", { event: "sync-all.reclassify", reclassifyAll, reclassifyCount: reclassifyIdsSet?.size ?? "all" });
     }
@@ -8684,7 +8690,7 @@ app.post("/sync-all", async (req, res) => {
       total: products.length,
       durationMs,
     });
-    res.json({
+    return {
       status: "ok",
       total: products.length,
       created,
@@ -8696,7 +8702,7 @@ app.post("/sync-all", async (req, res) => {
       archivedLongSold,
       soldBackfillArchived,
       durationMs,
-    });
+    };
   } catch (err) {
     const status = err.response?.status;
     const body = err.response?.data;
@@ -8708,19 +8714,79 @@ app.post("/sync-all", async (req, res) => {
       url: err.config?.url ?? null,
       method: err.config?.method ?? null,
     });
-    const detail = body?.message || body?.err || err.message;
-    res.status(status && status >= 400 ? status : 500).json({
-      error: err.message,
-      ...(detail && detail !== err.message && { detail: String(detail) }),
-      ...(body && typeof body === "object" && { webflowResponse: body }),
-    });
+    throw err;
   } finally {
-    syncRequestId = null;
     luxuryItemIndex = null;
     furnitureProductIndex = null;
     furnitureSkuIndex = null;
-    syncStartTime = null;
   }
+}
+
+app.get("/sync-all/status", (req, res) => {
+  const elapsedMs =
+    syncAllJobState.running && syncStartTime != null ? Date.now() - syncStartTime : null;
+  res.json({
+    running: syncAllJobState.running,
+    jobId: syncAllJobState.jobId,
+    startedAt: syncAllJobState.startedAt,
+    finishedAt: syncAllJobState.finishedAt,
+    result: syncAllJobState.result,
+    error: syncAllJobState.error,
+    ...(elapsedMs != null && { elapsedMs }),
+  });
+});
+
+app.post("/sync-all", async (req, res) => {
+  if (syncAllJobState.running) {
+    return res.status(202).json({
+      status: "already_running",
+      jobId: syncAllJobState.jobId,
+      startedAt: syncAllJobState.startedAt,
+      message: "Sync already in progress. Poll GET /sync-all/status or server logs.",
+    });
+  }
+
+  const reclassify = req.body?.reclassify;
+  const reclassifyAll = reclassify === "all" || reclassify === true;
+  const reclassifyIdsSet =
+    Array.isArray(reclassify) && reclassify.length > 0
+      ? new Set(reclassify.map((id) => String(id)))
+      : null;
+
+  const jobId = crypto.randomUUID().slice(0, 8);
+  syncAllJobState.running = true;
+  syncAllJobState.jobId = jobId;
+  syncAllJobState.startedAt = new Date().toISOString();
+  syncAllJobState.finishedAt = null;
+  syncAllJobState.result = null;
+  syncAllJobState.error = null;
+
+  res.status(202).json({
+    status: "started",
+    jobId,
+    startedAt: syncAllJobState.startedAt,
+    message: "Sync started in background. Poll GET /sync-all/status or check Render logs.",
+  });
+
+  executeSyncAll({ reclassifyAll, reclassifyIdsSet, jobId })
+    .then((result) => {
+      syncAllJobState.result = result;
+      webflowLog("info", { event: "sync-all.background_complete", jobId, ...result });
+    })
+    .catch((err) => {
+      syncAllJobState.error = err?.message || String(err);
+      webflowLog("error", {
+        event: "sync-all.background_error",
+        jobId,
+        message: syncAllJobState.error,
+      });
+    })
+    .finally(() => {
+      syncAllJobState.running = false;
+      syncAllJobState.finishedAt = new Date().toISOString();
+      syncRequestId = null;
+      syncStartTime = null;
+    });
 });
 
 app.post("/sync-by-ids", async (req, res) => {
