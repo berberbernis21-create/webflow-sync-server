@@ -5,6 +5,16 @@ const API_LISTING = `${API_SERVER}/api/listing?name=`;
 const PICKUP_LANDMARK_LINE =
   "Pickup is right by Scottsdale Quarter at Lost and Found Resale Interiors.";
 
+/** Shown at the top of listing descriptions (before narrative); not repeated in link footer. */
+const PRODUCT_AVAILABILITY_NOTICE =
+  "If you cannot find this item or buy it online using the link in this post, it has sold.";
+
+function prependProductAvailabilityNotice(descriptionBody) {
+  const body = String(descriptionBody || "").trim();
+  if (!body) return PRODUCT_AVAILABILITY_NOTICE;
+  return `${PRODUCT_AVAILABILITY_NOTICE}\n\n${body}`;
+}
+
 const LUXURY_NATIONWIDE_SHIPPING_LINE = "Shipping available nationwide.";
 
 /** Luxury listings: append nationwide shipping after the narrative (before the --- link block). */
@@ -239,7 +249,6 @@ function buildFacebookLinksFooter({ isLuxury, productUrl, storeUrl, handbagsShop
       "Item located here:\n\n" +
       `${productUrl}\n\n` +
       `Handbags: ${handbagsShopUrl}\nFurniture & home: ${storeUrl}\n\n` +
-      'If the product page says "No Longer Available," it has sold.\n\n' +
       pickupBlock
     );
   }
@@ -247,7 +256,6 @@ function buildFacebookLinksFooter({ isLuxury, productUrl, storeUrl, handbagsShop
     "Here is the item at our site. That page has all the information (photos, details, pricing, shipping and pickup).\n\n" +
     `${productUrl}\n\n` +
     `Shop the full store at ${storeUrl}. You can buy online or come in.\n\n` +
-    'If the product page says "No Longer Available," it has sold.\n\n' +
     pickupBlock
   );
 }
@@ -387,7 +395,7 @@ document.getElementById("start").addEventListener("click", async () => {
     let narrative =
       (craigslistNarrative && String(craigslistNarrative).trim()) ||
       catalogFallback ||
-      "See photos. Pickup right by Scottsdale Quarter at Lost and Found Resale Interiors. Use the link at the bottom of this post for details and to contact us through the site, or stop in.";
+      "See photos. Pickup right by Scottsdale Quarter at Lost and Found Resale Interiors. Use the website link in this post for details and to contact us through the site, or stop in.";
     if (isLuxury) {
       narrative = sanitizeLuxuryFacebookDescription(narrative, luxuryAuthenticationPromo);
     }
@@ -406,7 +414,9 @@ document.getElementById("start").addEventListener("click", async () => {
       pickupBlock,
     });
     const craigslistBodyLead = isLuxury ? appendLuxuryNationwideShipping(narrative) : narrative.trim();
-    const craigslistDescription = `${craigslistBodyLead}\n\n---\n${linksFooter}`;
+    const craigslistDescription = prependProductAvailabilityNotice(
+      `${craigslistBodyLead}\n\n---\n${linksFooter}`
+    );
 
     const vendorRaw = String(data.vendor || "").trim();
     const vendor = vendorRaw && !/^unknown$/i.test(vendorRaw) ? vendorRaw : "";
@@ -523,7 +533,9 @@ document.getElementById("start").addEventListener("click", async () => {
     pickupBlock,
   });
   const facebookBodyLead = isLuxury ? appendLuxuryNationwideShipping(narrative) : String(narrative || "").trim();
-  const fullDescription = `${facebookBodyLead}\n\n---\n${linksFooter}`;
+  const fullDescription = prependProductAvailabilityNotice(
+    `${facebookBodyLead}\n\n---\n${linksFooter}`
+  );
 
   const payload = {
     platform: "facebook",
