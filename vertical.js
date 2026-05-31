@@ -12,7 +12,8 @@ import { CATEGORY_KEYWORDS_FURNITURE } from "./categoryKeywordsFurniture.js";
 
 /** Furniture items that contain words like "luggage" or "rack" — check these FIRST so they don't match luxury. */
 const FURNITURE_TRAP_PHRASES = [
-  "luggage rack", "coat rack", "hat rack", "umbrella stand", "hall tree",
+  "luggage rack", "coat rack", "coat racks", "hat rack", "umbrella stand", "hall tree",
+  "coat stand", "coat tree", "tree coat rack",
   "towel rack", "magazine rack", "wine rack", "plant stand", "lamp stand",
   "shoe rack", "shoe shelf", "shoe cabinet", "shoe organizer", "shoe storage",
   "jewelry box", "jewelry armoire", "jewelry cabinet", "jewelry display", "jewelry organizer",
@@ -104,6 +105,28 @@ function getTagsArray(product) {
   if (Array.isArray(t)) return t;
   if (typeof t === "string") return t.split(",").map((s) => s.trim()).filter(Boolean);
   return [];
+}
+
+/** Title + product type + tags (hyphens → spaces) for entryway-rack traps. */
+function getFurnitureTrapText(product) {
+  const title = (product?.title || "").toLowerCase();
+  const typeAndTags = [product?.product_type || "", getTagsArray(product).join(" ")].join(" ").toLowerCase();
+  return `${title} ${typeAndTags}`.replace(/-/g, " ");
+}
+
+/**
+ * Coat racks, hall trees, and similar entryway furniture — always Furniture & Home.
+ * Checked on title/type/tags only so description copy like "hooks for handbags" does not misroute to luxury.
+ */
+export function productLooksLikeFurnitureTrap(product) {
+  const text = getFurnitureTrapText(product);
+  if (!text.trim()) return false;
+  for (const phrase of FURNITURE_TRAP_PHRASES) {
+    if (text.includes(phrase.toLowerCase())) return true;
+  }
+  if (/\b(tree\s+)?coat\s+racks?\b/.test(text)) return true;
+  if (/\bcoat\s+stands?\b/.test(text) || /\bcoat\s+trees?\b/.test(text)) return true;
+  return false;
 }
 
 /** Strip HTML tags for use in text-based matching. */
@@ -201,10 +224,7 @@ export function detectVertical(product) {
   if (artOnCanvasPhrases.some((phrase) => nameAndTagsLower.includes(phrase))) return "furniture";
 
   // 0) Furniture trap: luggage rack, coat rack, jewelry box, shoe rack, etc. — check FIRST so they don't match luxury
-  const textForTrap = `${title} ${typeAndTags}`;
-  for (const phrase of FURNITURE_TRAP_PHRASES) {
-    if (textForTrap.includes(phrase.toLowerCase())) return "furniture";
-  }
+  if (productLooksLikeFurnitureTrap(product)) return "furniture";
 
   // 0b) Shoes/jewelry in name or title → Luxury, unless description says it's a furniture item (box, rack, cabinet, etc.)
   const nameForShoeJewelry = `${title} ${typeAndTags}`;

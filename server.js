@@ -26,6 +26,7 @@ import {
   isAllowedConsignmentOrigin,
 } from "./lib/consignmentCors.js";
 import consignmentRouter from "./routes/consignmentSubmission.js";
+import { productLooksLikeFurnitureTrap } from "./vertical.js";
 
 dotenv.config();
 
@@ -2571,6 +2572,15 @@ function normalizeTitleForFurnitureAccessoryMatch(raw) {
 function furnitureAccessoryCategoryOverrideTitle(title) {
   const t = normalizeTitleForFurnitureAccessoryMatch(title);
   if (!t) return null;
+  if (
+    /\b(coat|hat|magazine|wine|towel|luggage)\s+racks?\b/.test(t) ||
+    /\bcoat\s+stands?\b/.test(t) ||
+    /\bcoat\s+trees?\b/.test(t) ||
+    /\bhall\s+trees?\b/.test(t) ||
+    /\bumbrella\s+stands?\b/.test(t)
+  ) {
+    return "Accessories";
+  }
   const jewelryPendantPhrase =
     /\bpendants?\s+(necklace|necklaces|charm|charms)\b/.test(t) ||
     /\b(necklace|necklaces)\s+pendants?\b/.test(t) ||
@@ -2805,6 +2815,9 @@ function textHasAnyWordCue(text, cues) {
  * This runs as a guard over LLM output to prevent one-word misroutes.
  */
 function resolveVerticalFromEvidence(product, llmDetectedVertical) {
+  if (productLooksLikeFurnitureTrap(product)) {
+    return { vertical: "furniture", reason: "evidence_entryway_rack_trap" };
+  }
   if (productLooksLikeBookFilmOrMedia(product)) {
     return { vertical: "furniture", reason: "evidence_book_film_media" };
   }

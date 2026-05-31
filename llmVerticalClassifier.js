@@ -7,6 +7,7 @@
  */
 
 import axios from "axios";
+import { productLooksLikeFurnitureTrap } from "./vertical.js";
 
 const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
 const DEFAULT_MODEL = "gpt-4o-mini";
@@ -851,6 +852,20 @@ export async function classifyWithLLM(product, logPayload = {}, logFn = null) {
       if (logFn) logFn("info", { event: "llm_vertical.lighting", category: "HOME_INTERIOR", reason: "lamp/lighting in name or type" });
       return lightingResult;
     }
+  }
+
+  if (productLooksLikeFurnitureTrap(product)) {
+    const rackResult = {
+      category: "HOME_INTERIOR",
+      confidence: 1,
+      reasoning: "Entryway furniture (coat rack, hall tree, hat rack, etc.); Furniture & Home Accessories, not luxury handbags.",
+    };
+    logPayload.raw = null;
+    logPayload.parsed = null;
+    logPayload.final = rackResult;
+    logPayload.override = "furniture_entryway_rack_trap";
+    if (logFn) logFn("info", { event: "llm_vertical.entryway_rack", category: "HOME_INTERIOR" });
+    return rackResult;
   }
 
   if (productLooksLikeBookFilmOrMedia(product)) {
