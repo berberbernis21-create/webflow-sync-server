@@ -66,6 +66,7 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
   ],
 
   ArtMirrors: [
+    "wall hanging", "wall hangings", "wall tapestry", "macrame", "woven wall", "beaded wall",
     "wall art", "canvas art", "canvas painting", "canvas print", "stretched canvas", "painting", "paintings", "framed art", "art print", "art prints",
     "pottery", "potteries", "mirror", "mirrors", "wall mirror", "wall mirrors", "vanity mirror",
     "pier mirror", "convex mirror", "sunburst mirror", "gilt mirror",

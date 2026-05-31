@@ -109,6 +109,8 @@ const FINE_ART_WALL_DECOR_SUBSTRINGS = [
   "signed edition",
   "artist proof",
   "wall art",
+  "wall hanging",
+  "wall hangings",
   "framed art",
   "fine art",
   "fine-art",
@@ -858,7 +860,7 @@ export async function classifyWithLLM(product, logPayload = {}, logFn = null) {
     const rackResult = {
       category: "HOME_INTERIOR",
       confidence: 1,
-      reasoning: "Entryway furniture (coat rack, hall tree, hat rack, etc.); Furniture & Home Accessories, not luxury handbags.",
+      reasoning: "Home wall decor or entryway furniture (wall hanging, coat rack, hall tree, etc.); Furniture & Home, not luxury wearables.",
     };
     logPayload.raw = null;
     logPayload.parsed = null;

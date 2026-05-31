@@ -2581,6 +2581,13 @@ function furnitureAccessoryCategoryOverrideTitle(title) {
   ) {
     return "Accessories";
   }
+  if (
+    /\bwall\s+hangings?\b/.test(t) ||
+    /\bwall\s+(tapestry|tapestries|macrame|woven|beaded|textile)\b/.test(t) ||
+    (/\b(tapestry|macrame|woven|beaded)\b/.test(t) && /\bwall\b/.test(t))
+  ) {
+    return "ArtMirrors";
+  }
   const jewelryPendantPhrase =
     /\bpendants?\s+(necklace|necklaces|charm|charms)\b/.test(t) ||
     /\b(necklace|necklaces)\s+pendants?\b/.test(t) ||

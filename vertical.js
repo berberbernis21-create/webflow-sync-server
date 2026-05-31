@@ -21,6 +21,8 @@ const FURNITURE_TRAP_PHRASES = [
   "watch box", "watch boxes", "watch stand", "watch winder", "watch display",
   "curio cabinet", "curio cabinets", "china cabinet", "china hutch", "display cabinet",
   "wall clock", "wall clocks", "mantel clock", "mantle clock", "grandfather clock",
+  "wall hanging", "wall hangings", "wall tapestry", "macrame wall", "woven wall hanging",
+  "beaded wall hanging", "tapestry wall hanging", "textile wall hanging",
   "wood doll", "wooden doll", "vintage doll", "nesting doll", "matryoshka", "dollhouse",
 ];
 
@@ -115,8 +117,8 @@ function getFurnitureTrapText(product) {
 }
 
 /**
- * Coat racks, hall trees, and similar entryway furniture — always Furniture & Home.
- * Checked on title/type/tags only so description copy like "hooks for handbags" does not misroute to luxury.
+ * Home decor that must stay Furniture & Home (coat racks, wall hangings, etc.).
+ * Title/type/tags only so description copy (e.g. "hooks for handbags", "leather") does not misroute to luxury.
  */
 export function productLooksLikeFurnitureTrap(product) {
   const text = getFurnitureTrapText(product);
@@ -126,6 +128,9 @@ export function productLooksLikeFurnitureTrap(product) {
   }
   if (/\b(tree\s+)?coat\s+racks?\b/.test(text)) return true;
   if (/\bcoat\s+stands?\b/.test(text) || /\bcoat\s+trees?\b/.test(text)) return true;
+  if (/\bwall\s+hangings?\b/.test(text)) return true;
+  if (/\bwall\s+(tapestry|tapestries|macrame|woven|beaded|textile)\b/.test(text)) return true;
+  if (/\b(tapestry|macrame|woven|beaded)\b[\s\w]{0,40}\bwall\b/.test(text)) return true;
   return false;
 }
 
