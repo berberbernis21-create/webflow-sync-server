@@ -26,7 +26,7 @@ import {
   isAllowedConsignmentOrigin,
 } from "./lib/consignmentCors.js";
 import consignmentRouter from "./routes/consignmentSubmission.js";
-import { productLooksLikeFurnitureTrap } from "./vertical.js";
+import { productLooksLikeFurnitureTrap, productLooksLikeHomeDecorTray } from "./vertical.js";
 
 dotenv.config();
 
@@ -3156,6 +3156,8 @@ function textSuggestsFurnitureRingHardware(text) {
 /** True if title or description indicate jewelry — force Jewelry. */
 function isJewelryProduct(title, descriptionHtml, product = null) {
   if (isWristwatchProduct(title, descriptionHtml, product)) return false;
+  const trayCheckProduct = product || { title: title || "", product_type: "", tags: [] };
+  if (productLooksLikeHomeDecorTray(trayCheckProduct)) return false;
   const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
   const desc = stripHtml(descriptionHtml || "").trim();
   const text = [(title || "").trim(), desc].filter(Boolean).join(" ").toLowerCase();
@@ -3195,6 +3197,10 @@ function detectLuxuryCategoryEvidence(title, descriptionHtml, product = null) {
 
   if (isWristwatchProduct(title, descriptionHtml, product)) {
     return { category: "Accessories", confidence: 1, reason: "wristwatch" };
+  }
+
+  if (product && productLooksLikeHomeDecorTray(product)) {
+    return { category: null, confidence: 0, reason: "home_decor_tray" };
   }
 
   if (textSuggestsFurnitureRingHardware(combined)) return { category: null, confidence: 0, reason: "furniture_ring_pull" };
@@ -5024,6 +5030,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
       !productLooksLikeBookFilmOrMedia(product) &&
       !productLooksLikeFurnitureHomeBox(product) &&
       !productLooksLikeLightingFixture(product) &&
+      !productLooksLikeHomeDecorTray(product) &&
       isJewelryProduct(product?.title || "", product?.body_html || "", product)
     ) {
       detectedVertical = "luxury";

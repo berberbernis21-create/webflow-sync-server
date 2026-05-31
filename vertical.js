@@ -23,6 +23,8 @@ const FURNITURE_TRAP_PHRASES = [
   "wall clock", "wall clocks", "mantel clock", "mantle clock", "grandfather clock",
   "wall hanging", "wall hangings", "wall tapestry", "macrame wall", "woven wall hanging",
   "beaded wall hanging", "tapestry wall hanging", "textile wall hanging",
+  "serving tray", "serving trays", "linen tray", "decorative tray", "ottoman tray",
+  "butler tray", "butlers tray", "butler's tray", "catchall tray", "valet tray",
   "wood doll", "wooden doll", "vintage doll", "nesting doll", "matryoshka", "dollhouse",
 ];
 
@@ -116,11 +118,32 @@ function getFurnitureTrapText(product) {
   return `${title} ${typeAndTags}`.replace(/-/g, " ");
 }
 
+/** Home serving/decor trays (not tray tables, not jewelry-storage trays). Title/type/tags only. */
+export function productLooksLikeHomeDecorTray(product) {
+  const text = getFurnitureTrapText(product);
+  if (!text.trim()) return false;
+  const trayIsTable =
+    /\btray tables?\b/.test(text) ||
+    /\btv tray tables?\b/.test(text) ||
+    /\bfolding tray tables?\b/.test(text) ||
+    /\bbutlers? trays? tables?\b/.test(text) ||
+    /\bbutler'?s trays? tables?\b/.test(text);
+  if (trayIsTable) return false;
+  if (/\b(jewelry|jewellery)\s+trays?\b/.test(text)) return true;
+  if (/\b(serving|linen|decorative|ottoman|breakfast|coffee|tea|butler|butlers|catchall|valet)\s+trays?\b/.test(text)) {
+    return true;
+  }
+  if (/\btrays?\s+(with|w\/)\s+handles?\b/.test(text)) return true;
+  if (/\btrays?\b/.test(text) && !/\b(jewelry|jewellery|watch)\s+trays?\b/.test(text)) return true;
+  return false;
+}
+
 /**
- * Home decor that must stay Furniture & Home (coat racks, wall hangings, etc.).
- * Title/type/tags only so description copy (e.g. "hooks for handbags", "leather") does not misroute to luxury.
+ * Home decor that must stay Furniture & Home (coat racks, wall hangings, trays, etc.).
+ * Title/type/tags only so description copy (e.g. "hooks for handbags", "leather", "jewelry") does not misroute to luxury.
  */
 export function productLooksLikeFurnitureTrap(product) {
+  if (productLooksLikeHomeDecorTray(product)) return true;
   const text = getFurnitureTrapText(product);
   if (!text.trim()) return false;
   for (const phrase of FURNITURE_TRAP_PHRASES) {
@@ -177,6 +200,8 @@ const DESCRIPTION_FURNITURE_PHRASES = [
   "keeps your jewelry", "store your jewelry", "display your jewelry", "for storing jewelry",
   "holds your jewelry", "organize your jewelry", "keeps your shoes", "store your shoes",
   "entrance bench", "hall tree",
+  "serving tray", "linen tray", "decorative tray", "catchall tray", "valet tray",
+  "dresser organizer", "entryway valet", "living room catchall",
 ];
 
 /** Strong bag/accessory/footwear/jewelry words in title → luxury (handbag, belt, shoe, earring, etc. are very easy to detect). */
@@ -239,6 +264,8 @@ export function detectVertical(product) {
       descriptionText.includes(phrase.toLowerCase())
     );
     if (descriptionSaysFurniture) return "furniture";
+    // Product type "Jewelry" must not override a clear home tray in the title (e.g. linen serving tray).
+    if (matchWordBoundary(title, "tray") || matchWordBoundary(title, "trays")) return "furniture";
     return "luxury";
   }
 

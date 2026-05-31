@@ -860,7 +860,7 @@ export async function classifyWithLLM(product, logPayload = {}, logFn = null) {
     const rackResult = {
       category: "HOME_INTERIOR",
       confidence: 1,
-      reasoning: "Home wall decor or entryway furniture (wall hanging, coat rack, hall tree, etc.); Furniture & Home, not luxury wearables.",
+      reasoning: "Home decor (wall hanging, serving tray, coat rack, hall tree, etc.); Furniture & Home, not luxury wearables.",
     };
     logPayload.raw = null;
     logPayload.parsed = null;
