@@ -202,6 +202,7 @@ const DESCRIPTION_FURNITURE_PHRASES = [
   "entrance bench", "hall tree",
   "serving tray", "linen tray", "decorative tray", "catchall tray", "valet tray",
   "dresser organizer", "entryway valet", "living room catchall",
+  "leather-wrapped ring", "wrapped ring", "wall decor", "wall-decor",
 ];
 
 /** Strong bag/accessory/footwear/jewelry words in title → luxury (handbag, belt, shoe, earring, etc. are very easy to detect). */

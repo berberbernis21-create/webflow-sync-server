@@ -2160,7 +2160,7 @@ async function removeConditionOptionIfFurniture(product) {
    HASH FOR CHANGE DETECTION
    Includes dimensions (variant + metafields + tag lines) so dimension changes still invalidate the fast path.
    body_html is normalized (collapse whitespace) so Shopify formatting drift doesn't cause false "changed".
-   taxonomyVersion: bump this when category/vertical logic changes so all items resync once (13 = vertical vision only when unsure / conflict / fallback).
+   taxonomyVersion: bump this when category/vertical logic changes so all items resync once (14 = wall hanging / home tray traps beat jewelry ring false positives).
    Image URLs strip query strings (CDN signature / width params often rotate without a real asset change).
    Price and dimensions are normalized so "199.0" vs "199.00" or float noise doesn't churn the cache.
 ====================================================== */
@@ -2240,7 +2240,7 @@ function shopifyHash(product) {
     images: imagesStable,
     slug: product.handle,
     dimensions,
-    taxonomyVersion: 13,
+    taxonomyVersion: 14,
     jewelryReclassVersion,
   };
 }
@@ -2253,7 +2253,7 @@ function contentHashForLLM(product) {
     product_type: (product.product_type || "").trim(),
     tagsKey: tagsFingerprintForHash(product),
     body_html: normalizeHtmlForHash(product.body_html),
-    taxonomyVersion: 13,
+    taxonomyVersion: 14,
     jewelryReclassVersion,
   };
 }
@@ -3156,8 +3156,9 @@ function textSuggestsFurnitureRingHardware(text) {
 /** True if title or description indicate jewelry — force Jewelry. */
 function isJewelryProduct(title, descriptionHtml, product = null) {
   if (isWristwatchProduct(title, descriptionHtml, product)) return false;
-  const trayCheckProduct = product || { title: title || "", product_type: "", tags: [] };
-  if (productLooksLikeHomeDecorTray(trayCheckProduct)) return false;
+  const trapCheckProduct = product || { title: title || "", product_type: "", tags: [] };
+  if (productLooksLikeFurnitureTrap(trapCheckProduct)) return false;
+  if (productLooksLikeHomeDecorTray(trapCheckProduct)) return false;
   const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
   const desc = stripHtml(descriptionHtml || "").trim();
   const text = [(title || "").trim(), desc].filter(Boolean).join(" ").toLowerCase();
@@ -3199,6 +3200,9 @@ function detectLuxuryCategoryEvidence(title, descriptionHtml, product = null) {
     return { category: "Accessories", confidence: 1, reason: "wristwatch" };
   }
 
+  if (product && productLooksLikeFurnitureTrap(product)) {
+    return { category: null, confidence: 0, reason: "furniture_home_trap" };
+  }
   if (product && productLooksLikeHomeDecorTray(product)) {
     return { category: null, confidence: 0, reason: "home_decor_tray" };
   }
@@ -5030,18 +5034,24 @@ async function syncSingleProductCore(product, cache, options = {}) {
       !productLooksLikeBookFilmOrMedia(product) &&
       !productLooksLikeFurnitureHomeBox(product) &&
       !productLooksLikeLightingFixture(product) &&
+      !productLooksLikeFurnitureTrap(product) &&
       !productLooksLikeHomeDecorTray(product) &&
       isJewelryProduct(product?.title || "", product?.body_html || "", product)
     ) {
       detectedVertical = "luxury";
     }
-    const correctedToLuxury = cacheEntry?.vertical === "furniture" && detectedVertical === "luxury";
+    const correctedToLuxury =
+      cacheEntry?.vertical === "furniture" &&
+      detectedVertical === "luxury" &&
+      !productLooksLikeFurnitureTrap(product);
     const correctedToFurniture = cacheEntry?.vertical === "luxury" && detectedVertical === "furniture";
     vertical = correctedToLuxury
       ? "luxury"
       : correctedToFurniture
         ? "furniture"
-        : (cacheEntry?.vertical ?? detectedVertical);
+        : productLooksLikeFurnitureTrap(product)
+          ? "furniture"
+          : (cacheEntry?.vertical ?? detectedVertical);
     verticalCorrected = correctedToLuxury;
     if (productLooksLikeWristwatchLuxury(product)) {
       if (vertical !== "luxury") {
@@ -5255,6 +5265,16 @@ async function syncSingleProductCore(product, cache, options = {}) {
     });
     vertical = "luxury";
     detectedVertical = "luxury";
+  }
+  if (productLooksLikeFurnitureTrap(product) && vertical !== "furniture") {
+    webflowLog("info", {
+      event: "vertical.override_furniture_trap_final",
+      shopifyProductId,
+      productTitle: product.title || "",
+      previousVertical: vertical,
+    });
+    vertical = "furniture";
+    detectedVertical = "furniture";
   }
   if (
     (productLooksLikeHomeClock(product) ||
