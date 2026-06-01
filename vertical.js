@@ -25,8 +25,51 @@ const FURNITURE_TRAP_PHRASES = [
   "beaded wall hanging", "tapestry wall hanging", "textile wall hanging",
   "serving tray", "serving trays", "linen tray", "decorative tray", "ottoman tray",
   "butler tray", "butlers tray", "butler's tray", "catchall tray", "valet tray",
+  "storage trunk", "storage trunks", "blanket trunk", "coffee table trunk", "lift-top trunk",
+  "lift top trunk", "faux leather trunk", "decorative trunk", "accent trunk",
   "wood doll", "wooden doll", "vintage doll", "nesting doll", "matryoshka", "dollhouse",
 ];
+
+/** Title/type/tag cues that mean home furniture trunk, not designer travel luggage. */
+const HOME_TRUNK_SIGNALS = [
+  "storage trunk", "blanket trunk", "coffee table trunk", "lift-top trunk", "lift top trunk",
+  "faux leather trunk", "decorative trunk", "accent trunk", "luggage-style trunk",
+  "storage-trunk", "blanket-trunk", "coffee-table-trunk", "faux-leather-trunk", "decorative-trunk",
+];
+
+/** Designer travel luggage — only when a known luxury brand is present and title is not a home storage trunk. */
+export function productLooksLikeLuxuryDesignerLuggage(product) {
+  const brand = detectBrandFromProduct(product?.title, product?.vendor);
+  if (!brand) return false;
+  const title = (product?.title || "").toLowerCase();
+  const text = getFurnitureTrapText(product);
+  if (HOME_TRUNK_SIGNALS.some((p) => title.includes(p) || text.includes(p.replace(/-/g, " ")))) return false;
+  if (/\b(storage|blanket|coffee table|lift.top|faux leather|decorative|accent)\b/.test(title) && /\btrunks?\b/.test(title)) {
+    return false;
+  }
+  const travelCue =
+    /\btrunks?\b/.test(text) ||
+    matchWordBoundary(text, "luggage") ||
+    /\b(keepall|steamer trunk|hat box|hatbox|weekender|duffle|duffel)\b/.test(text);
+  return travelCue;
+}
+
+/**
+ * Home storage / decor trunks (not Hermès, LV, etc.). Title/type/tags only — ignores misleading Shopify type "Luggage".
+ */
+export function productLooksLikeFurnitureHomeTrunk(product) {
+  if (productLooksLikeLuxuryDesignerLuggage(product)) return false;
+  const title = (product?.title || "").toLowerCase();
+  const text = getFurnitureTrapText(product);
+  if (!text.trim()) return false;
+  if (HOME_TRUNK_SIGNALS.some((p) => title.includes(p) || text.includes(p.replace(/-/g, " ")))) return true;
+  if (/\btrunks?\b/.test(title)) return true;
+  if (/\b(storage|blanket|coffee table|lift.top|faux leather|decorative|accent)\s+trunks?\b/.test(text)) return true;
+  if (/\btrunks?\b/.test(text) && /\b(storage|bedroom.blanket|coffee.table|lift.top|faux.leather|entryway)\b/.test(text)) {
+    return true;
+  }
+  return false;
+}
 
 const FURNITURE_SIGNALS = [
   "furniture",
@@ -144,6 +187,7 @@ export function productLooksLikeHomeDecorTray(product) {
  */
 export function productLooksLikeFurnitureTrap(product) {
   if (productLooksLikeHomeDecorTray(product)) return true;
+  if (productLooksLikeFurnitureHomeTrunk(product)) return true;
   const text = getFurnitureTrapText(product);
   if (!text.trim()) return false;
   for (const phrase of FURNITURE_TRAP_PHRASES) {

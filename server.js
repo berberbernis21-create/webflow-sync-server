@@ -26,7 +26,11 @@ import {
   isAllowedConsignmentOrigin,
 } from "./lib/consignmentCors.js";
 import consignmentRouter from "./routes/consignmentSubmission.js";
-import { productLooksLikeFurnitureTrap, productLooksLikeHomeDecorTray } from "./vertical.js";
+import {
+  productLooksLikeFurnitureTrap,
+  productLooksLikeFurnitureHomeTrunk,
+  productLooksLikeHomeDecorTray,
+} from "./vertical.js";
 
 dotenv.config();
 
@@ -2160,7 +2164,7 @@ async function removeConditionOptionIfFurniture(product) {
    HASH FOR CHANGE DETECTION
    Includes dimensions (variant + metafields + tag lines) so dimension changes still invalidate the fast path.
    body_html is normalized (collapse whitespace) so Shopify formatting drift doesn't cause false "changed".
-   taxonomyVersion: bump this when category/vertical logic changes so all items resync once (14 = wall hanging / home tray traps beat jewelry ring false positives).
+   taxonomyVersion: bump this when category/vertical logic changes so all items resync once (15 = home decor trunks vs designer luggage).
    Image URLs strip query strings (CDN signature / width params often rotate without a real asset change).
    Price and dimensions are normalized so "199.0" vs "199.00" or float noise doesn't churn the cache.
 ====================================================== */
@@ -2240,7 +2244,7 @@ function shopifyHash(product) {
     images: imagesStable,
     slug: product.handle,
     dimensions,
-    taxonomyVersion: 14,
+    taxonomyVersion: 15,
     jewelryReclassVersion,
   };
 }
@@ -2253,7 +2257,7 @@ function contentHashForLLM(product) {
     product_type: (product.product_type || "").trim(),
     tagsKey: tagsFingerprintForHash(product),
     body_html: normalizeHtmlForHash(product.body_html),
-    taxonomyVersion: 14,
+    taxonomyVersion: 15,
     jewelryReclassVersion,
   };
 }
@@ -2587,6 +2591,9 @@ function furnitureAccessoryCategoryOverrideTitle(title) {
     (/\b(tapestry|macrame|woven|beaded)\b/.test(t) && /\bwall\b/.test(t))
   ) {
     return "ArtMirrors";
+  }
+  if (/\btrunks?\b/.test(t) && !/\b(hermes|hermès|louis vuitton|goyard|moynat|delvaux|valextra)\b/i.test(t)) {
+    return "Accessories";
   }
   const jewelryPendantPhrase =
     /\bpendants?\s+(necklace|necklaces|charm|charms)\b/.test(t) ||
@@ -5354,6 +5361,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
         const forcedCat = furnitureAccessoryCategoryOverrideTitle(name);
         let resolved = forcedCat ?? detectCategoryFurniture(name, description, productTags, dimensions);
         if (furnitureSleepSurfaceIndicatesBedroom(name, description, productTags)) resolved = "Bedroom";
+        if (productLooksLikeFurnitureHomeTrunk(product)) resolved = "Accessories";
         categoryForMetafield = mapFurnitureCategoryForShopify(resolved);
       }
     } else {
@@ -5432,6 +5440,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
         });
       }
       if (furnitureSleepSurfaceIndicatesBedroom(name, description, productTags)) resolved = "Bedroom";
+      if (productLooksLikeFurnitureHomeTrunk(product)) resolved = "Accessories";
       categoryForMetafield = mapFurnitureCategoryForShopify(resolved);
     }
   } else {

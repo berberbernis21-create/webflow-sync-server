@@ -113,6 +113,8 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
     "curtain", "curtains", "drapery", "draperies", "valance",
     "door knocker", "door hardware", "hardware", "knob", "pull",
     "coat rack", "hat rack", "luggage rack", "magazine rack", "wine rack", "key holder",
+    "trunk", "trunks", "storage trunk", "blanket trunk", "decorative trunk", "accent trunk",
+    "faux leather trunk", "lift-top trunk", "coffee table trunk",
     "trinket", "objet", "ornament", "decorative", "accent piece",
     "encyclopedia", "encyclopedias", "coffee table book", "coffee table books",
     "hardcover book", "hardcover books", "art book", "art books", "illustrated book", "tome",
