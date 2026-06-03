@@ -4,7 +4,14 @@ import crypto from "crypto";
 import dotenv from "dotenv";
 import fs from "fs";
 import twilio from "twilio";
-import { isResendConfigured, parseRecipients, sendInternalNotification } from "./emailService.js";
+import {
+  isMissingFieldsEmailGroupConfigured,
+  isResendConfigured,
+  getMissingFieldsEmailGroupRecipients,
+  parseRecipients,
+  sendInternalNotification,
+  sendMissingFieldsEmailGroupNotification,
+} from "./emailService.js";
 import { CATEGORY_KEYWORDS } from "./categoryKeywords.js";
 import { CATEGORY_KEYWORDS_FURNITURE, CATEGORY_KEYWORDS_FURNITURE_WEAK } from "./categoryKeywordsFurniture.js";
 import { detectBrandFromProduct } from "./brand.js";
@@ -787,11 +794,19 @@ async function sendMissingDimensionsAlertEmail(product, dimensions, verticalLabe
   const dedupeKey = dimensionsAlertDedupeKey(shopifyProductId, missing);
   if (sent.has(dedupeKey) || sent.has(shopifyProductId)) return;
 
-  if (!isResendConfigured()) {
-    webflowLog("warn", { event: "dimensions_missing.email_skipped", reason: "missing_env", shopifyProductId, missing });
+  if (!isMissingFieldsEmailGroupConfigured()) {
+    webflowLog("warn", {
+      event: "dimensions_missing.email_skipped",
+      reason: "missing_env",
+      shopifyProductId,
+      missing,
+      MISSING_FIELDS_EMAIL_GROUP: !!process.env.MISSING_FIELDS_EMAIL_GROUP,
+      RESEND_API_KEY: !!process.env.RESEND_API_KEY,
+      FROM_EMAIL: !!process.env.FROM_EMAIL,
+    });
     return;
   }
-  const recipients = parseRecipients(process.env.INTERNAL_NOTIFY_EMAIL);
+  const recipients = getMissingFieldsEmailGroupRecipients();
 
   const store = process.env.SHOPIFY_STORE || "";
   const adminUrl = store ? `https://admin.shopify.com/store/${store}/products/${shopifyProductId}` : "";
@@ -816,7 +831,7 @@ async function sendMissingDimensionsAlertEmail(product, dimensions, verticalLabe
     `Shopify product ID: ${shopifyProductId}`,
     adminUrl ? `Admin: ${adminUrl}` : "",
     `Parsed dimensions: ${dimSummary}`,
-    recipients.length ? `Alert recipients (INTERNAL_NOTIFY_EMAIL): ${recipients.join(", ")}` : "",
+    recipients.length ? `Alert recipients (MISSING_FIELDS_EMAIL_GROUP): ${recipients.join(", ")}` : "",
     "",
     notePreview
       ? `The product description will include: ${notePreview} until all listed dimensions are set.`
@@ -831,7 +846,7 @@ async function sendMissingDimensionsAlertEmail(product, dimensions, verticalLabe
     missing.length === 1 ? missing[0] : `${missing.length} fields (${missing.join(", ")})`;
 
   try {
-    await sendInternalNotification({
+    await sendMissingFieldsEmailGroupNotification({
       subject: `[Webflow Sync] Missing dimensions (${subjectMissing}) - ${title.slice(0, 50)}${title.length > 50 ? "…" : ""}`,
       text: body,
     });

@@ -55,7 +55,7 @@ export async function sendEmail({ to, subject, html, text, replyTo }) {
 }
 
 /**
- * Internal ops alerts (duplicate placement, Shopify write failures, missing dimensions, Google guard, SKU images).
+ * Internal ops alerts (duplicate placement, Shopify write failures, Google guard, SKU images).
  * Env: INTERNAL_NOTIFY_EMAIL (comma-separated allowed).
  */
 export async function sendInternalNotification({ subject, html, text, replyTo }) {
@@ -64,6 +64,31 @@ export async function sendInternalNotification({ subject, html, text, replyTo })
     throw new Error("Missing INTERNAL_NOTIFY_EMAIL");
   }
   return sendEmail({ to, subject, html, text, replyTo });
+}
+
+/** Recipients for missing width/height/length/weight alerts (furniture sync). Separate from INTERNAL_NOTIFY_EMAIL. */
+export function getMissingFieldsEmailGroupRecipients() {
+  return parseRecipients(process.env.MISSING_FIELDS_EMAIL_GROUP);
+}
+
+export function isMissingFieldsEmailGroupConfigured() {
+  return Boolean(
+    process.env.RESEND_API_KEY &&
+      process.env.FROM_EMAIL &&
+      getMissingFieldsEmailGroupRecipients().length > 0
+  );
+}
+
+/**
+ * Missing-dimension / missing-fields alerts only.
+ * Env: MISSING_FIELDS_EMAIL_GROUP (comma-separated).
+ */
+export async function sendMissingFieldsEmailGroupNotification({ subject, html, text, replyTo }) {
+  const recipients = getMissingFieldsEmailGroupRecipients();
+  if (recipients.length === 0) {
+    throw new Error("Missing MISSING_FIELDS_EMAIL_GROUP");
+  }
+  return sendEmail({ to: recipients, subject, html, text, replyTo });
 }
 
 /**
