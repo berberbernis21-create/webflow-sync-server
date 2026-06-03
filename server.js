@@ -663,8 +663,8 @@ const SKU_IMAGE_FAIL_EMAIL_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 const SOLD_BACKFILL_DONE_FILE =
   process.env.SOLD_BACKFILL_DONE_FILE || `${DATA_DIR}/sold_retention_backfill_2026-04-02.done`;
 
-/** Appended to Shopify/Webflow description when Furniture product has no weight in Shopify. */
-const WEIGHT_VALIDATE_NOTE_HTML = '<br><br><em>(Please validate weight if weight is ever missing.)</em>';
+/** Parsed furniture dimensions we alert on when any value is missing (variant, tags, metafields). */
+const FURNITURE_DIMENSION_ALERT_KEYS = ["width", "height", "length", "weight"];
 
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) {
@@ -715,9 +715,25 @@ function saveWeightMissingEmailSentIds(set) {
   }
 }
 
+function pruneDimensionsAlertSentForProduct(set, shopifyProductId) {
+  const pid = String(shopifyProductId || "").trim();
+  if (!pid) return;
+  const prefix = `${pid}|`;
+  for (const k of [...set]) {
+    if (k === pid || k.startsWith(prefix)) set.delete(k);
+  }
+}
+
 function clearWeightMissingEmailSentId(shopifyProductId) {
   const set = loadWeightMissingEmailSentIds();
-  if (set.delete(String(shopifyProductId))) saveWeightMissingEmailSentIds(set);
+  const before = set.size;
+  pruneDimensionsAlertSentForProduct(set, shopifyProductId);
+  if (set.size !== before) saveWeightMissingEmailSentIds(set);
+}
+
+function dimensionsAlertDedupeKey(shopifyProductId, missingKeys) {
+  const sorted = [...(missingKeys || [])].sort().join(",");
+  return `${String(shopifyProductId)}|${sorted}`;
 }
 
 function loadGoogleGuardEmailSentIds() {
@@ -758,15 +774,21 @@ function clearGoogleGuardEmailSentIds(shopifyProductId) {
   if (changed) saveGoogleGuardEmailSentIds(set);
 }
 
-/** One email per product until weight is added; uses same Resend setup as duplicate-placement alerts. */
-async function sendMissingWeightAlertEmail(product, dimensions, verticalLabel) {
+/** One email per product per missing-dimension set; uses same Resend setup as duplicate-placement alerts. */
+async function sendMissingDimensionsAlertEmail(product, dimensions, verticalLabel, missingKeys) {
   const shopifyProductId = String(product?.id ?? "");
   if (!shopifyProductId) return;
+  const missing = Array.isArray(missingKeys) && missingKeys.length
+    ? missingKeys
+    : getMissingFurnitureDimensionKeys(dimensions);
+  if (!missing.length) return;
+
   const sent = loadWeightMissingEmailSentIds();
-  if (sent.has(shopifyProductId)) return;
+  const dedupeKey = dimensionsAlertDedupeKey(shopifyProductId, missing);
+  if (sent.has(dedupeKey) || sent.has(shopifyProductId)) return;
 
   if (!isResendConfigured()) {
-    webflowLog("warn", { event: "weight_missing.email_skipped", reason: "missing_env", shopifyProductId });
+    webflowLog("warn", { event: "dimensions_missing.email_skipped", reason: "missing_env", shopifyProductId, missing });
     return;
   }
   const recipients = parseRecipients(process.env.INTERNAL_NOTIFY_EMAIL);
@@ -775,38 +797,60 @@ async function sendMissingWeightAlertEmail(product, dimensions, verticalLabel) {
   const adminUrl = store ? `https://admin.shopify.com/store/${store}/products/${shopifyProductId}` : "";
   const title = product?.title || "(no title)";
   const dims = dimensions || {};
-  const dimSummary = ["width", "height", "length", "weight"]
-    .map((k) => (dims[k] != null && !Number.isNaN(dims[k]) ? `${k}: ${dims[k]}` : null))
-    .filter(Boolean)
-    .join(", ");
+  const dimSummary = FURNITURE_DIMENSION_ALERT_KEYS.map((k) => {
+    const present = isFurnitureDimensionPresent(dims, k);
+    const val = dims[k];
+    if (present) return `${k}: ${val}`;
+    return `${k}: (missing)`;
+  }).join(", ");
+  const missingHuman = formatMissingDimensionsHuman(missing);
+  const notePreview = buildDimensionsValidateNoteHtml(missing).replace(/<[^>]+>/g, "").trim();
 
   const label = verticalLabel || "Product";
   const body = [
-    `A ${label} product is missing weight in Shopify (variant weight / tags / metafields).`,
-    "Please add weight (variant or tags, e.g. Weight: 2 lb) so Webflow sync and listings stay complete.",
+    `A ${label} product is missing parsed dimension(s) in Shopify (variant weight, tags, or custom metafields).`,
+    `Missing: ${missingHuman}.`,
+    "Please add the missing values (e.g. Width: 8, Height: 42, Length: 8, Weight: 2 lb in tags or variant weight) so Webflow sync and listings stay complete.",
     "",
     `Product: ${title}`,
     `Shopify product ID: ${shopifyProductId}`,
     adminUrl ? `Admin: ${adminUrl}` : "",
-    dimSummary ? `Parsed dimensions: ${dimSummary}` : "Parsed dimensions: (none or incomplete)",
+    `Parsed dimensions: ${dimSummary}`,
+    recipients.length ? `Alert recipients (INTERNAL_NOTIFY_EMAIL): ${recipients.join(", ")}` : "",
     "",
-    "The product description will include: (Please validate weight if weight is ever missing.) until weight is set.",
+    notePreview
+      ? `The product description will include: ${notePreview} until all listed dimensions are set.`
+      : "",
     "",
     "- Lost & Found Webflow Sync",
   ]
     .filter(Boolean)
     .join("\n");
 
+  const subjectMissing =
+    missing.length === 1 ? missing[0] : `${missing.length} fields (${missing.join(", ")})`;
+
   try {
     await sendInternalNotification({
-      subject: `[Webflow Sync] Missing weight - ${title.slice(0, 60)}${title.length > 60 ? "…" : ""}`,
+      subject: `[Webflow Sync] Missing dimensions (${subjectMissing}) - ${title.slice(0, 50)}${title.length > 50 ? "…" : ""}`,
       text: body,
     });
-    sent.add(shopifyProductId);
+    pruneDimensionsAlertSentForProduct(sent, shopifyProductId);
+    sent.add(dedupeKey);
     saveWeightMissingEmailSentIds(sent);
-    webflowLog("info", { event: "weight_missing.email_sent", shopifyProductId, to: recipients });
+    webflowLog("info", {
+      event: "dimensions_missing.email_sent",
+      shopifyProductId,
+      missing,
+      to: recipients,
+    });
   } catch (err) {
-    webflowLog("error", { event: "weight_missing.email_failed", shopifyProductId, message: err.message });
+    webflowLog("error", {
+      event: "dimensions_missing.email_failed",
+      shopifyProductId,
+      missing,
+      message: err.message,
+    });
   }
 }
 
@@ -3520,6 +3564,26 @@ function hasAnyDimensions(dims) {
   );
 }
 
+function isFurnitureDimensionPresent(dims, key) {
+  const v = dims?.[key];
+  if (key === "weight") return v != null && !Number.isNaN(Number(v)) && Number(v) > 0;
+  return v != null && !Number.isNaN(Number(v));
+}
+
+function getMissingFurnitureDimensionKeys(dims) {
+  return FURNITURE_DIMENSION_ALERT_KEYS.filter((k) => !isFurnitureDimensionPresent(dims, k));
+}
+
+function formatMissingDimensionsHuman(keys) {
+  return keys.map((k) => (k === "length" ? "length (depth)" : k)).join(", ");
+}
+
+function buildDimensionsValidateNoteHtml(missingKeys) {
+  if (!missingKeys?.length) return "";
+  const human = formatMissingDimensionsHuman(missingKeys);
+  return `<br><br><em>(Please validate ${human} if ever missing.)</em>`;
+}
+
 /** Format dimensions for description. Dimensions on one line, weight on the next. Uses <br> for HTML line breaks. Only called when hasAnyDimensions. */
 function formatDimensionsForDescription(dims) {
   if (!dims || !hasAnyDimensions(dims)) return "";
@@ -3556,10 +3620,14 @@ function stripExistingDimensions(descriptionHtml) {
   return s.trim();
 }
 
-/** Remove the sync-appended weight validation note so we can replace it cleanly. */
+/** Remove the sync-appended dimension validation note so we can replace it cleanly. */
 function stripWeightValidateNote(descriptionHtml) {
   if (!descriptionHtml || typeof descriptionHtml !== "string") return "";
   return descriptionHtml
+    .replace(
+      /(?:<br\s*\/?>\s*)*<em>\s*\(\s*Please validate[\s\S]*?if ever missing\.\s*\)\s*<\/em>/gi,
+      ""
+    )
     .replace(/(?:<br\s*\/?>\s*)*<em>\s*\(\s*Please validate weight if weight is ever missing\.\s*\)\s*<\/em>/gi, "")
     .trim();
 }
@@ -5557,12 +5625,12 @@ async function syncSingleProductCore(product, cache, options = {}) {
     }
   }
 
-  // Furniture only: missing weight — email once per product; append validation note to Shopify/Webflow description.
-  // Luxury: no missing-weight emails or notes; strip any legacy note and clear dedupe id so a future furniture sync can alert if reclassified.
-  const weightMissing =
-    dimensions.weight == null || Number.isNaN(dimensions.weight) || dimensions.weight <= 0;
+  // Furniture only: missing width/height/length/weight — email once per missing set; append validation note to description.
+  // Luxury: no dimension alert emails or notes; strip any legacy note and clear dedupe id so a future furniture sync can alert if reclassified.
+  const missingDimensionKeys = getMissingFurnitureDimensionKeys(dimensions);
+  const dimensionsIncomplete = missingDimensionKeys.length > 0;
   const notSold = !soldNow && shopifyCategoryValue !== "Recently Sold";
-  const trackMissingWeight = notSold && vertical === "furniture";
+  const trackMissingDimensions = notSold && vertical === "furniture";
 
   if (soldNow || shopifyCategoryValue === "Recently Sold") {
     const cleaned = stripWeightValidateNote(description || "").trimEnd();
@@ -5581,11 +5649,11 @@ async function syncSingleProductCore(product, cache, options = {}) {
     }
   }
 
-  if (trackMissingWeight) {
-    if (weightMissing) {
-      await sendMissingWeightAlertEmail(product, dimensions, "Furniture & Home");
+  if (trackMissingDimensions) {
+    if (dimensionsIncomplete) {
+      await sendMissingDimensionsAlertEmail(product, dimensions, "Furniture & Home", missingDimensionKeys);
       const withoutNote = stripWeightValidateNote(description || "").trimEnd();
-      const withNote = withoutNote + WEIGHT_VALIDATE_NOTE_HTML;
+      const withNote = withoutNote + buildDimensionsValidateNoteHtml(missingDimensionKeys);
       if (withNote !== (description || "")) {
         description = withNote;
         descriptionChanged = withNote !== originalDescription;
@@ -7397,7 +7465,11 @@ async function syncGoogleMerchantFurnitureFromShopifyProduct(product, availabili
   const payload = await buildGoogleFurnitureProductFromShopify(productForGoogle, availability);
   if (!payload || !payload.offerId || !payload.title) return false;
   if (!hasValidGoogleShippingWeight(payload.shippingWeight)) {
-    await sendMissingWeightAlertEmail(product, getDimensionsFromProduct(product || {}), "Furniture");
+    const googleDims = getDimensionsFromProduct(product || {});
+    const googleMissing = getMissingFurnitureDimensionKeys(googleDims);
+    if (googleMissing.length) {
+      await sendMissingDimensionsAlertEmail(product, googleDims, "Furniture", googleMissing);
+    }
     await sendGoogleFeedDataIssueEmail({
       product,
       issue: "missing_shipping_weight",

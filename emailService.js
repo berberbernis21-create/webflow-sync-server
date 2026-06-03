@@ -55,7 +55,7 @@ export async function sendEmail({ to, subject, html, text, replyTo }) {
 }
 
 /**
- * Internal ops alerts (duplicate placement, Shopify write failures, weight, Google guard, SKU images).
+ * Internal ops alerts (duplicate placement, Shopify write failures, missing dimensions, Google guard, SKU images).
  * Env: INTERNAL_NOTIFY_EMAIL (comma-separated allowed).
  */
 export async function sendInternalNotification({ subject, html, text, replyTo }) {
