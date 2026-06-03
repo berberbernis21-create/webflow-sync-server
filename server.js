@@ -812,42 +812,41 @@ async function sendMissingDimensionsAlertEmail(product, dimensions, verticalLabe
   const adminUrl = store ? `https://admin.shopify.com/store/${store}/products/${shopifyProductId}` : "";
   const title = product?.title || "(no title)";
   const dims = dimensions || {};
-  const dimSummary = FURNITURE_DIMENSION_ALERT_KEYS.map((k) => {
-    const present = isFurnitureDimensionPresent(dims, k);
-    const val = dims[k];
-    if (present) return `${k}: ${val}`;
-    return `${k}: (missing)`;
-  }).join(", ");
   const missingHuman = formatMissingDimensionsHuman(missing);
-  const notePreview = buildDimensionsValidateNoteHtml(missing).replace(/<[^>]+>/g, "").trim();
+  const listingNote = dimensionsValidateNotePlainText(missing);
+  const parsedLines = FURNITURE_DIMENSION_ALERT_KEYS.map((k) => {
+    const present = isFurnitureDimensionPresent(dims, k);
+    const label = k === "length" ? "length (depth)" : k;
+    return present ? `${label}: ${dims[k]}` : `${label}: missing`;
+  });
 
-  const label = verticalLabel || "Product";
   const body = [
-    `A ${label} product is missing parsed dimension(s) in Shopify (variant weight, tags, or custom metafields).`,
-    `Missing: ${missingHuman}.`,
-    "Please add the missing values (e.g. Width: 8, Height: 42, Length: 8, Weight: 2 lb in tags or variant weight) so Webflow sync and listings stay complete.",
+    "Missing fields on a Furniture & Home listing.",
     "",
     `Product: ${title}`,
-    `Shopify product ID: ${shopifyProductId}`,
-    adminUrl ? `Admin: ${adminUrl}` : "",
-    `Parsed dimensions: ${dimSummary}`,
-    recipients.length ? `Alert recipients (MISSING_FIELDS_EMAIL_GROUP): ${recipients.join(", ")}` : "",
+    `Missing: ${missingHuman}`,
     "",
-    notePreview
-      ? `The product description will include: ${notePreview} until all listed dimensions are set.`
+    "Please fix in SimpleConsign:",
+    SIMPLECONSIGN_URL,
+    "",
+    adminUrl ? `Shopify (reference): ${adminUrl}` : "",
+    "",
+    "Parsed today:",
+    ...parsedLines.map((line) => `  ${line}`),
+    "",
+    listingNote
+      ? `Until fixed, this note is appended on the listing description:\n${listingNote}`
       : "",
-    "",
-    "- Lost & Found Webflow Sync",
   ]
     .filter(Boolean)
     .join("\n");
 
   const subjectMissing =
-    missing.length === 1 ? missing[0] : `${missing.length} fields (${missing.join(", ")})`;
+    missing.length === 1 ? missing[0] : missing.join(", ");
 
   try {
     await sendMissingFieldsEmailGroupNotification({
-      subject: `[Webflow Sync] Missing dimensions (${subjectMissing}) - ${title.slice(0, 50)}${title.length > 50 ? "…" : ""}`,
+      subject: `[Webflow Sync] Missing fields (${subjectMissing}) - ${title.slice(0, 45)}${title.length > 45 ? "…" : ""}`,
       text: body,
     });
     pruneDimensionsAlertSentForProduct(sent, shopifyProductId);
@@ -3589,14 +3588,21 @@ function getMissingFurnitureDimensionKeys(dims) {
   return FURNITURE_DIMENSION_ALERT_KEYS.filter((k) => !isFurnitureDimensionPresent(dims, k));
 }
 
+const SIMPLECONSIGN_URL = "https://user.traxia.com/#home";
+
 function formatMissingDimensionsHuman(keys) {
   return keys.map((k) => (k === "length" ? "length (depth)" : k)).join(", ");
 }
 
-function buildDimensionsValidateNoteHtml(missingKeys) {
+function dimensionsValidateNotePlainText(missingKeys) {
   if (!missingKeys?.length) return "";
   const human = formatMissingDimensionsHuman(missingKeys);
-  return `<br><br><em>(Please validate ${human} if ever missing.)</em>`;
+  return `(Please validate ${human} if ever missing.)`;
+}
+
+function buildDimensionsValidateNoteHtml(missingKeys) {
+  if (!missingKeys?.length) return "";
+  return `<br><br><em>${dimensionsValidateNotePlainText(missingKeys)}</em>`;
 }
 
 /** Format dimensions for description. Dimensions on one line, weight on the next. Uses <br> for HTML line breaks. Only called when hasAnyDimensions. */
