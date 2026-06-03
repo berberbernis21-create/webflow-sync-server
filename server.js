@@ -1711,6 +1711,18 @@ function isRetryableShopifyWriteError(err) {
   );
 }
 
+/** Product deleted or sold off Shopify — retries and failure emails are not actionable. */
+function isShopifyProductGoneError(err) {
+  if (err?.response?.status === 404) return true;
+  const msg = String(err?.message || "").toLowerCase();
+  return (
+    msg.includes("does not exist") ||
+    msg.includes("product not found") ||
+    msg.includes("resource not found") ||
+    msg.includes("not found")
+  );
+}
+
 function shopifyRetryDelayMs(err, attemptIndex) {
   const headers = err?.response?.headers;
   const raw = headers?.["retry-after"] ?? headers?.["Retry-After"];
@@ -5588,14 +5600,32 @@ async function syncSingleProductCore(product, cache, options = {}) {
     }
   }
 
-  try {
-    // Remove "Condition" option only for products we're actually syncing as Furniture.
-    if (vertical === "furniture") {
-      await removeConditionOptionIfFurniture(product);
+  let skipShopifyWrites = shopifyCategoryValue === "Recently Sold";
+  if (!skipShopifyWrites) {
+    const preWriteStatus = await fetchShopifyProductStatus(shopifyProductId);
+    if (preWriteStatus?.status === "gone") {
+      skipShopifyWrites = true;
+      webflowLog("info", {
+        event: "sync_product.shopify_write_skipped_gone",
+        shopifyProductId,
+        productTitle: name,
+        vertical,
+        message: "Shopify product no longer exists; skipping metafield/product writes",
+      });
+      await processDisappearedShopifyProduct(shopifyProductId, cache, {
+        trigger: "sync.shopify_gone_pre_write",
+      });
     }
+  }
 
-    // Write metafields + vendor/type/tags to Shopify so Shopify matches the vertical we're syncing to Webflow.
-    if (shopifyCategoryValue !== "Recently Sold") {
+  try {
+    if (!skipShopifyWrites) {
+      // Remove "Condition" option only for products we're actually syncing as Furniture.
+      if (vertical === "furniture") {
+        await removeConditionOptionIfFurniture(product);
+      }
+
+      // Write metafields + vendor/type/tags to Shopify so Shopify matches the vertical we're syncing to Webflow.
       await updateShopifyMetafields(shopifyProductId, {
         department: shopifyDepartment,
         category: shopifyCategoryValue,
@@ -5614,29 +5644,43 @@ async function syncSingleProductCore(product, cache, options = {}) {
       );
     }
   } catch (err) {
-    // Do not fail the whole product sync on transient Shopify write errors; continue to Webflow + cache update.
-    const detail = shopifyWriteFailureEmailText(err);
-    await sendShopifyWriteFailureEmail(
-      {
-        op: "shopify_metafields_or_product_update",
+    // Sold/deleted SKU: no alert email; run disappeared handling and continue Webflow sync.
+    if (isShopifyProductGoneError(err)) {
+      webflowLog("info", {
+        event: "sync_product.shopify_write_skipped_gone_error",
         shopifyProductId,
         productTitle: name,
         vertical,
-        attempts: err?._retryAttempts || SHOPIFY_WRITE_MAX_ATTEMPTS,
-        ...detail,
-      },
-      shopifyWriteEmailSentFor
-    );
-    webflowLog("error", {
-      event: "sync_product.shopify_write_failed_continue",
-      shopifyProductId,
-      productTitle: name,
-      vertical,
-      message: err?.message ?? String(err),
-      status: err?.response?.status ?? null,
-      url: err?.config?.url ?? null,
-      method: err?.config?.method ?? null,
-    });
+        message: err?.message ?? String(err),
+      });
+      await processDisappearedShopifyProduct(shopifyProductId, cache, {
+        trigger: "sync.shopify_gone_write_error",
+      });
+    } else {
+      // Do not fail the whole product sync on transient Shopify write errors; continue to Webflow + cache update.
+      const detail = shopifyWriteFailureEmailText(err);
+      await sendShopifyWriteFailureEmail(
+        {
+          op: "shopify_metafields_or_product_update",
+          shopifyProductId,
+          productTitle: name,
+          vertical,
+          attempts: err?._retryAttempts ?? 1,
+          ...detail,
+        },
+        shopifyWriteEmailSentFor
+      );
+      webflowLog("error", {
+        event: "sync_product.shopify_write_failed_continue",
+        shopifyProductId,
+        productTitle: name,
+        vertical,
+        message: err?.message ?? String(err),
+        status: err?.response?.status ?? null,
+        url: err?.config?.url ?? null,
+        method: err?.config?.method ?? null,
+      });
+    }
   }
 
   // RULE: Only touch Webflow when (1) item removed from Shopify, or (2) item changed in Shopify from previous run.
@@ -6448,17 +6492,20 @@ async function runWebhookSingleProductSync(shopifyProductId, triggerPath) {
       loadFurnitureProductIndex(),
       loadFurnitureSkuIndex(),
     ]);
+    const cache = loadCache();
     const product = await fetchShopifyProductById(id);
     if (!product) {
-      webflowLog("warn", {
+      const disappeared = await processDisappearedShopifyProduct(id, cache, { trigger: triggerPath });
+      saveCache(cache);
+      webflowLog("info", {
         event: "shopify.webhook.sync_skip",
         path: triggerPath,
         shopifyProductId: id,
         reason: "product_not_found_or_fetch_failed",
+        disappeared,
       });
       return;
     }
-    const cache = loadCache();
     const duplicateEmailSentFor = new Set();
     const shopifyWriteEmailSentFor = new Set();
     const result = await syncSingleProduct(product, cache, { duplicateEmailSentFor, shopifyWriteEmailSentFor });
