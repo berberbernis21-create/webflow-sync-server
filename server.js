@@ -672,6 +672,8 @@ const SOLD_BACKFILL_DONE_FILE =
 
 /** Parsed furniture dimensions we alert on when any value is missing (variant, tags, metafields). */
 const FURNITURE_DIMENSION_ALERT_KEYS = ["width", "height", "length", "weight"];
+/** When true (default), missing-fields emails only on new listings — not sync-all backlog. Set false for a one-time sweep. */
+const MISSING_FIELDS_EMAIL_NEW_ONLY = process.env.MISSING_FIELDS_EMAIL_NEW_ONLY !== "false";
 
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) {
@@ -741,6 +743,18 @@ function clearWeightMissingEmailSentId(shopifyProductId) {
 function dimensionsAlertDedupeKey(shopifyProductId, missingKeys) {
   const sorted = [...(missingKeys || [])].sort().join(",");
   return `${String(shopifyProductId)}|${sorted}`;
+}
+
+/** New listing = not in sync cache and not already in the Webflow run index. */
+function shouldEmailMissingFieldsForProduct(shopifyProductId, cacheEntry, vertical) {
+  if (!MISSING_FIELDS_EMAIL_NEW_ONLY) return true;
+  if (cacheEntry?.webflowId) return false;
+  const id = String(shopifyProductId || "").trim();
+  if (!id) return false;
+  if (vertical === "furniture") {
+    return !furnitureProductIndex?.byShopifyId?.has(id);
+  }
+  return !luxuryItemIndex?.byShopifyId?.has(id);
 }
 
 function loadGoogleGuardEmailSentIds() {
@@ -5672,7 +5686,16 @@ async function syncSingleProductCore(product, cache, options = {}) {
 
   if (trackMissingDimensions) {
     if (dimensionsIncomplete) {
-      await sendMissingDimensionsAlertEmail(product, dimensions, "Furniture & Home", missingDimensionKeys);
+      if (shouldEmailMissingFieldsForProduct(shopifyProductId, cacheEntry, vertical)) {
+        await sendMissingDimensionsAlertEmail(product, dimensions, "Furniture & Home", missingDimensionKeys);
+      } else {
+        webflowLog("info", {
+          event: "dimensions_missing.email_skipped",
+          reason: "existing_listing_not_new",
+          shopifyProductId,
+          missing: missingDimensionKeys,
+        });
+      }
       const withoutNote = stripWeightValidateNote(description || "").trimEnd();
       const withNote = withoutNote + buildDimensionsValidateNoteHtml(missingDimensionKeys);
       if (withNote !== (description || "")) {
@@ -6064,7 +6087,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
       if (vertical === "furniture" && config.siteId) {
         await updateWebflowEcommerceProduct(config.siteId, existing.id, fieldData, config.token, existing);
         await syncFurnitureEcommerceSku(product, existing.id, config);
-        await syncGoogleMerchantFurnitureFromShopifyProduct(product, "in stock", "furniture_update");
+        await syncGoogleMerchantFurnitureFromShopifyProduct(product, "in stock", "furniture_update", cache);
       } else {
         await axios.patch(
           `https://api.webflow.com/v2/collections/${config.collectionId}/items/${existing.id}`,
@@ -6169,7 +6192,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
     // Don't recreate sold items (qty 0). If you deleted them from Webflow, we won't push them back.
     if (soldNow) {
       if (vertical === "furniture") {
-        await syncGoogleMerchantFurnitureFromShopifyProduct(product, "out of stock", "skip_create_sold");
+        await syncGoogleMerchantFurnitureFromShopifyProduct(product, "out of stock", "skip_create_sold", cache);
       }
       // Write cache so next run skips LLM for this already-classified sold item.
       cache[shopifyProductId] = {
@@ -6345,7 +6368,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
         ...soldMarkedAtPayload(cacheEntry, qty),
       };
       if (detectedVertical === "furniture") {
-        await syncGoogleMerchantFurnitureFromShopifyProduct(product, "in stock", "furniture_guard_update");
+        await syncGoogleMerchantFurnitureFromShopifyProduct(product, "in stock", "furniture_guard_update", cache);
       }
       webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "update", webflowId: guardExisting.id, vertical: detectedVertical });
       return { operation: "update", id: guardExisting.id };
@@ -6546,7 +6569,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
       ...soldMarkedAtPayload(cacheEntry, qty),
     };
     if (detectedVertical === "furniture") {
-      await syncGoogleMerchantFurnitureFromShopifyProduct(product, soldNow ? "out of stock" : "in stock", "furniture_create");
+      await syncGoogleMerchantFurnitureFromShopifyProduct(product, soldNow ? "out of stock" : "in stock", "furniture_create", cache);
     }
     webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "create", webflowId: newId, vertical: detectedVertical });
     return { operation: "create", id: newId };
@@ -7430,7 +7453,7 @@ async function googleMerchantInsertProduct(payload) {
   });
 }
 
-async function syncGoogleMerchantFurnitureFromShopifyProduct(product, availability = "in stock", reason = "sync") {
+async function syncGoogleMerchantFurnitureFromShopifyProduct(product, availability = "in stock", reason = "sync", cache = null) {
   if (!googleMerchantEnabled() || !product) return false;
   const cfg = getWebflowConfig("furniture");
   const sid = String(product?.id || "").trim();
@@ -7489,7 +7512,10 @@ async function syncGoogleMerchantFurnitureFromShopifyProduct(product, availabili
     const googleDims = getDimensionsFromProduct(product || {});
     const googleMissing = getMissingFurnitureDimensionKeys(googleDims);
     if (googleMissing.length) {
-      await sendMissingDimensionsAlertEmail(product, googleDims, "Furniture", googleMissing);
+      const cacheEntry = cache ? getCacheEntry(cache, sid) : null;
+      if (shouldEmailMissingFieldsForProduct(sid, cacheEntry, "furniture")) {
+        await sendMissingDimensionsAlertEmail(product, googleDims, "Furniture", googleMissing);
+      }
     }
     await sendGoogleFeedDataIssueEmail({
       product,
@@ -8700,7 +8726,8 @@ app.post("/google/furniture/full-push", async (req, res) => {
       const ok = await syncGoogleMerchantFurnitureFromShopifyProduct(
         p,
         soldNow ? "out of stock" : "in stock",
-        "full_push"
+        "full_push",
+        cache
       );
       if (ok) pushed++;
       else failed++;
