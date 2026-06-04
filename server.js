@@ -3255,6 +3255,8 @@ function textSuggestsFurnitureRingHardware(text) {
 /** True if title or description indicate jewelry — force Jewelry. */
 function isJewelryProduct(title, descriptionHtml, product = null) {
   if (isWristwatchProduct(title, descriptionHtml, product)) return false;
+  const titleText = (title || "").trim();
+  if (/\bbrooch(es)?\b/i.test(titleText)) return true;
   const trapCheckProduct = product || { title: title || "", product_type: "", tags: [] };
   if (productLooksLikeFurnitureTrap(trapCheckProduct)) return false;
   if (productLooksLikeHomeDecorTray(trapCheckProduct)) return false;
@@ -5455,7 +5457,55 @@ async function syncSingleProductCore(product, cache, options = {}) {
     detectedVertical = "luxury";
   }
 
-  const config = getWebflowConfig(vertical);
+  // Jewelry guard can set luxury after cache still says furniture — run same move as verticalCorrected.
+  if (vertical === "luxury" && cacheEntry?.vertical === "furniture" && cacheEntry?.webflowId) {
+    const furnitureConfig = getWebflowConfig("furniture");
+    let alreadyArchived = false;
+    if (furnitureConfig?.siteId && furnitureConfig?.token) {
+      const full = await getWebflowEcommerceProductById(
+        furnitureConfig.siteId,
+        cacheEntry.webflowId,
+        furnitureConfig.token
+      );
+      alreadyArchived = full?.isArchived === true;
+      if (alreadyArchived) {
+        webflowLog("info", {
+          event: "vertical.corrected_jewelry_furniture_to_luxury.skipped_already_archived",
+          shopifyProductId,
+          webflowId: cacheEntry.webflowId,
+        });
+        saveDuplicatePlacementSentId(shopifyProductId);
+      } else {
+        try {
+          await deleteWebflowEcommerceProduct(furnitureConfig.siteId, cacheEntry.webflowId, furnitureConfig.token);
+          webflowLog("info", {
+            event: "vertical.corrected_jewelry_furniture_to_luxury",
+            shopifyProductId,
+            webflowId: cacheEntry.webflowId,
+          });
+        } catch (err) {
+          webflowLog("error", {
+            event: "vertical.corrected_jewelry_furniture_to_luxury_failed",
+            shopifyProductId,
+            webflowId: cacheEntry.webflowId,
+            message: err.message,
+          });
+        }
+      }
+    }
+    delete cache[shopifyProductId];
+    const duplicateLog = {
+      productTitle: product.title || "",
+      shopifyProductId,
+      previousVertical: "furniture",
+      detectedVertical: "luxury",
+      webflowItemIdRemoved: cacheEntry.webflowId,
+    };
+    const result = await syncSingleProductCore(product, cache, { ...options, forceReclassify: true });
+    return { ...result, duplicateCorrected: !alreadyArchived, duplicateLog };
+  }
+
+  let config = getWebflowConfig(vertical);
 
   // Use name + description FROM Shopify to decide; then write our decision back to Shopify and update the correct Webflow collection (Luxury or Furniture).
   let name = product.title;
@@ -5754,6 +5804,8 @@ async function syncSingleProductCore(product, cache, options = {}) {
   }
 
   let skipShopifyWrites = shopifyCategoryValue === "Recently Sold";
+  // forceReclassify / sync-by-ids: still push department + tags when correcting vertical (e.g. sold qty 0 brooch).
+  if (options.forceReclassify === true) skipShopifyWrites = false;
   if (!skipShopifyWrites) {
     const preWriteStatus = await fetchShopifyProductStatus(shopifyProductId);
     if (preWriteStatus?.status === "gone") {
@@ -5986,22 +6038,38 @@ async function syncSingleProductCore(product, cache, options = {}) {
         if (live) existing = live;
       }
       if (existing.isArchived === true) {
-        cache[shopifyProductId] = {
-          hash: currentHash,
-          contentHash: currentContentHash,
-          webflowId: existing.id,
-          lastQty: qty,
-          vertical,
-          ...soldMarkedAtPayload(cacheEntry, qty),
-        };
-        webflowLog("info", {
-          event: "sync_product.skip_archived_furniture",
-          shopifyProductId,
-          productTitle: name,
-          webflowId: existing.id,
-          message: "Listing archived; skipping mark-sold and product updates",
-        });
-        return { operation: "skip", id: existing.id };
+        const luxuryHit = luxuryItemIndex?.byShopifyId?.get(String(shopifyProductId));
+        if (options.forceReclassify === true && luxuryHit?.id) {
+          webflowLog("info", {
+            event: "sync_product.archived_furniture_redirect_luxury",
+            shopifyProductId,
+            productTitle: name,
+            furnitureWebflowId: existing.id,
+            luxuryWebflowId: luxuryHit.id,
+            message: "Furniture copy archived; forceReclassify linking cache to Luxury CMS",
+          });
+          existing = luxuryHit;
+          vertical = "luxury";
+          detectedVertical = "luxury";
+          config = getWebflowConfig("luxury");
+        } else {
+          cache[shopifyProductId] = {
+            hash: currentHash,
+            contentHash: currentContentHash,
+            webflowId: existing.id,
+            lastQty: qty,
+            vertical,
+            ...soldMarkedAtPayload(cacheEntry, qty),
+          };
+          webflowLog("info", {
+            event: "sync_product.skip_archived_furniture",
+            shopifyProductId,
+            productTitle: name,
+            webflowId: existing.id,
+            message: "Listing archived; skipping mark-sold and product updates",
+          });
+          return { operation: "skip", id: existing.id };
+        }
       }
     }
 
@@ -9097,6 +9165,9 @@ app.post("/sync-by-ids", async (req, res) => {
           forceReclassify,
           skipMissingFieldsAlert: true,
         });
+        if (result?.duplicateCorrected && result?.duplicateLog) {
+          await sendDuplicatePlacementEmail(result.duplicateLog, duplicateEmailSentFor);
+        }
         const op = result?.operation ?? "unknown";
         if (op === "create") created++;
         else if (op === "update" || op === "sold") updated++;
@@ -9106,6 +9177,7 @@ app.post("/sync-by-ids", async (req, res) => {
           title: product.title || "",
           operation: op,
           webflowId: result?.id ?? null,
+          ...(result?.duplicateCorrected && { duplicateCorrected: true }),
         });
       } catch (err) {
         failed++;
