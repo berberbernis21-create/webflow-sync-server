@@ -5686,21 +5686,23 @@ async function syncSingleProductCore(product, cache, options = {}) {
 
   if (trackMissingDimensions) {
     if (dimensionsIncomplete) {
-      if (shouldEmailMissingFieldsForProduct(shopifyProductId, cacheEntry, vertical)) {
+      const alertNewListingOnly = shouldEmailMissingFieldsForProduct(shopifyProductId, cacheEntry, vertical);
+      if (alertNewListingOnly) {
         await sendMissingDimensionsAlertEmail(product, dimensions, "Furniture & Home", missingDimensionKeys);
+        const withoutNote = stripWeightValidateNote(description || "").trimEnd();
+        const withNote = withoutNote + buildDimensionsValidateNoteHtml(missingDimensionKeys);
+        if (withNote !== (description || "")) {
+          description = withNote;
+          descriptionChanged = withNote !== originalDescription;
+        }
       } else {
         webflowLog("info", {
           event: "dimensions_missing.email_skipped",
           reason: "existing_listing_not_new",
           shopifyProductId,
           missing: missingDimensionKeys,
+          message: "Skipping missing-fields email and description note for existing listing",
         });
-      }
-      const withoutNote = stripWeightValidateNote(description || "").trimEnd();
-      const withNote = withoutNote + buildDimensionsValidateNoteHtml(missingDimensionKeys);
-      if (withNote !== (description || "")) {
-        description = withNote;
-        descriptionChanged = withNote !== originalDescription;
       }
     } else {
       clearWeightMissingEmailSentId(shopifyProductId);
