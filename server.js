@@ -745,8 +745,9 @@ function dimensionsAlertDedupeKey(shopifyProductId, missingKeys) {
   return `${String(shopifyProductId)}|${sorted}`;
 }
 
-/** New listing = not in sync cache and not already in the Webflow run index. */
-function shouldEmailMissingFieldsForProduct(shopifyProductId, cacheEntry, vertical) {
+/** New listing = not in sync cache and not already in the Webflow run index. Never during sync-all. */
+function shouldEmailMissingFieldsForProduct(shopifyProductId, cacheEntry, vertical, options = {}) {
+  if (options.skipMissingFieldsAlert === true) return false;
   if (!MISSING_FIELDS_EMAIL_NEW_ONLY) return true;
   if (cacheEntry?.webflowId) return false;
   const id = String(shopifyProductId || "").trim();
@@ -5686,7 +5687,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
 
   if (trackMissingDimensions) {
     if (dimensionsIncomplete) {
-      const alertNewListingOnly = shouldEmailMissingFieldsForProduct(shopifyProductId, cacheEntry, vertical);
+      const alertNewListingOnly = shouldEmailMissingFieldsForProduct(shopifyProductId, cacheEntry, vertical, options);
       if (alertNewListingOnly) {
         await sendMissingDimensionsAlertEmail(product, dimensions, "Furniture & Home", missingDimensionKeys);
         const withoutNote = stripWeightValidateNote(description || "").trimEnd();
@@ -5698,10 +5699,11 @@ async function syncSingleProductCore(product, cache, options = {}) {
       } else {
         webflowLog("info", {
           event: "dimensions_missing.email_skipped",
-          reason: "existing_listing_not_new",
+          reason: options.skipMissingFieldsAlert
+            ? "sync_all_or_bulk"
+            : "existing_listing_not_new",
           shopifyProductId,
           missing: missingDimensionKeys,
-          message: "Skipping missing-fields email and description note for existing listing",
         });
       }
     } else {
@@ -8861,6 +8863,7 @@ async function executeSyncAll({ reclassifyAll = false, reclassifyIdsSet = null, 
             duplicateEmailSentFor,
             shopifyWriteEmailSentFor,
             forceReclassify: reclassifyAll || (reclassifyIdsSet != null && reclassifyIdsSet.has(String(p.id))),
+            skipMissingFieldsAlert: true,
           })
         )
       );
@@ -9055,6 +9058,7 @@ app.post("/sync-by-ids", async (req, res) => {
           duplicateEmailSentFor,
           shopifyWriteEmailSentFor,
           forceReclassify,
+          skipMissingFieldsAlert: true,
         });
         const op = result?.operation ?? "unknown";
         if (op === "create") created++;
