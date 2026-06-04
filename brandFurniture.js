@@ -1,5 +1,7 @@
 // brandFurniture.js
 // Furniture brand detection for Lost & Found sync server
+
+import { productTitleLooksLikeWearableJewelry } from "./vertical.js";
 // Uses title + description + vendor to detect brand. Writes to Shopify vendor; not pushed to Webflow.
 
 // Key = canonical brand name (what we output). Value = array of search strings (matched in title/description/vendor).
@@ -436,14 +438,21 @@ export function detectBrandFromProductFurniture(title, descriptionHtml, vendor) 
   const byName = extractByFromTitle(title);
   if (byName) return byName;
 
-  // 3) No title/by match — check description + vendor (Essentials for Living only matches from title)
+  // 3) No title/by match — check description + vendor (Essentials for Living only matches from title).
+  // Do not map consignment vendor alone (e.g. "Century Furniture") onto wearable jewelry titles (brooch, pin).
+  const pseudoProduct = { title: title || "", product_type: "", tags: [] };
+  const blockVendorOnlyFurnitureBrand = productTitleLooksLikeWearableJewelry(pseudoProduct);
   const descAndVendor = [descNorm, vendorNorm].filter(Boolean).join(" ");
   if (descAndVendor) {
     for (const [canonical, keywords] of Object.entries(BRAND_KEYWORDS)) {
       if (canonical === "Essentials for Living") continue; // EFL only if in title
       if (!Array.isArray(keywords) || keywords.length === 0) continue;
       for (const kw of keywords) {
-        if (containsKeyword(descAndVendor, kw)) return canonical;
+        if (!containsKeyword(descAndVendor, kw)) continue;
+        if (blockVendorOnlyFurnitureBrand && vendorNorm && containsKeyword(vendorNorm, kw) && !containsKeyword(descNorm, kw)) {
+          continue;
+        }
+        return canonical;
       }
     }
   }

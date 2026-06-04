@@ -235,19 +235,25 @@ const SHOE_JEWELRY_TITLE_WORDS = [
   "watch", "watches", "wristwatch", "wristwatches", "timepiece", "timepieces",
 ];
 
-/** Description phrases that mean "this product is a furniture item" (e.g. jewelry box, shoe rack). */
-const DESCRIPTION_FURNITURE_PHRASES = [
-  "jewelry box", "jewelry armoire", "jewelry cabinet", "jewelry organizer", "jewelry display",
-  "jewelry stand", "jewelry holder", "jewelry tray", "jewelry chest", "jewelry case",
+/** Description phrases that mean the product IS furniture (box, rack, cabinet) — not staging copy ("on a vanity", "catchall tray"). */
+const DESCRIPTION_PRODUCT_IS_FURNITURE_PHRASES = [
+  "jewelry box", "jewelry armoire", "jewelry cabinet", "jewelry organizer",
+  "jewelry stand", "jewelry holder", "jewelry chest", "jewelry case",
   "shoe rack", "shoe shelf", "shoe cabinet", "shoe organizer", "shoe storage", "shoe stand",
-  "display case", "display cabinet", "storage cabinet", "storage box",
-  "keeps your jewelry", "store your jewelry", "display your jewelry", "for storing jewelry",
+  "display case", "display cabinet", "storage cabinet",
+  "keeps your jewelry", "store your jewelry", "for storing jewelry",
   "holds your jewelry", "organize your jewelry", "keeps your shoes", "store your shoes",
   "entrance bench", "hall tree",
-  "serving tray", "linen tray", "decorative tray", "catchall tray", "valet tray",
-  "dresser organizer", "entryway valet", "living room catchall",
   "leather-wrapped ring", "wrapped ring", "wall decor", "wall-decor",
 ];
+
+/** Brooch/earring/etc. in title — description staging must not route to Furniture & Home. */
+export function productTitleLooksLikeWearableJewelry(product) {
+  const title = (product?.title || "").toLowerCase();
+  const typeAndTags = [product?.product_type || "", getTagsArray(product).join(" ")].join(" ").toLowerCase();
+  const nameForCheck = `${title} ${typeAndTags}`;
+  return SHOE_JEWELRY_TITLE_WORDS.some((w) => matchWordBoundary(nameForCheck, w));
+}
 
 /** Strong bag/accessory/footwear/jewelry words in title → luxury (handbag, belt, shoe, earring, etc. are very easy to detect). */
 const TITLE_LUXURY_WORDS = [
@@ -301,11 +307,11 @@ export function detectVertical(product) {
   // 0) Furniture trap: luggage rack, coat rack, jewelry box, shoe rack, etc. — check FIRST so they don't match luxury
   if (productLooksLikeFurnitureTrap(product)) return "furniture";
 
-  // 0b) Shoes/jewelry in name or title → Luxury, unless description says it's a furniture item (box, rack, cabinet, etc.)
+  // 0b) Shoes/jewelry in name or title → Luxury, unless description says the product IS furniture (box, rack, cabinet).
   const nameForShoeJewelry = `${title} ${typeAndTags}`;
   const hasShoeOrJewelryInName = SHOE_JEWELRY_TITLE_WORDS.some((w) => matchWordBoundary(nameForShoeJewelry, w));
   if (hasShoeOrJewelryInName) {
-    const descriptionSaysFurniture = DESCRIPTION_FURNITURE_PHRASES.some((phrase) =>
+    const descriptionSaysFurniture = DESCRIPTION_PRODUCT_IS_FURNITURE_PHRASES.some((phrase) =>
       descriptionText.includes(phrase.toLowerCase())
     );
     if (descriptionSaysFurniture) return "furniture";

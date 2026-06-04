@@ -37,6 +37,7 @@ import {
   productLooksLikeFurnitureTrap,
   productLooksLikeFurnitureHomeTrunk,
   productLooksLikeHomeDecorTray,
+  productTitleLooksLikeWearableJewelry,
 } from "./vertical.js";
 
 dotenv.config();
@@ -2497,6 +2498,10 @@ function detectCategoryFurnitureEvidence(title, descriptionHtml, tags, dimension
   const descAndTags = descText ? [descText, tagsStr].filter(Boolean).join(" ").toLowerCase() : "";
   const hasDesc = !!descText;
 
+  if (productTitleLooksLikeWearableJewelry({ title: title || "", product_type: "", tags: tags || [] })) {
+    return { category: "Accessories", confidence: 0, reason: "wearable_jewelry_title" };
+  }
+
   if (!name && !descAndTags) {
     return { category: "Accessories", confidence: 0, reason: "empty_listing" };
   }
@@ -2741,6 +2746,7 @@ function furnitureAccessoryCategoryOverrideTitle(title) {
 
 /** Mattresses / sleep surfaces: title + description + tags. Overrides LLM "Accessories" when copy matches "pillow"/"box" from pillow-top or box spring. */
 function furnitureSleepSurfaceIndicatesBedroom(title, descriptionHtml, tags) {
+  if (productTitleLooksLikeWearableJewelry({ title: title || "", product_type: "", tags: tags || [] })) return false;
   const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
   const name = ((title || "").trim()).toLowerCase();
   const descText = stripHtml(descriptionHtml || "").trim().toLowerCase();
@@ -2758,6 +2764,7 @@ function furnitureSleepSurfaceIndicatesBedroom(title, descriptionHtml, tags) {
 }
 
 function furnitureBedroomIndicatesBedroom(title, descriptionHtml, tags) {
+  if (productTitleLooksLikeWearableJewelry({ title: title || "", product_type: "", tags: tags || [] })) return false;
   const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
   const name = ((title || "").trim()).toLowerCase();
   const descText = stripHtml(descriptionHtml || "").trim().toLowerCase();
@@ -5377,6 +5384,17 @@ async function syncSingleProductCore(product, cache, options = {}) {
       vertical = "luxury";
       detectedVertical = "luxury";
     }
+    if (
+      !productLooksLikeBookFilmOrMedia(product) &&
+      !productLooksLikeFurnitureHomeBox(product) &&
+      !productLooksLikeLightingFixture(product) &&
+      !productLooksLikeFurnitureTrap(product) &&
+      !productLooksLikeHomeDecorTray(product) &&
+      isJewelryProduct(product?.title || "", product?.body_html || "", product)
+    ) {
+      vertical = "luxury";
+      detectedVertical = "luxury";
+    }
   }
 
   if (productLooksLikeWristwatchLuxury(product) && vertical !== "luxury") {
@@ -5416,6 +5434,25 @@ async function syncSingleProductCore(product, cache, options = {}) {
     });
     vertical = "furniture";
     detectedVertical = "furniture";
+  }
+  if (
+    vertical === "furniture" &&
+    isJewelryProduct(product?.title || "", product?.body_html || "", product) &&
+    !productLooksLikeFurnitureTrap(product) &&
+    !productLooksLikeHomeDecorTray(product) &&
+    !productLooksLikeFurnitureHomeBox(product) &&
+    !productLooksLikeLightingFixture(product) &&
+    !productLooksLikeBookFilmOrMedia(product)
+  ) {
+    webflowLog("info", {
+      event: "vertical.override_jewelry_final",
+      shopifyProductId,
+      productTitle: product.title || "",
+      previousVertical: vertical,
+      message: "Wearable jewelry in title; not Furniture & Home despite home-decor marketing copy",
+    });
+    vertical = "luxury";
+    detectedVertical = "luxury";
   }
 
   const config = getWebflowConfig(vertical);
