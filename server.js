@@ -3490,7 +3490,14 @@ async function loadFurnitureCategoryMap() {
 /** Pre-load Luxury CMS items once per sync → O(1) lookup instead of N×page scans. */
 async function loadLuxuryItemIndex() {
   const config = getWebflowConfig("luxury");
-  if (!config?.collectionId || !config?.token) return;
+  if (!config?.collectionId || !config?.token) {
+    webflowLog("warn", {
+      event: "luxury_item_index.skip",
+      reason: "missing WEBFLOW_COLLECTION_ID or WEBFLOW_TOKEN",
+    });
+    luxuryItemIndex = null;
+    return;
+  }
   const byShopifyId = new Map();
   const bySlug = new Map();
   const byUrl = new Map();
@@ -3498,9 +3505,25 @@ async function loadLuxuryItemIndex() {
   const limit = 100;
   while (true) {
     const url = `https://api.webflow.com/v2/collections/${config.collectionId}/items?limit=${limit}&offset=${offset}`;
-    const resp = await axios.get(url, {
-      headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
-    });
+    let resp;
+    try {
+      resp = await axios.get(url, {
+        headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
+      });
+    } catch (err) {
+      luxuryItemIndex = null;
+      webflowLog("error", {
+        event: "luxury_item_index.load_failed",
+        collectionId: config.collectionId,
+        offset,
+        status: err.response?.status ?? null,
+        message: err.message,
+        responseData: err.response?.data,
+        hint:
+          "WEBFLOW_COLLECTION_ID must be the L+F Handbags CMS collection (e.g. 690f5df0104c97b31cf06b5e), not an old/deleted collection id.",
+      });
+      return;
+    }
     const items = resp.data?.items ?? [];
     for (const item of items) {
       const fd = item.fieldData || {};
@@ -6394,7 +6417,9 @@ async function syncSingleProductCore(product, cache, options = {}) {
   // Create when no existing item found — either no cache, or cache pointed to deleted Webflow item
   if (!existing) {
     // Don't recreate sold items (qty 0). If you deleted them from Webflow, we won't push them back.
-    if (soldNow) {
+    // forceReclassify + luxury: allow CMS create (Recently Sold) so recovery syncs can fix deleted/stuck listings.
+    const allowLuxurySoldCreate = soldNow && options.forceReclassify === true && vertical === "luxury";
+    if (soldNow && !allowLuxurySoldCreate) {
       if (vertical === "furniture") {
         await syncGoogleMerchantFurnitureFromShopifyProduct(product, "out of stock", "skip_create_sold", cache);
       }
@@ -6415,6 +6440,14 @@ async function syncSingleProductCore(product, cache, options = {}) {
         reason: "qty 0 — not recreating deleted sold items",
       });
       return { operation: "skip", id: null };
+    }
+    if (allowLuxurySoldCreate) {
+      webflowLog("info", {
+        event: "sync_product.create_sold_luxury_force",
+        shopifyProductId,
+        productTitle: name,
+        message: "qty 0 but forceReclassify luxury — creating/updating CMS (Recently Sold)",
+      });
     }
 
     webflowLog("info", {
