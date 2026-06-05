@@ -2414,6 +2414,51 @@ const LUXURY_ECOMMERCE_LETTER_TO_CATEGORY = {
   W: "Wallets",
 };
 
+/** Merchant vertical override tags (2 letters). Category still comes from single-letter tags below. */
+const ECOMMERCE_VERTICAL_TAG_FURNITURE = "FH";
+const ECOMMERCE_VERTICAL_TAG_LUXURY = "LG";
+
+/**
+ * Optional Shopify tags for manual vertical routing (add in Traxia / Shopify tags):
+ *   FH → Furniture & Home
+ *   LG → Luxury Goods
+ * Single-letter tags still set subcategory within that vertical (A→Art/Mirrors, J→Jewelry, etc.).
+ */
+function getEcommerceVerticalOverrideFromTags(tags) {
+  if (!Array.isArray(tags) || !tags.length) return null;
+
+  for (const rawTag of tags) {
+    const tag = String(rawTag || "").trim();
+    if (!tag) continue;
+    const normalized = tag.toUpperCase();
+
+    const direct = normalized.match(/^([A-Z]{2})$/);
+    if (direct) {
+      if (direct[1] === ECOMMERCE_VERTICAL_TAG_FURNITURE) {
+        return { vertical: "furniture", tag: direct[1] };
+      }
+      if (direct[1] === ECOMMERCE_VERTICAL_TAG_LUXURY) {
+        return { vertical: "luxury", tag: direct[1] };
+      }
+      continue;
+    }
+
+    const prefixed = normalized.match(
+      /\b(?:E[\s_-]?COMMERCE|ECOMMERCE)\b[^A-Z0-9]*([A-Z]{2})\b/
+    );
+    if (prefixed) {
+      if (prefixed[1] === ECOMMERCE_VERTICAL_TAG_FURNITURE) {
+        return { vertical: "furniture", tag: prefixed[1] };
+      }
+      if (prefixed[1] === ECOMMERCE_VERTICAL_TAG_LUXURY) {
+        return { vertical: "luxury", tag: prefixed[1] };
+      }
+    }
+  }
+
+  return null;
+}
+
 function getEcommerceCategoryLetterFromTags(tags) {
   if (!Array.isArray(tags) || !tags.length) return null;
 
@@ -2421,6 +2466,10 @@ function getEcommerceCategoryLetterFromTags(tags) {
     const tag = String(rawTag || "").trim();
     if (!tag) continue;
     const normalized = tag.toUpperCase();
+
+    if (normalized === ECOMMERCE_VERTICAL_TAG_FURNITURE || normalized === ECOMMERCE_VERTICAL_TAG_LUXURY) {
+      continue;
+    }
 
     const direct = normalized.match(/^([A-Z])$/);
     if (direct) return direct[1];
@@ -2921,6 +2970,13 @@ function textHasAnyWordCue(text, cues) {
  * This runs as a guard over LLM output to prevent one-word misroutes.
  */
 function resolveVerticalFromEvidence(product, llmDetectedVertical) {
+  const verticalTag = getEcommerceVerticalOverrideFromTags(getProductTagsArray(product));
+  if (verticalTag) {
+    return {
+      vertical: verticalTag.vertical,
+      reason: `ecommerce_vertical_tag_${verticalTag.tag.toLowerCase()}`,
+    };
+  }
   if (productLooksLikeFurnitureTrap(product)) {
     return { vertical: "furniture", reason: "evidence_entryway_rack_trap" };
   }
@@ -5097,6 +5153,21 @@ async function syncSingleProductCore(product, cache, options = {}) {
 
   // Sold items (qty 0): never call the LLM — use product type + title hints for vertical (index lookup above may already have set it).
   if (!recoveredFromWebflow && qty !== null && qty <= 0 && !forceReclassify) {
+    const verticalTag = getEcommerceVerticalOverrideFromTags(getProductTagsArray(product));
+    if (verticalTag) {
+      recoveredFromWebflow = {
+        vertical: verticalTag.vertical,
+        soldNoLlm: true,
+        ecommerceVerticalTag: verticalTag.tag,
+      };
+      webflowLog("info", {
+        event: "sync_product.skip_llm_sold.vertical_tag",
+        shopifyProductId,
+        vertical: verticalTag.vertical,
+        tag: verticalTag.tag,
+        message: "Sold item; FH/LG tag forces vertical without LLM",
+      });
+    } else {
     const pt = (product.product_type ?? "").toLowerCase();
     const title = (product.title ?? "").toLowerCase();
     const furnitureTitleHints = [
@@ -5148,9 +5219,11 @@ async function syncSingleProductCore(product, cache, options = {}) {
       vertical: soldVertical,
       message: "Sold item (qty 0); skipping LLM, using heuristic vertical",
     });
+    }
   }
 
   let vertical, detectedVertical, verticalCorrected;
+  const ecommerceVerticalTag = getEcommerceVerticalOverrideFromTags(getProductTagsArray(product));
   if (!recoveredFromWebflow) {
     const llmLogPayload = {};
     const llmResult = await classifyWithLLM(product, llmLogPayload, webflowLog);
@@ -5158,11 +5231,12 @@ async function syncSingleProductCore(product, cache, options = {}) {
     const evidenceVertical = resolveVerticalFromEvidence(product, llmDetectedVertical);
     detectedVertical = evidenceVertical.vertical;
     // Hard guard: wristwatches/timepieces are always Luxury (never furniture bedroom/other).
-    if (productLooksLikeWristwatchLuxury(product)) {
+    if (!ecommerceVerticalTag && productLooksLikeWristwatchLuxury(product)) {
       detectedVertical = "luxury";
     }
     // Hard guard: jewelry cues must always live under Luxury Goods in Shopify/Webflow (never overrides books/media, boxes, or lamps).
     if (
+      !ecommerceVerticalTag &&
       !productLooksLikeBookFilmOrMedia(product) &&
       !productLooksLikeFurnitureHomeBox(product) &&
       !productLooksLikeLightingFixture(product) &&
@@ -5382,11 +5456,12 @@ async function syncSingleProductCore(product, cache, options = {}) {
         message: "Recovered vertical was overridden by evidence guard",
       });
     }
-    if (productLooksLikeWristwatchLuxury(product)) {
+    if (!ecommerceVerticalTag && productLooksLikeWristwatchLuxury(product)) {
       vertical = "luxury";
       detectedVertical = "luxury";
     }
     if (
+      !ecommerceVerticalTag &&
       !productLooksLikeBookFilmOrMedia(product) &&
       !productLooksLikeFurnitureHomeBox(product) &&
       !productLooksLikeLightingFixture(product) &&
@@ -5399,7 +5474,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
     }
   }
 
-  if (productLooksLikeWristwatchLuxury(product) && vertical !== "luxury") {
+  if (!ecommerceVerticalTag && productLooksLikeWristwatchLuxury(product) && vertical !== "luxury") {
     webflowLog("info", {
       event: "vertical.override_wristwatch_final",
       shopifyProductId,
@@ -5409,7 +5484,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
     vertical = "luxury";
     detectedVertical = "luxury";
   }
-  if (productLooksLikeFurnitureTrap(product) && vertical !== "furniture") {
+  if (!ecommerceVerticalTag && productLooksLikeFurnitureTrap(product) && vertical !== "furniture") {
     webflowLog("info", {
       event: "vertical.override_furniture_trap_final",
       shopifyProductId,
@@ -5420,6 +5495,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
     detectedVertical = "furniture";
   }
   if (
+    !ecommerceVerticalTag &&
     (productLooksLikeHomeClock(product) ||
       productLooksLikeFurnitureCurio(product) ||
       productLooksLikeFurnitureDoll(product)) &&
@@ -5438,6 +5514,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
     detectedVertical = "furniture";
   }
   if (
+    !ecommerceVerticalTag &&
     vertical === "furniture" &&
     isJewelryProduct(product?.title || "", product?.body_html || "", product) &&
     !productLooksLikeFurnitureTrap(product) &&
@@ -5455,6 +5532,24 @@ async function syncSingleProductCore(product, cache, options = {}) {
     });
     vertical = "luxury";
     detectedVertical = "luxury";
+  }
+
+  if (ecommerceVerticalTag) {
+    const prevVertical = vertical;
+    vertical = ecommerceVerticalTag.vertical;
+    detectedVertical = ecommerceVerticalTag.vertical;
+    webflowLog("info", {
+      event: "vertical.override_ecommerce_vertical_tag",
+      shopifyProductId,
+      productTitle: product.title || "",
+      tag: ecommerceVerticalTag.tag,
+      previousVertical: prevVertical,
+      vertical: ecommerceVerticalTag.vertical,
+      message:
+        ecommerceVerticalTag.tag === ECOMMERCE_VERTICAL_TAG_FURNITURE
+          ? "Tag FH forces Furniture & Home"
+          : "Tag LG forces Luxury Goods",
+    });
   }
 
   // Jewelry guard can set luxury after cache still says furniture — run same move as verticalCorrected.
