@@ -3498,6 +3498,7 @@ async function loadLuxuryItemIndex() {
     luxuryItemIndex = null;
     return;
   }
+  await loadLuxuryCmsGalleryImageFieldSlugs();
   const byShopifyId = new Map();
   const bySlug = new Map();
   const byUrl = new Map();
@@ -6752,7 +6753,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
       try {
         resp = await axios.post(
           `https://api.webflow.com/v2/collections/${createConfig.collectionId}/items`,
-          { fieldData: productFieldData },
+          { fieldData: stripNullFieldDataValues(productFieldData) },
           {
             headers: {
               Authorization: `Bearer ${createConfig.token}`,
@@ -6936,32 +6937,111 @@ function fieldDataEffectivelyEqual(newFD, existingFD) {
   return true;
 }
 
-/** Luxury CMS: featured-image + image-1 … image-N (Webflow L+F Handbags collection). */
+/** Luxury CMS: featured-image + gallery slots (Webflow L+F Handbags). Slot 6 slug is image-6-2 in Webflow. */
 const LUXURY_CMS_GALLERY_IMAGE_COUNT = 12;
+const LUXURY_CMS_GALLERY_IMAGE_SLUG_DEFAULTS = [
+  "image-1",
+  "image-2",
+  "image-3",
+  "image-4",
+  "image-5",
+  "image-6-2",
+  "image-7",
+  "image-8",
+  "image-9",
+  "image-10",
+  "image-11",
+  "image-12",
+];
+
+/** @type {string[] | null} Actual CMS field slugs for gallery slots 1..12 (from collection schema). */
+let luxuryCmsGalleryImageSlugs = null;
+
+function luxuryCmsGalleryImageSlug(slotIndex) {
+  const i = slotIndex - 1;
+  const slugs = luxuryCmsGalleryImageSlugs?.length
+    ? luxuryCmsGalleryImageSlugs
+    : LUXURY_CMS_GALLERY_IMAGE_SLUG_DEFAULTS;
+  return slugs[i] || `image-${slotIndex}`;
+}
+
+function parseLuxuryGalleryImageSlugsFromCollectionFields(fields) {
+  const rows = [];
+  for (const f of fields || []) {
+    const slug = f?.slug;
+    if (!slug || slug === "featured-image") continue;
+    const m = String(slug).match(/^image-(\d+)/i);
+    if (!m) continue;
+    const num = parseInt(m[1], 10);
+    if (!Number.isFinite(num)) continue;
+    rows.push({ num, slug: String(slug) });
+  }
+  rows.sort((a, b) => a.num - b.num || a.slug.localeCompare(b.slug));
+  return rows.slice(0, LUXURY_CMS_GALLERY_IMAGE_COUNT).map((r) => r.slug);
+}
+
+async function loadLuxuryCmsGalleryImageFieldSlugs() {
+  const config = getWebflowConfig("luxury");
+  if (!config?.collectionId || !config?.token) return;
+  try {
+    const resp = await axios.get(`https://api.webflow.com/v2/collections/${config.collectionId}`, {
+      headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
+    });
+    const slugs = parseLuxuryGalleryImageSlugsFromCollectionFields(resp.data?.fields);
+    if (slugs.length) {
+      luxuryCmsGalleryImageSlugs = slugs;
+      webflowLog("info", {
+        event: "luxury_cms_image_slugs.loaded",
+        collectionId: config.collectionId,
+        slugs,
+      });
+    }
+  } catch (err) {
+    luxuryCmsGalleryImageSlugs = [...LUXURY_CMS_GALLERY_IMAGE_SLUG_DEFAULTS];
+    webflowLog("warn", {
+      event: "luxury_cms_image_slugs.load_failed",
+      collectionId: config.collectionId,
+      message: err.message,
+      fallback: luxuryCmsGalleryImageSlugs,
+    });
+  }
+}
 
 function luxuryCmsImageFieldsFromShopifyImages(featuredImage, gallery) {
-  const fields = {
-    "featured-image": featuredImage ? { url: featuredImage } : null,
-  };
+  const fields = {};
+  if (featuredImage) fields["featured-image"] = { url: featuredImage };
   for (let i = 0; i < LUXURY_CMS_GALLERY_IMAGE_COUNT; i++) {
     const url = gallery?.[i];
-    fields[`image-${i + 1}`] = url ? { url } : null;
+    if (url) fields[luxuryCmsGalleryImageSlug(i + 1)] = { url };
   }
   return fields;
 }
 
-/** Apply Shopify image URLs to luxury fieldData (featured + image-1..12). */
+/** Apply Shopify image URLs to luxury fieldData (featured + gallery slots). Omits empty slots (never null). */
 function applyLuxuryCmsImagesFromShopifyUrlList(fd, allImages) {
   const urls = allImages || [];
   const featured = urls[0] && String(urls[0]).trim();
   if (!featured) return fd;
   fd["featured-image"] = { url: featured };
   for (let slot = 1; slot <= LUXURY_CMS_GALLERY_IMAGE_COUNT; slot++) {
+    const slug = luxuryCmsGalleryImageSlug(slot);
     const src = urls[slot] && String(urls[slot]).trim();
-    if (src) fd[`image-${slot}`] = { url: src };
-    else delete fd[`image-${slot}`];
+    if (src) fd[slug] = { url: src };
+    else delete fd[slug];
+    // Remove legacy wrong slug if schema uses image-6-2 not image-6
+    if (slug !== `image-${slot}`) delete fd[`image-${slot}`];
   }
   return fd;
+}
+
+/** Webflow v2 rejects explicit null values and unknown field slugs — strip before POST/PATCH. */
+function stripNullFieldDataValues(fieldData) {
+  if (!fieldData || typeof fieldData !== "object") return fieldData;
+  const out = { ...fieldData };
+  for (const key of Object.keys(out)) {
+    if (out[key] == null) delete out[key];
+  }
+  return out;
 }
 
 /* ======================================================
@@ -7047,11 +7127,11 @@ function buildWebflowFieldData(opts) {
     category: webflowCategory,
     slug,
   };
-  return {
+  return stripNullFieldDataValues({
     ...base,
     ...luxuryCmsImageFieldsFromShopifyImages(featuredImage, gallery),
     "show-on-webflow": showOnWebflow,
-  };
+  });
 }
 
 /* ======================================================
@@ -8152,8 +8232,8 @@ function luxuryFieldDataImageUrls(fd) {
   const urls = [];
   const u0 = webflowListingAssetUrl(fd["featured-image"]);
   if (u0) urls.push(u0);
-  for (let i = 1; i <= LUXURY_CMS_GALLERY_IMAGE_COUNT; i++) {
-    const u = webflowListingAssetUrl(fd[`image-${i}`]);
+  for (let slot = 1; slot <= LUXURY_CMS_GALLERY_IMAGE_COUNT; slot++) {
+    const u = webflowListingAssetUrl(fd[luxuryCmsGalleryImageSlug(slot)]);
     if (u) urls.push(u);
   }
   return urls;
@@ -8196,14 +8276,15 @@ function luxuryCmsNeedsImageRepairFromShopify(product, cmsItem) {
 /** PATCH luxury CMS item: (re)push featured-image + image-1..12 from Shopify only where URLs exist. */
 async function patchLuxuryCmsImagesFromShopify(product, existing, config) {
   if (!config?.collectionId || !config?.token || !existing?.id) return;
+  if (!luxuryCmsGalleryImageSlugs?.length) await loadLuxuryCmsGalleryImageFieldSlugs();
   const allImages = (product.images || []).map((img) => img?.src).filter((u) => u && String(u).trim());
   if (!allImages.length) return;
-  const fd = { ...(existing.fieldData || {}) };
+  const fd = stripNullFieldDataValues({ ...(existing.fieldData || {}) });
   applyLuxuryCmsImagesFromShopifyUrlList(fd, allImages);
   const url = `https://api.webflow.com/v2/collections/${config.collectionId}/items/${existing.id}`;
   await axios.patch(
     url,
-    { fieldData: fd },
+    { fieldData: stripNullFieldDataValues(fd) },
     { headers: { Authorization: `Bearer ${config.token}`, "Content-Type": "application/json" } }
   );
 }
