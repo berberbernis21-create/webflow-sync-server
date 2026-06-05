@@ -6903,9 +6903,37 @@ function fieldDataEffectivelyEqual(newFD, existingFD) {
   return true;
 }
 
+/** Luxury CMS: featured-image + image-1 … image-N (Webflow L+F Handbags collection). */
+const LUXURY_CMS_GALLERY_IMAGE_COUNT = 12;
+
+function luxuryCmsImageFieldsFromShopifyImages(featuredImage, gallery) {
+  const fields = {
+    "featured-image": featuredImage ? { url: featuredImage } : null,
+  };
+  for (let i = 0; i < LUXURY_CMS_GALLERY_IMAGE_COUNT; i++) {
+    const url = gallery?.[i];
+    fields[`image-${i + 1}`] = url ? { url } : null;
+  }
+  return fields;
+}
+
+/** Apply Shopify image URLs to luxury fieldData (featured + image-1..12). */
+function applyLuxuryCmsImagesFromShopifyUrlList(fd, allImages) {
+  const urls = allImages || [];
+  const featured = urls[0] && String(urls[0]).trim();
+  if (!featured) return fd;
+  fd["featured-image"] = { url: featured };
+  for (let slot = 1; slot <= LUXURY_CMS_GALLERY_IMAGE_COUNT; slot++) {
+    const src = urls[slot] && String(urls[slot]).trim();
+    if (src) fd[`image-${slot}`] = { url: src };
+    else delete fd[`image-${slot}`];
+  }
+  return fd;
+}
+
 /* ======================================================
    BUILD WEBFLOW fieldData BY VERTICAL
-   Luxury: featured-image, image-1..5, show-on-webflow, brand, price, shopify-url.
+   Luxury: featured-image, image-1..12, show-on-webflow, brand, price, shopify-url.
    Furniture: slugs match CMS — name, slug, description, category, sold,
    shopify-product-id, shopify-slug-2, main-description-2, ec-product-type, shippable.
    (Images live on SKU; no dimension fields on this collection.)
@@ -6988,12 +7016,7 @@ function buildWebflowFieldData(opts) {
   };
   return {
     ...base,
-    "featured-image": featuredImage ? { url: featuredImage } : null,
-    "image-1": gallery?.[0] ? { url: gallery[0] } : null,
-    "image-2": gallery?.[1] ? { url: gallery[1] } : null,
-    "image-3": gallery?.[2] ? { url: gallery[2] } : null,
-    "image-4": gallery?.[3] ? { url: gallery[3] } : null,
-    "image-5": gallery?.[4] ? { url: gallery[4] } : null,
+    ...luxuryCmsImageFieldsFromShopifyImages(featuredImage, gallery),
     "show-on-webflow": showOnWebflow,
   };
 }
@@ -8096,7 +8119,7 @@ function luxuryFieldDataImageUrls(fd) {
   const urls = [];
   const u0 = webflowListingAssetUrl(fd["featured-image"]);
   if (u0) urls.push(u0);
-  for (let i = 1; i <= 5; i++) {
+  for (let i = 1; i <= LUXURY_CMS_GALLERY_IMAGE_COUNT; i++) {
     const u = webflowListingAssetUrl(fd[`image-${i}`]);
     if (u) urls.push(u);
   }
@@ -8137,17 +8160,13 @@ function luxuryCmsNeedsImageRepairFromShopify(product, cmsItem) {
   return luxuryFieldDataImageUrls(cmsItem?.fieldData).length === 0;
 }
 
-/** PATCH luxury CMS item: (re)push featured-image + image-1..5 from Shopify only where URLs exist. */
+/** PATCH luxury CMS item: (re)push featured-image + image-1..12 from Shopify only where URLs exist. */
 async function patchLuxuryCmsImagesFromShopify(product, existing, config) {
   if (!config?.collectionId || !config?.token || !existing?.id) return;
   const allImages = (product.images || []).map((img) => img?.src).filter((u) => u && String(u).trim());
   if (!allImages.length) return;
   const fd = { ...(existing.fieldData || {}) };
-  fd["featured-image"] = { url: allImages[0] };
-  for (let slot = 1; slot <= 5; slot++) {
-    const src = allImages[slot];
-    if (src) fd[`image-${slot}`] = { url: src };
-  }
+  applyLuxuryCmsImagesFromShopifyUrlList(fd, allImages);
   const url = `https://api.webflow.com/v2/collections/${config.collectionId}/items/${existing.id}`;
   await axios.patch(
     url,
