@@ -158,7 +158,7 @@ async function processConsignmentSubmission({ body, items, photoGroups, submitte
 
   let emailPayload;
   try {
-    emailPayload = buildConsignmentEmail({
+    emailPayload = await buildConsignmentEmail({
       body,
       items,
       photoGroups,
