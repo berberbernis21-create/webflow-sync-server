@@ -7255,6 +7255,8 @@ async function searchShopifyProducts(name) {
             title
             handle
             vendor
+            tags
+            productType
             onlineStoreUrl
             descriptionHtml
             images(first: 5) {
@@ -7277,6 +7279,8 @@ async function searchShopifyProducts(name) {
               edges {
                 node {
                   price
+                  weight
+                  weightUnit
                 }
               }
             }
@@ -7369,6 +7373,23 @@ async function searchShopifyProducts(name) {
 
   const vendor = String(node.vendor || "").trim();
   const luxuryGoodsCategory = luxuryGoodsCategoryFromShopifyProductNode(node);
+  const variantNode = node.variants?.edges?.[0]?.node;
+  let weight = null;
+  if (variantNode?.weight != null && Number.isFinite(Number(variantNode.weight))) {
+    const wu = String(variantNode.weightUnit || "POUNDS").toUpperCase();
+    const raw = Number(variantNode.weight);
+    if (wu === "KILOGRAMS" || wu === "KG") weight = raw * 2.20462;
+    else if (wu === "GRAMS" || wu === "G") weight = raw / 453.592;
+    else weight = raw;
+  }
+  const metafields = (node.metafields?.edges || [])
+    .map((e) => e?.node)
+    .filter(Boolean)
+    .map((m) => ({
+      namespace: m.namespace,
+      key: m.key,
+      value: m.value,
+    }));
   return {
     title: node.title || "",
     price,
@@ -7380,6 +7401,10 @@ async function searchShopifyProducts(name) {
     vertical: "shopify",
     vendor: vendor || null,
     luxuryGoodsCategory,
+    productType: String(node.productType || "").trim() || null,
+    tags: Array.isArray(node.tags) ? node.tags : [],
+    weight,
+    metafields,
   };
 }
 
@@ -8549,12 +8574,190 @@ app.get("/api/listing", async (req, res) => {
         listing.luxuryGoodsCategory != null && String(listing.luxuryGoodsCategory).trim() !== ""
           ? String(listing.luxuryGoodsCategory).trim()
           : null,
+      productType:
+        listing.productType != null && String(listing.productType).trim() !== ""
+          ? String(listing.productType).trim()
+          : null,
+      tags: Array.isArray(listing.tags) ? listing.tags : [],
+      weight: listing.weight != null && Number.isFinite(Number(listing.weight)) ? Number(listing.weight) : null,
+      metafields: Array.isArray(listing.metafields) ? listing.metafields : [],
     });
   } catch (err) {
     webflowLog("error", { event: "api.listing", message: err?.message, source });
     return res.status(500).json({
       error: err?.message || (source === "shopify" ? "Shopify request failed" : "Webflow request failed"),
     });
+  }
+});
+
+/**
+ * POST /api/package-assign — Shopify shipping package selection via OpenAI (OPENAI_API_KEY).
+ * Body JSON: title, description, productType, vendor, tags, dimensions {length,width,height,unit},
+ *   weightLb, packages[] { shopifyLabel, priceMin, priceMax, lengthIn, widthIn, heightIn, maxWeightLb }.
+ * Returns { packageLabel, confidence, action, reason, model }.
+ * Model: OPENAI_PACKAGE_MODEL (default gpt-5.2).
+ */
+async function selectPackageWithAi(body) {
+  const key = String(process.env.OPENAI_API_KEY || "").trim();
+  if (!key) {
+    const err = new Error("OPENAI_API_KEY is not set on this server");
+    err.code = "openai_missing";
+    err.status = 503;
+    throw err;
+  }
+
+  const title = String(body.title || "").trim();
+  const description = String(body.description || "").trim().slice(0, 2200);
+  const productType = String(body.productType || "").trim();
+  const vendor = String(body.vendor || "").trim();
+  const tags = Array.isArray(body.tags) ? body.tags.map((t) => String(t || "").trim()).filter(Boolean).slice(0, 30) : [];
+  const dimensions = body.dimensions && typeof body.dimensions === "object" ? body.dimensions : null;
+  const weightLb = body.weightLb != null && Number.isFinite(Number(body.weightLb)) ? Number(body.weightLb) : null;
+  const packages = Array.isArray(body.packages) ? body.packages : [];
+
+  if (!packages.length) {
+    const err = new Error("Provide at least one package in packages[]");
+    err.status = 400;
+    throw err;
+  }
+
+  const allowedLabels = packages
+    .map((p) => String(p?.shopifyLabel || "").trim())
+    .filter(Boolean);
+
+  if (!allowedLabels.length) {
+    const err = new Error("Each package must include shopifyLabel");
+    err.status = 400;
+    throw err;
+  }
+
+  const model = String(process.env.OPENAI_PACKAGE_MODEL || "gpt-5.2").trim();
+
+  const packageCatalog = packages.map((p) => ({
+    shopifyLabel: String(p.shopifyLabel || "").trim(),
+    priceMin: p.priceMin != null ? Number(p.priceMin) : null,
+    priceMax: p.priceMax != null ? Number(p.priceMax) : null,
+    lengthIn: p.lengthIn != null ? Number(p.lengthIn) : null,
+    widthIn: p.widthIn != null ? Number(p.widthIn) : null,
+    heightIn: p.heightIn != null ? Number(p.heightIn) : null,
+    maxWeightLb: p.maxWeightLb != null ? Number(p.maxWeightLb) : null,
+  }));
+
+  const systemPrompt = [
+    "You select the most reasonable Shopify shipping package for Lost & Found Resale items.",
+    "You MUST choose packageLabel from the provided packages list — exact shopifyLabel string only.",
+    "Return strict JSON: {\"packageLabel\":string,\"confidence\":\"high\"|\"medium\"|\"low\",\"action\":\"apply\"|\"leave_store_default\"|\"needs_review\",\"reason\":string}.",
+    "",
+    "Rules:",
+    "- Prefer the smallest reasonable box that safely fits the item.",
+    "- Packages are malleable: allow ~2 inches padding; soft goods and prints can compress slightly.",
+    "- Weight flex: item may be up to 2× a box maxWeightLb if dimensions fit and stepping up is wasteful — otherwise step up.",
+    "- Factor shipping cost: lower priceMin/priceMax is better when multiple boxes fit.",
+    "- Flat art/prints (thin profile): prefer Flat Art / Print Mailer or artwork boxes.",
+    "- Large furniture, dining tables, bed bases, sectionals, chairs over parcel limits: action leave_store_default with packageLabel \"Store Default\".",
+    "- If dimensions are missing and item type is unclear, action needs_review with your best guess or Store Default.",
+    "- Never invent package names not in the catalog.",
+  ].join("\n");
+
+  const userPayload = {
+    title,
+    description,
+    productType,
+    vendor,
+    tags,
+    dimensions,
+    weightLb,
+    packages: packageCatalog,
+    allowedPackageLabels: allowedLabels,
+  };
+
+  const resp = await axios.post(
+    "https://api.openai.com/v1/chat/completions",
+    {
+      model,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: JSON.stringify(userPayload) },
+      ],
+      temperature: 0.1,
+      response_format: { type: "json_object" },
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+      },
+      timeout: 45000,
+    }
+  );
+
+  const raw = resp.data?.choices?.[0]?.message?.content;
+  if (!raw) {
+    throw new Error("OpenAI returned no package selection");
+  }
+
+  const parsed = JSON.parse(raw);
+  let packageLabel = String(parsed?.packageLabel || "").trim();
+  const confidence = ["high", "medium", "low"].includes(parsed?.confidence) ? parsed.confidence : "medium";
+  const action = ["apply", "leave_store_default", "needs_review"].includes(parsed?.action)
+    ? parsed.action
+    : "needs_review";
+  const reason = String(parsed?.reason || "Selected by GPT from available Shopify packages.").trim();
+
+  const normalizeLabel = (text) =>
+    String(text || "")
+      .toLowerCase()
+      .replace(/[–—]/g, "-")
+      .replace(/\s*\(\$[\d.\-\s$]+\)\s*/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  if (!allowedLabels.some((label) => normalizeLabel(label) === normalizeLabel(packageLabel))) {
+    const fuzzy = allowedLabels.find((label) => {
+      const a = normalizeLabel(label);
+      const b = normalizeLabel(packageLabel);
+      return a === b || a.startsWith(b) || b.startsWith(a) || a.split("/")[0].trim() === b.split("/")[0].trim();
+    });
+    if (fuzzy) packageLabel = fuzzy;
+  }
+
+  if (!allowedLabels.some((label) => normalizeLabel(label) === normalizeLabel(packageLabel))) {
+    return {
+      packageLabel: "",
+      confidence: "low",
+      action: "needs_review",
+      reason: `GPT returned "${parsed?.packageLabel || ""}" which is not in the Shopify package list.`,
+      model,
+    };
+  }
+
+  const canonical = allowedLabels.find((label) => normalizeLabel(label) === normalizeLabel(packageLabel)) || packageLabel;
+
+  return {
+    packageLabel: canonical,
+    confidence,
+    action,
+    reason,
+    model,
+  };
+}
+
+app.post("/api/package-assign", async (req, res) => {
+  try {
+    const body = req.body && typeof req.body === "object" ? req.body : {};
+    const result = await selectPackageWithAi(body);
+    return res.json(result);
+  } catch (err) {
+    const status = err?.status || err?.response?.status || 500;
+    const message = err?.response?.data?.error?.message || err?.message || "package-assign failed";
+    if (err?.code === "openai_missing" || status === 503) {
+      return res.status(503).json({ error: message, code: err?.code || "openai_missing" });
+    }
+    if (status === 400) {
+      return res.status(400).json({ error: message });
+    }
+    webflowLog("warn", { event: "package_assign.failed", message });
+    return res.status(500).json({ error: message });
   }
 });
 
@@ -9477,6 +9680,7 @@ app.listen(PORT, () => {
   console.log(`Facebook listing helper (Webflow default): ${scheme}://${host}/api/listing?name=...`);
   console.log(`  Shopify mode: ${scheme}://${host}/api/listing?name=...&source=shopify`);
   console.log(`  Facebook copy (OpenAI): POST ${scheme}://${host}/api/listing-blurb (needs OPENAI_API_KEY)`);
+  console.log(`  Package assign (OpenAI): POST ${scheme}://${host}/api/package-assign (OPENAI_PACKAGE_MODEL, default gpt-5.2)`);
 });
 
 
