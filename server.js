@@ -7279,8 +7279,6 @@ async function searchShopifyProducts(name) {
               edges {
                 node {
                   price
-                  weight
-                  weightUnit
                 }
               }
             }
@@ -7373,14 +7371,18 @@ async function searchShopifyProducts(name) {
 
   const vendor = String(node.vendor || "").trim();
   const luxuryGoodsCategory = luxuryGoodsCategoryFromShopifyProductNode(node);
-  const variantNode = node.variants?.edges?.[0]?.node;
-  let weight = null;
-  if (variantNode?.weight != null && Number.isFinite(Number(variantNode.weight))) {
-    const wu = String(variantNode.weightUnit || "POUNDS").toUpperCase();
-    const raw = Number(variantNode.weight);
-    if (wu === "KILOGRAMS" || wu === "KG") weight = raw * 2.20462;
-    else if (wu === "GRAMS" || wu === "G") weight = raw / 453.592;
-    else weight = raw;
+  const description = stripListingDescriptionHtml(node.descriptionHtml || "");
+  const tags = Array.isArray(node.tags) ? node.tags : [];
+  const fromTags = parseDimensionsFromTags({ tags });
+  let weight =
+    fromTags.weight != null && !Number.isNaN(fromTags.weight) && fromTags.weight > 0
+      ? fromTags.weight
+      : null;
+  if (weight == null) {
+    const fromDescription = extractGoogleWeightFromText(description);
+    if (fromDescription?.value != null && Number.isFinite(Number(fromDescription.value))) {
+      weight = Number(fromDescription.value);
+    }
   }
   const metafields = (node.metafields?.edges || [])
     .map((e) => e?.node)
@@ -7393,7 +7395,7 @@ async function searchShopifyProducts(name) {
   return {
     title: node.title || "",
     price,
-    description: stripListingDescriptionHtml(node.descriptionHtml || ""),
+    description,
     images,
     handle: handle || null,
     productUrl: productUrl || null,
@@ -7402,7 +7404,7 @@ async function searchShopifyProducts(name) {
     vendor: vendor || null,
     luxuryGoodsCategory,
     productType: String(node.productType || "").trim() || null,
-    tags: Array.isArray(node.tags) ? node.tags : [],
+    tags,
     weight,
     metafields,
   };
