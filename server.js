@@ -1435,12 +1435,32 @@ function isWebflowRemoteAssetImportError(err) {
 
 function isWebflowDuplicateSlugError(err) {
   const status = err?.response?.status;
+  if (status !== 400 && status !== 409 && status !== 422) return false;
   const details = err?.response?.data?.details;
-  if (status !== 400 || !Array.isArray(details)) return false;
-  return details.some(
-    (d) =>
-      d?.param === "slug" &&
-      /unique value is already in database/i.test(String(d?.description || ""))
+  if (Array.isArray(details)) {
+    if (
+      details.some(
+        (d) =>
+          d?.param === "slug" &&
+          /unique value is already in database/i.test(String(d?.description || ""))
+      )
+    ) {
+      return true;
+    }
+    if (
+      details.some((d) => {
+        const param = String(d?.param || "").toLowerCase();
+        const desc = String(d?.description || "").toLowerCase();
+        return param.includes("slug") && (desc.includes("unique") || desc.includes("already") || desc.includes("duplicate"));
+      })
+    ) {
+      return true;
+    }
+  }
+  const msg = webflowApiErrorText(err).toLowerCase();
+  return (
+    msg.includes("unique value is already in database") ||
+    (msg.includes("slug") && (msg.includes("unique") || msg.includes("already") || msg.includes("duplicate")))
   );
 }
 
@@ -3948,7 +3968,20 @@ async function findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, confi
         headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
       });
     } catch (err) {
-      webflowLog("error", { event: "match_scan.error", shopifyProductId, offset, message: err.message, responseData: err.response?.data });
+      const status = err.response?.status;
+      webflowLog("error", {
+        event: "match_scan.error",
+        shopifyProductId,
+        offset,
+        status: status ?? null,
+        message: err.message,
+        responseData: err.response?.data,
+      });
+      if (status === 400 && offset > 0) break;
+      if (slugNorm) {
+        const bySlug = await findExistingWebflowItemBySlug(config, slugNorm);
+        if (bySlug) return bySlug;
+      }
       return null;
     }
     const items = response.data.items || [];
@@ -3975,6 +4008,77 @@ async function findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, confi
   }
   webflowLog("info", { event: "match_scan.not_found", shopifyProductId });
   return null;
+}
+
+/** Slug-only CMS lookup (index + live pagination). Used when shopify-product-id is missing on the Webflow row. */
+async function findExistingWebflowItemBySlug(config, slug) {
+  if (!config?.collectionId || !config?.token) return null;
+  const slugNorm = slug ? String(slug).trim() : null;
+  if (!slugNorm) return null;
+
+  if (luxuryItemIndex?.bySlug?.get(slugNorm)) {
+    const hit = luxuryItemIndex.bySlug.get(slugNorm);
+    webflowLog("info", {
+      event: "match_scan.found_by_slug",
+      slug: slugNorm,
+      webflowItemId: hit.id,
+      source: "index",
+    });
+    return hit;
+  }
+
+  let offset = 0;
+  const limit = 100;
+  while (true) {
+    const url = `https://api.webflow.com/v2/collections/${config.collectionId}/items?limit=${limit}&offset=${offset}`;
+    let response;
+    try {
+      response = await axios.get(url, {
+        headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
+      });
+    } catch (err) {
+      const status = err.response?.status;
+      webflowLog("error", {
+        event: "match_scan.slug_only_error",
+        slug: slugNorm,
+        offset,
+        status: status ?? null,
+        message: err.message,
+        responseData: err.response?.data,
+      });
+      if (status === 400 && offset > 0) break;
+      return null;
+    }
+    const items = response.data?.items || [];
+    for (const item of items) {
+      const fd = item.fieldData || {};
+      const wfSlug = (fd.slug ? String(fd.slug).trim() : null) || (fd["shopify-slug-2"] ? String(fd["shopify-slug-2"]).trim() : null);
+      if (wfSlug && wfSlug === slugNorm) {
+        registerLuxuryItemInRunIndex(item);
+        webflowLog("info", {
+          event: "match_scan.found_by_slug",
+          slug: slugNorm,
+          webflowItemId: item.id,
+          source: "live_scan",
+        });
+        return item;
+      }
+    }
+    if (items.length < limit) break;
+    offset += limit;
+  }
+  return null;
+}
+
+function registerLuxuryItemInRunIndex(item) {
+  if (!item?.id || !luxuryItemIndex) return;
+  const fd = item.fieldData || {};
+  const wfId = fd["shopify-product-id"] ? String(fd["shopify-product-id"]) : null;
+  const wfUrl = fd["shopify-url"] ? String(fd["shopify-url"]).trim() : null;
+  const wfSlug = (fd.slug || fd["shopify-slug-2"]) ? String(fd.slug || fd["shopify-slug-2"]).trim() : null;
+  if (wfId) luxuryItemIndex.byShopifyId.set(wfId, item);
+  if (wfUrl) luxuryItemIndex.byUrl.set(wfUrl, item);
+  if (wfSlug) luxuryItemIndex.bySlug.set(wfSlug, item);
 }
 
 /* ======================================================
@@ -6472,7 +6576,11 @@ async function syncSingleProductCore(product, cache, options = {}) {
       );
     }
     if (!alreadyInLuxury && guardLuxuryCfg?.collectionId && guardLuxuryCfg?.token) {
-      alreadyInLuxury = await findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, guardLuxuryCfg);
+      const slugHit = slug ? luxuryItemIndex?.bySlug?.get(String(slug).trim()) : null;
+      alreadyInLuxury =
+        slugHit ||
+        (await findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, guardLuxuryCfg)) ||
+        (await findExistingWebflowItemBySlug(guardLuxuryCfg, slug));
     }
     const existingFromGuard = (detectedVertical === "furniture" && alreadyInFurniture) ? alreadyInFurniture : (detectedVertical === "luxury" && alreadyInLuxury) ? alreadyInLuxury : null;
     if (existingFromGuard) {
@@ -6749,18 +6857,23 @@ async function syncSingleProductCore(product, cache, options = {}) {
       }
     } else {
       webflowLog("info", { event: "create.cms.start", shopifyProductId, productTitle: name, collectionId: createConfig.collectionId });
-      let resp;
       try {
-        resp = await axios.post(
-          `https://api.webflow.com/v2/collections/${createConfig.collectionId}/items`,
-          { fieldData: stripNullFieldDataValues(productFieldData) },
-          {
-            headers: {
-              Authorization: `Bearer ${createConfig.token}`,
-              "Content-Type": "application/json",
-            },
-          }
-        );
+        const cmsResult = await createOrLinkLuxuryCmsItem({
+          config: createConfig,
+          productFieldData,
+          shopifyProductId,
+          shopifyUrl,
+          slug,
+          productTitle: name,
+        });
+        newId = cmsResult.id;
+        webflowLog("info", {
+          event: cmsResult.linked ? "create.cms.ok_linked" : "create.cms.ok",
+          shopifyProductId,
+          productTitle: name,
+          webflowId: newId,
+          linked: cmsResult.linked,
+        });
       } catch (createErr) {
         webflowLog("error", {
           event: "create.cms.failed",
@@ -6770,33 +6883,8 @@ async function syncSingleProductCore(product, cache, options = {}) {
           status: createErr.response?.status,
           responseBody: createErr.response?.data,
         });
-        if (isWebflowDuplicateSlugError(createErr)) {
-          const existingBySlug = await findExistingWebflowItem(
-            shopifyProductId,
-            shopifyUrl,
-            slug,
-            createConfig
-          );
-          if (existingBySlug?.id) {
-            newId = existingBySlug.id;
-            webflowLog("warn", {
-              event: "create.cms.slug_collision_recovered",
-              shopifyProductId,
-              productTitle: name,
-              slug,
-              recoveredWebflowId: newId,
-              message:
-                "Create hit duplicate slug; recovered by linking to existing CMS item",
-            });
-          } else {
-            throw createErr;
-          }
-        } else {
-          throw createErr;
-        }
+        throw createErr;
       }
-      if (!newId) newId = resp?.data?.id;
-      webflowLog("info", { event: "create.cms.ok", shopifyProductId, productTitle: name, webflowId: newId });
     }
     cache[shopifyProductId] = {
       hash: currentHash,
@@ -6819,8 +6907,21 @@ async function syncSingleProductCore(product, cache, options = {}) {
 
 async function syncSingleProduct(product, cache, options = {}) {
   const id = String(product?.id ?? "").trim();
-  if (!id) return syncSingleProductCore(product, cache, options);
-  return runSerializedByShopifyProductId(id, () => syncSingleProductCore(product, cache, options));
+  const run = () => syncSingleProductCore(product, cache, options);
+  try {
+    if (!id) return await run();
+    return await runSerializedByShopifyProductId(id, run);
+  } catch (err) {
+    webflowLog("error", {
+      event: "sync_product.failed",
+      shopifyProductId: id || null,
+      productTitle: product?.title ?? null,
+      message: err?.message || String(err),
+      status: err?.response?.status ?? null,
+      responseBody: err?.response?.data ?? null,
+    });
+    return { operation: "failed", id: null };
+  }
 }
 
 /**
@@ -7015,6 +7116,132 @@ function luxuryCmsImageFieldsFromShopifyImages(featuredImage, gallery) {
     if (url) fields[luxuryCmsGalleryImageSlug(i + 1)] = { url };
   }
   return fields;
+}
+
+const LUXURY_CMS_REMOTE_IMAGE_KEYS = ["featured-image"];
+
+function luxuryCmsRemoteImageFieldSlugs() {
+  const gallery = luxuryCmsGalleryImageSlugs?.length
+    ? luxuryCmsGalleryImageSlugs
+    : LUXURY_CMS_GALLERY_IMAGE_SLUG_DEFAULTS;
+  return [...LUXURY_CMS_REMOTE_IMAGE_KEYS, ...gallery];
+}
+
+function stripLuxuryCmsImageFieldsFromFieldData(fieldData) {
+  if (!fieldData || typeof fieldData !== "object") return fieldData;
+  const out = { ...fieldData };
+  for (const key of luxuryCmsRemoteImageFieldSlugs()) {
+    delete out[key];
+  }
+  return out;
+}
+
+function luxuryCmsFieldDataHasRemoteImageFields(fieldData) {
+  if (!fieldData || typeof fieldData !== "object") return false;
+  return luxuryCmsRemoteImageFieldSlugs().some((k) => fieldData[k] != null);
+}
+
+async function patchLuxuryCmsItemFieldData(config, itemId, fieldData, { existing = null } = {}) {
+  const url = `https://api.webflow.com/v2/collections/${config.collectionId}/items/${itemId}`;
+  const payload = stripNullFieldDataValues(fieldData);
+  const headers = {
+    Authorization: `Bearer ${config.token}`,
+    "Content-Type": "application/json",
+  };
+  try {
+    await axios.patch(url, { fieldData: payload }, { headers });
+    return;
+  } catch (err) {
+    if (!luxuryCmsFieldDataHasRemoteImageFields(payload) || !isWebflowRemoteAssetImportError(err)) {
+      throw err;
+    }
+    webflowLog("warn", {
+      event: "luxury_cms.patch_images_stripped_retry",
+      webflowItemId: itemId,
+      message: err?.response?.data?.message || err.message,
+    });
+    await axios.patch(
+      url,
+      { fieldData: stripLuxuryCmsImageFieldsFromFieldData(payload) },
+      { headers }
+    );
+  }
+  if (existing) registerLuxuryItemInRunIndex({ ...existing, id: itemId, fieldData: { ...(existing.fieldData || {}), ...payload } });
+}
+
+/**
+ * Create Luxury CMS item, or link + PATCH when slug already exists / remote images fail on create.
+ * @returns {Promise<{ id: string, linked: boolean }>}
+ */
+async function createOrLinkLuxuryCmsItem({
+  config,
+  productFieldData,
+  shopifyProductId,
+  shopifyUrl,
+  slug,
+  productTitle,
+}) {
+  const postFieldData = stripNullFieldDataValues(productFieldData);
+  const headers = {
+    Authorization: `Bearer ${config.token}`,
+    "Content-Type": "application/json",
+  };
+  const postUrl = `https://api.webflow.com/v2/collections/${config.collectionId}/items`;
+
+  const linkExisting = async (existing, source) => {
+    const live = (await getWebflowItemById(existing.id, config)) || existing;
+    await patchLuxuryCmsItemFieldData(config, live.id, postFieldData, { existing: live });
+    registerLuxuryItemInRunIndex(live);
+    webflowLog("warn", {
+      event: "create.cms.linked_existing",
+      shopifyProductId,
+      productTitle,
+      slug,
+      webflowId: live.id,
+      source,
+      message: "Slug/item already in Webflow; linked cache and PATCHed instead of creating",
+    });
+    return { id: live.id, linked: true };
+  };
+
+  const existingBySlug = await findExistingWebflowItemBySlug(config, slug);
+  if (existingBySlug?.id) {
+    return linkExisting(existingBySlug, "slug_precheck");
+  }
+
+  let lastErr = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const bodyFieldData =
+      attempt === 1 ? postFieldData : stripLuxuryCmsImageFieldsFromFieldData(postFieldData);
+    try {
+      const resp = await axios.post(postUrl, { fieldData: bodyFieldData }, { headers });
+      const id = resp?.data?.id;
+      if (!id) throw new Error("No item id in CMS create response");
+      registerLuxuryItemInRunIndex({ id, fieldData: bodyFieldData });
+      return { id, linked: false };
+    } catch (err) {
+      lastErr = err;
+      if (isWebflowDuplicateSlugError(err)) {
+        const existing =
+          (await findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, config)) ||
+          (await findExistingWebflowItemBySlug(config, slug));
+        if (existing?.id) {
+          return linkExisting(existing, "duplicate_slug");
+        }
+      }
+      if (isWebflowRemoteAssetImportError(err) && attempt < 2) {
+        webflowLog("warn", {
+          event: "create.cms.images_stripped_retry",
+          shopifyProductId,
+          productTitle,
+          message: err?.response?.data?.message || err.message,
+        });
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr || new Error("Luxury CMS create failed");
 }
 
 /** Apply Shopify image URLs to luxury fieldData (featured + gallery slots). Omits empty slots (never null). */
@@ -9300,6 +9527,7 @@ async function executeSyncAll({ reclassifyAll = false, reclassifyIdsSet = null, 
   syncRequestId = jobId || crypto.randomUUID().slice(0, 8);
   syncStartTime = Date.now();
   webflowLog("info", { event: "sync-all.entry", message: "sync-all started", jobId: syncRequestId });
+  let cache = null;
   try {
     if (reclassifyAll || reclassifyIdsSet) {
       webflowLog("info", { event: "sync-all.reclassify", reclassifyAll, reclassifyCount: reclassifyIdsSet?.size ?? "all" });
@@ -9307,7 +9535,7 @@ async function executeSyncAll({ reclassifyAll = false, reclassifyIdsSet = null, 
 
     const products = await fetchAllShopifyProducts();
     webflowLog("info", { event: "sync-all.fetched_shopify", productCount: products?.length ?? 0 });
-    const cache = loadCache();
+    cache = loadCache();
     webflowLog("info", { event: "sync-all.loaded", productCount: products?.length ?? 0, cacheKeys: Object.keys(cache).length });
 
     await loadFurnitureCategoryMap();
@@ -9420,6 +9648,10 @@ async function executeSyncAll({ reclassifyAll = false, reclassifyIdsSet = null, 
           continue;
         }
         const result = results[j];
+        if (!result || result.operation === "failed") {
+          failed++;
+          continue;
+        }
         if (result.duplicateCorrected && result.duplicateLog) {
           webflowLog("info", {
             event: "sync-all.duplicate_placement",
@@ -9433,6 +9665,14 @@ async function executeSyncAll({ reclassifyAll = false, reclassifyIdsSet = null, 
         else if (result.operation === "update") updated++;
         else if (result.operation === "sold") sold++;
         else skipped++;
+      }
+      try {
+        saveCache(cache);
+      } catch (saveErr) {
+        webflowLog("error", {
+          event: "sync-all.cache_save_failed",
+          message: saveErr?.message || String(saveErr),
+        });
       }
     }
 
@@ -9480,6 +9720,17 @@ async function executeSyncAll({ reclassifyAll = false, reclassifyIdsSet = null, 
       url: err.config?.url ?? null,
       method: err.config?.method ?? null,
     });
+    if (cache) {
+      try {
+        saveCache(cache);
+        webflowLog("info", { event: "sync-all.cache_saved_after_error", message: "Partial progress written to cache" });
+      } catch (saveErr) {
+        webflowLog("error", {
+          event: "sync-all.cache_save_after_error_failed",
+          message: saveErr?.message || String(saveErr),
+        });
+      }
+    }
     throw err;
   } finally {
     luxuryItemIndex = null;
@@ -9602,7 +9853,8 @@ app.post("/sync-by-ids", async (req, res) => {
           await sendDuplicatePlacementEmail(result.duplicateLog, duplicateEmailSentFor);
         }
         const op = result?.operation ?? "unknown";
-        if (op === "create") created++;
+        if (op === "failed") failed++;
+        else if (op === "create") created++;
         else if (op === "update" || op === "sold") updated++;
         else skipped++;
         results.push({
@@ -9668,6 +9920,13 @@ app.use((err, req, res, next) => {
   }
   console.error("[server] unhandled error:", err?.message || err);
   res.status(500).json({ success: false, error: "Server error. Please try again." });
+});
+
+process.on("unhandledRejection", (reason) => {
+  webflowLog("error", {
+    event: "process.unhandled_rejection",
+    message: reason?.message ?? String(reason),
+  });
 });
 
 const PORT = process.env.PORT || 4000;
