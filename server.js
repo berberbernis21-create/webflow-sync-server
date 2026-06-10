@@ -2442,8 +2442,46 @@ const ECOMMERCE_VERTICAL_TAG_LUXURY = "LG";
  * Optional Shopify tags for manual vertical routing (add in Traxia / Shopify tags):
  *   FH → Furniture & Home
  *   LG → Luxury Goods
- * Single-letter tags still set subcategory within that vertical (A→Art/Mirrors, J→Jewelry, etc.).
+ * Single-letter tags set subcategory within that vertical (furniture: A→Art/Mirrors, X→Accessories, etc.).
+ * Vertical (FH/LG) and category (X, B, …) can be separate tags or combined: "FH", "X" or "FH X".
  */
+const ECOMMERCE_TAG_PREFIX = /\b(?:E[\s_-]?COMMERCE|ECOMMERCE)\b/;
+
+function isEcommerceVerticalOnlyTag(normalized) {
+  if (normalized === ECOMMERCE_VERTICAL_TAG_FURNITURE || normalized === ECOMMERCE_VERTICAL_TAG_LUXURY) {
+    return true;
+  }
+  return ECOMMERCE_TAG_PREFIX.test(normalized) &&
+    new RegExp(`${ECOMMERCE_TAG_PREFIX.source}[^A-Z0-9]*(FH|LG)\\s*$`).test(normalized);
+}
+
+/** Letters extracted from one tag (0–1). Skips vertical-only tags like FH / Ecommerce FH. */
+function extractEcommerceCategoryLettersFromTag(normalized) {
+  if (!normalized) return [];
+
+  const combined = normalized.match(
+    /(?:^|(?:E[\s_-]?COMMERCE|ECOMMERCE)[^A-Z0-9]*)(?:FH|LG)[\s,./:-]+([A-Z])\b/
+  );
+  if (combined) return [combined[1]];
+
+  if (isEcommerceVerticalOnlyTag(normalized)) return [];
+
+  const direct = normalized.match(/^([A-Z])$/);
+  if (direct) return [direct[1]];
+
+  if (ECOMMERCE_TAG_PREFIX.test(normalized)) {
+    if (new RegExp(`${ECOMMERCE_TAG_PREFIX.source}[^A-Z0-9]*(FH|LG)\\b`).test(normalized)) {
+      return [];
+    }
+    const prefixed = normalized.match(
+      /\b(?:E[\s_-]?COMMERCE|ECOMMERCE)\b[^A-Z0-9]*([A-Z])\b/
+    );
+    if (prefixed) return [prefixed[1]];
+  }
+
+  return [];
+}
+
 function getEcommerceVerticalOverrideFromTags(tags) {
   if (!Array.isArray(tags) || !tags.length) return null;
 
@@ -2463,6 +2501,13 @@ function getEcommerceVerticalOverrideFromTags(tags) {
       continue;
     }
 
+    if (/^FH(?:[\s,./:-]|$)/.test(normalized)) {
+      return { vertical: "furniture", tag: ECOMMERCE_VERTICAL_TAG_FURNITURE };
+    }
+    if (/^LG(?:[\s,./:-]|$)/.test(normalized)) {
+      return { vertical: "luxury", tag: ECOMMERCE_VERTICAL_TAG_LUXURY };
+    }
+
     const prefixed = normalized.match(
       /\b(?:E[\s_-]?COMMERCE|ECOMMERCE)\b[^A-Z0-9]*([A-Z]{2})\b/
     );
@@ -2479,39 +2524,31 @@ function getEcommerceVerticalOverrideFromTags(tags) {
   return null;
 }
 
-function getEcommerceCategoryLetterFromTags(tags) {
-  if (!Array.isArray(tags) || !tags.length) return null;
+/** Last valid category letter for the given vertical map (FH/LG tags are ignored, not read as "F"). */
+function getEcommerceCategoryLetterFromTags(tags, letterToCategoryMap) {
+  if (!Array.isArray(tags) || !tags.length || !letterToCategoryMap) return null;
 
+  const matched = [];
   for (const rawTag of tags) {
     const tag = String(rawTag || "").trim();
     if (!tag) continue;
-    const normalized = tag.toUpperCase();
-
-    if (normalized === ECOMMERCE_VERTICAL_TAG_FURNITURE || normalized === ECOMMERCE_VERTICAL_TAG_LUXURY) {
-      continue;
+    for (const letter of extractEcommerceCategoryLettersFromTag(tag.toUpperCase())) {
+      if (letterToCategoryMap[letter]) matched.push(letter);
     }
-
-    const direct = normalized.match(/^([A-Z])$/);
-    if (direct) return direct[1];
-
-    const prefixed = normalized.match(
-      /\b(?:E[\s_-]?COMMERCE|ECOMMERCE)\b[^A-Z0-9]*([A-Z])\b/
-    );
-    if (prefixed) return prefixed[1];
   }
 
-  return null;
+  return matched.length ? matched[matched.length - 1] : null;
 }
 
 function getFurnitureCategoryOverrideFromEcommerceTags(tags) {
-  const letter = getEcommerceCategoryLetterFromTags(tags);
+  const letter = getEcommerceCategoryLetterFromTags(tags, FURNITURE_ECOMMERCE_LETTER_TO_CATEGORY);
   if (!letter) return null;
   const category = FURNITURE_ECOMMERCE_LETTER_TO_CATEGORY[letter];
   return category ? { letter, category } : null;
 }
 
 function getLuxuryCategoryOverrideFromEcommerceTags(tags) {
-  const letter = getEcommerceCategoryLetterFromTags(tags);
+  const letter = getEcommerceCategoryLetterFromTags(tags, LUXURY_ECOMMERCE_LETTER_TO_CATEGORY);
   if (!letter) return null;
   const category = LUXURY_ECOMMERCE_LETTER_TO_CATEGORY[letter];
   return category ? { letter, category } : null;
