@@ -1666,17 +1666,10 @@ async function syncFurnitureEcommerceSku(product, webflowProductId, config) {
     "more-images": moreImagesUrls.length > 0 ? moreImagesUrls.slice(0, 10).map((url) => (url ? { url } : null)).filter(Boolean) : null,
   };
 
-  // Compare-at is markdown-only: set when price goes down; never clear on price increases.
-  if (priceCents != null && previousPriceCents != null && previousPriceCents > 0 && priceCents < previousPriceCents) {
-    fieldData[compareSlug] = { value: previousPriceCents, unit: "USD" };
-    webflowLog("info", {
-      event: "syncFurnitureEcommerceSku.price_drop_compare_at",
-      webflowProductId,
-      shopifyProductId: product?.id,
-      previousPriceCents,
-      newPriceCents: priceCents,
-    });
-  }
+  applyFurnitureSkuCompareAtField(fieldData, compareSlug, priceCents, previousPriceCents, {
+    webflowProductId,
+    shopifyProductId: product?.id,
+  });
 
   const mergedFd = sanitizeSkuNumericFields({ ...existingFd, ...fieldData });
   if (skuFieldDataEffectivelyEqual(mergedFd, existingFd)) {
@@ -4253,6 +4246,42 @@ function getBusinessDateSoldString(now = new Date()) {
 function getFurnitureSkuCompareAtSlug() {
   const t = (process.env.FURNITURE_SKU_COMPARE_AT_SLUG || "compare-at-price").trim();
   return t || "compare-at-price";
+}
+
+/** Drops of this amount or less only update price; compare-at requires a drop greater than $0.99. */
+const COMPARE_AT_MIN_DROP_CENTS = 99;
+
+/**
+ * Markdown-only compare-at: set when price drops by more than $0.99.
+ * Markups and same/small price changes clear compare-at (no false MARK DOWN badge).
+ */
+function applyFurnitureSkuCompareAtField(fieldData, compareSlug, priceCents, previousPriceCents, logMeta = {}) {
+  if (priceCents == null || previousPriceCents == null || previousPriceCents <= 0) return;
+
+  const dropCents = previousPriceCents - priceCents;
+  if (dropCents > COMPARE_AT_MIN_DROP_CENTS) {
+    fieldData[compareSlug] = { value: previousPriceCents, unit: "USD" };
+    webflowLog("info", {
+      event: "syncFurnitureEcommerceSku.price_drop_compare_at",
+      previousPriceCents,
+      newPriceCents: priceCents,
+      dropCents,
+      ...logMeta,
+    });
+    return;
+  }
+
+  if (dropCents === 0) return;
+
+  fieldData[compareSlug] = null;
+  if (dropCents < 0) {
+    webflowLog("info", {
+      event: "syncFurnitureEcommerceSku.markup_clear_compare_at",
+      previousPriceCents,
+      newPriceCents: priceCents,
+      ...logMeta,
+    });
+  }
 }
 
 /** Cents from Webflow SKU `price` / `compare-at-price` object `{ value, unit }`. */
