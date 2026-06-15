@@ -9207,6 +9207,104 @@ app.get("/api/listing", async (req, res) => {
   }
 });
 
+/** Parse 72X1X36H / 60X36H style dimensions from bulk-editor titles. */
+function parsePackageDimensionsFromTitle(title) {
+  const t = String(title || "");
+  let m = t.match(/(\d+(?:\.\d+)?)\s*[xX×]\s*(\d+(?:\.\d+)?)\s*[xX×]\s*(\d+(?:\.\d+)?)\s*H?\b/i);
+  if (m) {
+    const nums = [m[1], m[2], m[3]].map((x) => parseFloat(x)).filter((n) => Number.isFinite(n) && n > 0);
+    if (nums.length === 3) return nums;
+  }
+  m = t.match(/(\d+(?:\.\d+)?)\s*[xX×]\s*(\d+(?:\.\d+)?)\s*H\b/i);
+  if (m) {
+    const a = parseFloat(m[1]);
+    const b = parseFloat(m[2]);
+    if (Number.isFinite(a) && a > 0 && Number.isFinite(b) && b > 0) return [a, b, 1];
+  }
+  return null;
+}
+
+function resolvePackageItemDimensions(body) {
+  const dims = body.dimensions && typeof body.dimensions === "object" ? body.dimensions : null;
+  if (dims) {
+    const l = dims.length ?? dims.lengthIn;
+    const w = dims.width ?? dims.widthIn;
+    const h = dims.height ?? dims.heightIn;
+    if (l != null && w != null && h != null) {
+      const nums = [l, w, h].map(Number).filter((n) => Number.isFinite(n) && n > 0);
+      if (nums.length === 3) return nums.sort((a, b) => b - a);
+    }
+  }
+  const fromTitle = parsePackageDimensionsFromTitle(body.title);
+  if (fromTitle) return fromTitle.sort((a, b) => b - a);
+  return null;
+}
+
+function sortedPackageBoxDims(pkg) {
+  const dims = [pkg.lengthIn, pkg.widthIn, pkg.heightIn]
+    .map((d) => (d != null ? Number(d) : NaN))
+    .filter((d) => Number.isFinite(d) && d > 0);
+  if (dims.length !== 3) return null;
+  return dims.sort((a, b) => b - a);
+}
+
+function productLooksLikeFlatArtForShipping(body) {
+  const text = `${body.title || ""} ${body.productType || ""} ${(body.tags || []).join(" ")} ${body.description || ""}`.toLowerCase();
+  if (/\b(original\s+art|art\s+print|framed\s+art|canvas|lithograph|oil\s+on|acrylic\s+on|watercolor|photograph|mirror|wall\s+art|artwork|art\s+piece)\b/.test(text)) {
+    return true;
+  }
+  if (/\boriginal\s+art\b/i.test(String(body.title || ""))) return true;
+  return false;
+}
+
+function isArtworkShippingPackage(pkg) {
+  const label = String(pkg?.shopifyLabel || "").toLowerCase();
+  return /\b(artwork|art work|flat mailer|flat art|art box)\b/.test(label);
+}
+
+/** Art boxes are sized for standard long edges — padding only on width/depth, not length. */
+function flatArtFitsArtworkBox(itemSorted, boxSorted) {
+  if (!itemSorted || itemSorted.length !== 3 || !boxSorted || boxSorted.length !== 3) return false;
+  if (itemSorted[0] > boxSorted[0]) return false;
+  if (itemSorted[1] + 2 > boxSorted[1]) return false;
+  if (itemSorted[2] + 2 > boxSorted[2]) return false;
+  return true;
+}
+
+function selectDeterministicFlatArtPackage(body, packages) {
+  if (!productLooksLikeFlatArtForShipping(body)) return null;
+  const itemSorted = resolvePackageItemDimensions(body);
+  if (!itemSorted || itemSorted.length !== 3) return null;
+  if (itemSorted[2] > 6) return null;
+
+  const weightLb = body.weightLb != null && Number.isFinite(Number(body.weightLb)) ? Number(body.weightLb) : null;
+
+  const candidates = packages
+    .filter(isArtworkShippingPackage)
+    .map((pkg) => ({ pkg, boxSorted: sortedPackageBoxDims(pkg) }))
+    .filter((x) => x.boxSorted && flatArtFitsArtworkBox(itemSorted, x.boxSorted))
+    .filter((x) => {
+      if (weightLb == null || x.pkg.maxWeightLb == null) return true;
+      return weightLb <= Number(x.pkg.maxWeightLb) * 2;
+    })
+    .sort((a, b) => {
+      const pa = a.pkg.priceMin != null ? Number(a.pkg.priceMin) : Infinity;
+      const pb = b.pkg.priceMin != null ? Number(b.pkg.priceMin) : Infinity;
+      return pa - pb;
+    });
+
+  if (!candidates.length) return null;
+
+  const { pkg, boxSorted } = candidates[0];
+  const label = String(pkg.shopifyLabel || "").trim();
+  return {
+    packageLabel: label,
+    confidence: "high",
+    action: "apply",
+    reason: `Flat art ${itemSorted.join("×")} in fits ${label} (${boxSorted.join("×")} in). Artwork boxes accept the full long-edge length; ~1 in padding per side applies only to width and depth.`,
+  };
+}
+
 /**
  * POST /api/package-assign — Shopify shipping package selection via OpenAI (OPENAI_API_KEY).
  * Body JSON: title, description, productType, vendor, tags, dimensions {length,width,height,unit},
@@ -9260,6 +9358,12 @@ async function selectPackageWithAi(body) {
     maxWeightLb: p.maxWeightLb != null ? Number(p.maxWeightLb) : null,
   }));
 
+  const shippingBody = { title, description, productType, vendor, tags, dimensions, weightLb };
+  const deterministic = selectDeterministicFlatArtPackage(shippingBody, packageCatalog);
+  if (deterministic) {
+    return { ...deterministic, model: `deterministic:${model}` };
+  }
+
   const systemPrompt = [
     "You are an expert shipping logistics coordinator for Lost & Found Resale.",
     "Pick the single best Shopify shipping package for this item from the provided packages list only.",
@@ -9271,7 +9375,10 @@ async function selectPackageWithAi(body) {
     "- Compare EVERY package in the catalog. Artwork boxes, flat mailers, and standard parcel boxes are all valid if they fit.",
     "- A vase, bowl, lamp, or sculpture is NOT flat art — use a 3D parcel box (Medium, Large, Tall Decor, etc.), not an artwork mailer, unless a parcel box cannot fit.",
     "- Flat framed art, prints, mirrors (thin depth ≤6 in): artwork boxes or flat mailers are often best — but still pick the cheapest that fits.",
-    "- Items may be rotated: compare sorted L×W×H to sorted box dimensions with ~2 in padding.",
+    "- Flat art in artwork/flat-mailer boxes: the longest canvas/frame edge may EQUAL the box longest interior (72 in art fits Artwork Box Large 72 in). Do NOT add length padding on that long edge.",
+    "- For flat art only: add ~1 in padding per side on the two smaller dimensions (width and depth/thickness). Example: 72×36×1 in art fits 72×40×6 in box.",
+    "- 3D decor (vases, lamps, sculpture): add ~1 in padding per side on all three sorted dimensions when comparing to parcel boxes.",
+    "- Items may be rotated: compare sorted L×W×H to sorted box dimensions.",
     "- Weight: item may be up to 2× box maxWeightLb when dimensions fit; otherwise step up one size.",
     "",
     "Always Store Default (action leave_store_default, packageLabel \"Store Default\"):",
@@ -9356,13 +9463,31 @@ async function selectPackageWithAi(body) {
 
   const canonical = allowedLabels.find((label) => normalizeLabel(label) === normalizeLabel(packageLabel)) || packageLabel;
 
-  return {
+  const llmResult = {
     packageLabel: canonical,
     confidence,
     action,
     reason,
     model,
   };
+
+  if (action === "leave_store_default" || packageLabel.toLowerCase().includes("store default")) {
+    const override = selectDeterministicFlatArtPackage(shippingBody, packageCatalog);
+    if (override) {
+      const overrideLabel =
+        allowedLabels.find((label) => normalizeLabel(label) === normalizeLabel(override.packageLabel)) ||
+        override.packageLabel;
+      return {
+        packageLabel: overrideLabel,
+        confidence: override.confidence,
+        action: "apply",
+        reason: `${override.reason} (Overrode GPT store-default suggestion.)`,
+        model: `deterministic+${model}`,
+      };
+    }
+  }
+
+  return llmResult;
 }
 
 app.post("/api/package-assign", async (req, res) => {
