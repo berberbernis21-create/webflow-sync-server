@@ -664,9 +664,9 @@ const DUPLICATE_EMAIL_SENT_FILE = `${DATA_DIR}/duplicate_placement_emails_sent.j
 const WEIGHT_MISSING_EMAIL_SENT_FILE = `${DATA_DIR}/weight_missing_emails_sent.json`;
 const GOOGLE_GUARD_EMAIL_SENT_FILE = `${DATA_DIR}/google_guard_emails_sent.json`;
 const SKU_IMAGE_FAIL_EMAIL_LAST_FILE = `${DATA_DIR}/sku_image_fail_email_last.json`;
+const SKU_IMAGE_IMPORT_BLOCKED_FILE = `${DATA_DIR}/sku_image_import_blocked.json`;
 const WEBFLOW_SKU_IMAGE_MAX_ATTEMPTS = 5;
 const WEBFLOW_SKU_IMAGE_BACKOFF_MS = 5000;
-const SKU_IMAGE_FAIL_EMAIL_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 /** One-time sold backfill marker (delete file to re-run archive for on/before cutoff). */
 const SOLD_BACKFILL_DONE_FILE =
   process.env.SOLD_BACKFILL_DONE_FILE || `${DATA_DIR}/sold_retention_backfill_2026-04-02.done`;
@@ -981,16 +981,61 @@ function skuImageFailEmailKey(siteId, productId) {
   return `${siteId || "?"}:${productId || "?"}`;
 }
 
-/** After repeated failures to push SKU images to Webflow, alert once per cooldown per product. */
+function loadSkuImageImportBlocked() {
+  try {
+    ensureDataDir();
+    if (!fs.existsSync(SKU_IMAGE_IMPORT_BLOCKED_FILE)) return {};
+    return JSON.parse(fs.readFileSync(SKU_IMAGE_IMPORT_BLOCKED_FILE, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function saveSkuImageImportBlocked(map) {
+  try {
+    ensureDataDir();
+    fs.writeFileSync(SKU_IMAGE_IMPORT_BLOCKED_FILE, JSON.stringify(map, null, 2), "utf8");
+  } catch (err) {
+    webflowLog("error", { event: "sku_image_import_blocked.save_failed", message: err.message });
+  }
+}
+
+function isSkuImageImportBlocked(siteId, productId) {
+  const key = skuImageFailEmailKey(siteId, productId);
+  return Boolean(loadSkuImageImportBlocked()[key]);
+}
+
+function recordSkuImageImportBlocked(siteId, productId, meta = {}) {
+  const key = skuImageFailEmailKey(siteId, productId);
+  const map = loadSkuImageImportBlocked();
+  map[key] = { blockedAt: new Date().toISOString(), ...meta };
+  saveSkuImageImportBlocked(map);
+  webflowLog("info", {
+    event: "sku_image_import.blocked",
+    siteId,
+    productId,
+    ...meta,
+  });
+}
+
+/** After remote import fails, alert at most once per product (sync continues without images). */
 async function sendSkuImageImportFailureEmail({ siteId, productId, skuId, op, productTitle, attempts, lastError, dedupeKey }) {
   const key = dedupeKey || skuImageFailEmailKey(siteId, productId);
   const lastMap = loadSkuImageFailEmailLast();
-  const lastSent = lastMap[key];
-  if (typeof lastSent === "number" && Date.now() - lastSent < SKU_IMAGE_FAIL_EMAIL_COOLDOWN_MS) {
+  if (lastMap[key] != null) {
     webflowLog("info", {
       event: "sku_image_import.email_skipped",
-      reason: "cooldown_24h",
+      reason: "already_emailed_once",
       key,
+      productId,
+    });
+    return;
+  }
+
+  if (String(productTitle || "").includes("(No Longer Available)")) {
+    webflowLog("info", {
+      event: "sku_image_import.email_skipped",
+      reason: "sold_title_suffix",
       productId,
     });
     return;
@@ -1055,6 +1100,7 @@ function webflowRetryDelayMs(err, attemptIndex) {
 
 /** Retry same payload: remote asset import errors, rate limits, short gateway blips. */
 function isWebflowSkuImagePayloadRetryableError(err) {
+  if (isPermanentWebflowRemoteAssetImportError(err)) return false;
   if (isWebflowRemoteAssetImportError(err)) return true;
   const s = err?.response?.status;
   return s === 429 || s === 502 || s === 503;
@@ -1309,6 +1355,11 @@ async function createWebflowEcommerceProduct(siteId, productFieldData, skuFieldD
     siteId,
     message: lastErr?.response?.data?.message || lastErr?.message,
   });
+  recordSkuImageImportBlocked(siteId, `create:${slugForDedupe}`, {
+    op: "POST /products",
+    productTitle,
+    permanent: isPermanentWebflowRemoteAssetImportError(lastErr),
+  });
   const response = await post(stripRemoteImageFieldsFromSkuFieldData(skuData));
   return response.data;
 }
@@ -1430,6 +1481,18 @@ function isWebflowRemoteAssetImportError(err) {
     msg.includes("remote asset") ||
     msg.includes("failed to fetch") ||
     msg.includes("cdn.shopify.com")
+  );
+}
+
+/** Shopify CDN returned HTML or wrong type — retrying will not help. */
+function isPermanentWebflowRemoteAssetImportError(err) {
+  if (!isWebflowRemoteAssetImportError(err)) return false;
+  const msg = webflowApiErrorText(err).toLowerCase();
+  return (
+    msg.includes("text/html") ||
+    msg.includes("unsupported file type") ||
+    msg.includes("invalid content-type") ||
+    msg.includes("invalid content type")
   );
 }
 
@@ -1578,6 +1641,11 @@ async function updateWebflowEcommerceProduct(siteId, productId, fieldData, token
     productId,
     message: lastErr?.response?.data?.message || lastErr?.message,
   });
+  recordSkuImageImportBlocked(siteId, productId, {
+    op: "PATCH /products",
+    productTitle,
+    permanent: isPermanentWebflowRemoteAssetImportError(lastErr),
+  });
   const strippedSku = stripRemoteImageFieldsFromSkuFieldData({ ...skuPrepared });
   await patchCombined(strippedSku);
 }
@@ -1595,6 +1663,18 @@ async function updateWebflowEcommerceSku(siteId, productId, skuId, fieldData, to
   const fullFd = sanitizeSkuNumericFields({ ...fieldData });
   const patchHeaders = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
   webflowLog("info", { event: "sku.patch.calling", method: "PATCH", url, productId, skuId, bodyKeys: ["sku"] });
+
+  if (isSkuImageImportBlocked(siteId, productId) && skuFieldDataHasRemoteAssetFields(fullFd)) {
+    webflowLog("info", {
+      event: "sku.patch.skip_images_blocked",
+      productId,
+      skuId,
+      message: "Prior remote image import failed; syncing price/dimensions only",
+    });
+    const strippedBlocked = sanitizeSkuNumericFields(stripRemoteImageFieldsFromSkuFieldData({ ...fullFd }));
+    await axios.patch(url, { sku: { fieldData: strippedBlocked } }, { headers: patchHeaders });
+    return;
+  }
 
   if (!skuFieldDataHasRemoteAssetFields(fullFd)) {
     await axios.patch(url, { sku: { fieldData: fullFd } }, { headers: patchHeaders });
@@ -1642,6 +1722,11 @@ async function updateWebflowEcommerceSku(siteId, productId, skuId, fieldData, to
     productId,
     skuId,
     message: lastErr?.response?.data?.message || lastErr?.message,
+  });
+  recordSkuImageImportBlocked(siteId, productId, {
+    op: "PATCH /products/{id}/skus/{skuId}",
+    productTitle: fieldData?.name || fieldData?.["name"] || "",
+    permanent: isPermanentWebflowRemoteAssetImportError(lastErr),
   });
   const stripped = sanitizeSkuNumericFields(stripRemoteImageFieldsFromSkuFieldData({ ...fullFd }));
   await axios.patch(url, { sku: { fieldData: stripped } }, { headers: patchHeaders });
@@ -1696,6 +1781,11 @@ async function syncFurnitureEcommerceSku(product, webflowProductId, config) {
     webflowProductId,
     shopifyProductId: product?.id,
   });
+
+  if (isSkuImageImportBlocked(config.siteId, webflowProductId)) {
+    delete fieldData["main-image"];
+    delete fieldData["more-images"];
+  }
 
   const mergedFd = sanitizeSkuNumericFields({ ...existingFd, ...fieldData });
   if (skuFieldDataEffectivelyEqual(mergedFd, existingFd)) {
@@ -4569,8 +4659,12 @@ function shopifyQtySaysSold(qty) {
 function furnitureSkuImageSyncShouldSkip(webflowProduct, shopifyProduct) {
   if (!webflowProduct) return false;
   if (webflowProduct.isArchived === true) return true;
+  const listingName = webflowProduct?.fieldData?.name ?? webflowProduct?.name ?? "";
+  if (String(listingName).includes("(No Longer Available)")) return true;
   if (webflowListingLooksSold(webflowProduct, "furniture")) return true;
   if (shopifyProduct) {
+    const st = String(shopifyProduct.status || "").toLowerCase();
+    if (st && st !== "active") return true;
     const qty = getPrimaryVariantInventoryQuantity(shopifyProduct);
     if (shopifyQtySaysSold(qty)) return true;
   }
@@ -8683,6 +8777,10 @@ function shopifyProductHasDisplayImages(product) {
 /** Shopify has images but Furniture ecommerce default SKU has no image URLs Webflow can use. */
 function furnitureEcommerceNeedsImageRepairFromShopify(product, ecommerceProduct) {
   if (furnitureSkuImageSyncShouldSkip(ecommerceProduct, product)) return false;
+  const furnSiteId = getWebflowConfig("furniture")?.siteId;
+  if (furnSiteId && ecommerceProduct?.id && isSkuImageImportBlocked(furnSiteId, ecommerceProduct.id)) {
+    return false;
+  }
   if (!shopifyProductHasDisplayImages(product)) return false;
   const skuFd = ecommerceProduct?.skus?.[0]?.fieldData;
   return furnitureSkuFieldDataImageUrls(skuFd).length === 0;
