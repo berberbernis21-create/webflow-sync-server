@@ -37,6 +37,7 @@ const STRONG_LUXURY_SIGNALS = [
   "handbag", "handbags", "bag", "bags", "wallet", "wallets", "clutch", "tote", "totes",
   "belt", "belts", "scarf", "scarves", "satchel", "satchels", "briefcase", "crossbody", "luggage",
   "earring", "earrings", "bracelet", "bracelets", "necklace", "necklaces", "jewelry", "jewellery",
+  "brooch", "brooches", "pin-brooch", "barrette", "barrettes",
   "sandal", "sandals", "pump", "pumps", "heel", "heels", "sneaker", "sneakers", "loafer", "loafers", "slide", "slides",
   "oxford", "oxfords", "espadrille", "espadrilles", "wedge", "wedges", "stiletto", "stilettos",
   "trainer", "trainers", "footwear", "hobo", "woc", "pochette", "minaudiere",

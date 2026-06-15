@@ -3189,12 +3189,19 @@ function textHasAnyWordCue(text, cues) {
  * This runs as a guard over LLM output to prevent one-word misroutes.
  */
 function resolveVerticalFromEvidence(product, llmDetectedVertical) {
-  const verticalTag = getEcommerceVerticalOverrideFromTags(getProductTagsArray(product));
+  const tags = getProductTagsArray(product);
+  const verticalTag = getEcommerceVerticalOverrideFromTags(tags);
   if (verticalTag) {
     return {
       vertical: verticalTag.vertical,
       reason: `ecommerce_vertical_tag_${verticalTag.tag.toLowerCase()}`,
     };
+  }
+  if (productHasJewelryCategoryTag(product)) {
+    return { vertical: "luxury", reason: "traxia_category_jewelry" };
+  }
+  if (isLockedLuxuryProduct(product)) {
+    return { vertical: "luxury", reason: "locked_luxury_jewelry" };
   }
   if (productLooksLikeFurnitureTrap(product)) {
     return { vertical: "furniture", reason: "evidence_entryway_rack_trap" };
@@ -3250,7 +3257,7 @@ function resolveVerticalFromEvidence(product, llmDetectedVertical) {
   if (hasStrongArtCue || (hasGenericArtWord && hasFurnitureCue)) {
     return { vertical: "furniture", reason: "evidence_art_home_cues" };
   }
-  if (hasFurnitureCue && hasDimsOrWeight) {
+  if (hasFurnitureCue && hasDimsOrWeight && !hasWearableCue && !isJewelryProduct(title, desc, product)) {
     return { vertical: "furniture", reason: "evidence_furniture_plus_dimensions" };
   }
   return { vertical: llmDetectedVertical, reason: "llm" };
@@ -3850,9 +3857,57 @@ function resolveFurnitureCategoryRef(displayCategory) {
 ====================================================== */
 function getProductTagsArray(product) {
   const t = product.tags;
-  if (Array.isArray(t)) return t;
-  if (typeof t === "string") return t.split(",").map((s) => s.trim()).filter(Boolean);
-  return [];
+  let raw = [];
+  if (Array.isArray(t)) raw = t;
+  else if (typeof t === "string") raw = t.split(",").map((s) => s.trim()).filter(Boolean);
+  /** Traxia often stores "LG, brooch, pin-brooch, …" as one Shopify tag string. */
+  const expanded = [];
+  for (const tag of raw) {
+    const s = String(tag || "").trim();
+    if (!s) continue;
+    if (s.includes(",")) {
+      for (const part of s.split(",")) {
+        const p = part.trim();
+        if (p) expanded.push(p);
+      }
+    } else {
+      expanded.push(s);
+    }
+  }
+  return expanded;
+}
+
+/** Traxia system tag e.g. "Category: JEWELRY". */
+function getTraxiaCategoryFromTags(tags) {
+  if (!Array.isArray(tags)) return null;
+  for (const raw of tags) {
+    const m = String(raw || "").match(/^Category:\s*(.+)$/i);
+    if (m) return m[1].trim();
+  }
+  return null;
+}
+
+function productHasJewelryCategoryTag(product) {
+  const cat = getTraxiaCategoryFromTags(getProductTagsArray(product));
+  return Boolean(cat && /\bjewel/i.test(cat));
+}
+
+/** LG tag, Traxia JEWELRY category, or obvious jewelry copy — never route to Furniture & Home. */
+function isLockedLuxuryProduct(product) {
+  const tags = getProductTagsArray(product);
+  const verticalTag = getEcommerceVerticalOverrideFromTags(tags);
+  if (verticalTag?.vertical === "luxury") return true;
+  if (productHasJewelryCategoryTag(product)) return true;
+  const title = String(product?.title || "");
+  if (/\bbrooch(es)?\b/i.test(title)) return true;
+  if (
+    isJewelryProduct(title, product?.body_html || "", product) &&
+    !productLooksLikeFurnitureTrap(product) &&
+    !productLooksLikeHomeDecorTray(product)
+  ) {
+    return true;
+  }
+  return false;
 }
 
 /** Parse dimensions from Shopify product tags, e.g. "Width: 48", "Height: 18", "Depth: 18", "Weight: 10". */
@@ -5654,13 +5709,18 @@ async function syncSingleProductCore(product, cache, options = {}) {
     const llmDetectedVertical = llmResult.category === "LUXURY" ? "luxury" : "furniture";
     const evidenceVertical = resolveVerticalFromEvidence(product, llmDetectedVertical);
     detectedVertical = evidenceVertical.vertical;
+    if (ecommerceVerticalTag) {
+      detectedVertical = ecommerceVerticalTag.vertical;
+    }
+    if (isLockedLuxuryProduct(product)) {
+      detectedVertical = "luxury";
+    }
     // Hard guard: wristwatches/timepieces are always Luxury (never furniture bedroom/other).
-    if (!ecommerceVerticalTag && productLooksLikeWristwatchLuxury(product)) {
+    if (productLooksLikeWristwatchLuxury(product)) {
       detectedVertical = "luxury";
     }
     // Hard guard: jewelry cues must always live under Luxury Goods in Shopify/Webflow (never overrides books/media, boxes, or lamps).
     if (
-      !ecommerceVerticalTag &&
       !productLooksLikeBookFilmOrMedia(product) &&
       !productLooksLikeFurnitureHomeBox(product) &&
       !productLooksLikeLightingFixture(product) &&
@@ -5674,7 +5734,10 @@ async function syncSingleProductCore(product, cache, options = {}) {
       cacheEntry?.vertical === "furniture" &&
       detectedVertical === "luxury" &&
       !productLooksLikeFurnitureTrap(product);
-    const correctedToFurniture = cacheEntry?.vertical === "luxury" && detectedVertical === "furniture";
+    const correctedToFurniture =
+      !isLockedLuxuryProduct(product) &&
+      cacheEntry?.vertical === "luxury" &&
+      detectedVertical === "furniture";
     vertical = correctedToLuxury
       ? "luxury"
       : correctedToFurniture
@@ -5757,7 +5820,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
   }
 
   // When we correct luxury → furniture (e.g. masquerade mask was in Luxury, classifier now says Furniture), remove from Luxury and create in Furniture.
-  if (correctedToFurniture && cacheEntry?.webflowId && vertical === "furniture") {
+  if (correctedToFurniture && cacheEntry?.webflowId && vertical === "furniture" && !isLockedLuxuryProduct(product)) {
     const luxuryConfig = getWebflowConfig("luxury");
     if (luxuryConfig?.collectionId && luxuryConfig?.token) {
       try {
@@ -5832,7 +5895,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
     }
   }
 
-  if (vertical === "furniture") {
+  if (vertical === "furniture" && !isLockedLuxuryProduct(product)) {
     const luxuryConfig = getWebflowConfig("luxury");
     if (luxuryConfig?.collectionId && luxuryConfig?.token) {
       const existingInLuxury = await findExistingWebflowItem(shopifyProductId, shopifyUrlForCleanup, slugForCleanup, luxuryConfig);
@@ -5885,7 +5948,6 @@ async function syncSingleProductCore(product, cache, options = {}) {
       detectedVertical = "luxury";
     }
     if (
-      !ecommerceVerticalTag &&
       !productLooksLikeBookFilmOrMedia(product) &&
       !productLooksLikeFurnitureHomeBox(product) &&
       !productLooksLikeLightingFixture(product) &&
@@ -5893,6 +5955,10 @@ async function syncSingleProductCore(product, cache, options = {}) {
       !productLooksLikeHomeDecorTray(product) &&
       isJewelryProduct(product?.title || "", product?.body_html || "", product)
     ) {
+      vertical = "luxury";
+      detectedVertical = "luxury";
+    }
+    if (isLockedLuxuryProduct(product)) {
       vertical = "luxury";
       detectedVertical = "luxury";
     }
