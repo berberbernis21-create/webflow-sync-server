@@ -1488,6 +1488,12 @@ async function updateWebflowEcommerceProduct(siteId, productId, fieldData, token
   }
   skuFieldData = sanitizeSkuNumericFields(sanitizeCategoryForWebflow({ ...skuFieldData }));
   const preserveArchived = current?.isArchived === true;
+  const soldListing =
+    preserveArchived ||
+    webflowListingLooksSold(current, "furniture") ||
+    data?.sold === true ||
+    data?.sold === 1 ||
+    (typeof data?.sold === "string" && String(data.sold).toLowerCase() === "true");
   const body = {
     product: { fieldData: data, ...(preserveArchived ? { isArchived: true } : {}) },
     sku: { fieldData: skuFieldData },
@@ -1517,6 +1523,17 @@ async function updateWebflowEcommerceProduct(siteId, productId, fieldData, token
 
   if (!skuFieldDataHasRemoteAssetFields(skuPrepared)) {
     await patchCombined(skuPrepared);
+    return;
+  }
+
+  if (soldListing) {
+    webflowLog("info", {
+      event: "product.patch.skip_sku_images_sold",
+      productId,
+      preserveArchived,
+      message: "Sold/archived listing; updating product fields without remote SKU image import",
+    });
+    await patchCombined(stripRemoteImageFieldsFromSkuFieldData({ ...skuPrepared }));
     return;
   }
 
@@ -1640,6 +1657,15 @@ async function syncFurnitureEcommerceSku(product, webflowProductId, config) {
   const full = await getWebflowEcommerceProductById(config.siteId, webflowProductId, config.token);
   if (full?.isArchived === true) {
     webflowLog("info", { event: "syncFurnitureEcommerceSku.skipped", reason: "product_archived", webflowProductId });
+    return;
+  }
+  if (furnitureSkuImageSyncShouldSkip(full, product)) {
+    webflowLog("info", {
+      event: "syncFurnitureEcommerceSku.skipped",
+      reason: "sold_listing",
+      webflowProductId,
+      shopifyProductId: product?.id,
+    });
     return;
   }
   const skus = full?.skus ?? [];
@@ -2343,7 +2369,7 @@ function shopifyHash(product) {
     images: imagesStable,
     slug: product.handle,
     dimensions,
-    taxonomyVersion: 15,
+    taxonomyVersion: 16,
     jewelryReclassVersion,
   };
 }
@@ -2356,7 +2382,7 @@ function contentHashForLLM(product) {
     product_type: (product.product_type || "").trim(),
     tagsKey: tagsFingerprintForHash(product),
     body_html: normalizeHtmlForHash(product.body_html),
-    taxonomyVersion: 15,
+    taxonomyVersion: 16,
     jewelryReclassVersion,
   };
 }
@@ -2627,6 +2653,8 @@ function detectCategoryFurnitureEvidence(title, descriptionHtml, tags, dimension
   const artSignals = [
     " art ",
     " artwork",
+    " original art",
+    " local artist",
     " painting",
     " paintings",
     " wall art",
@@ -2638,6 +2666,9 @@ function detectCategoryFurnitureEvidence(title, descriptionHtml, tags, dimension
     " giclee",
     " framed art",
     " sculpture",
+    " sculptures",
+    " glass sculpture",
+    " window frame",
   ];
   const furnitureTitleAnchors = [
     " table ",
@@ -2649,8 +2680,6 @@ function detectCategoryFurnitureEvidence(title, descriptionHtml, tags, dimension
     " headboard ",
     " bed ",
     " desk ",
-    " bookcase ",
-    " bookshelf ",
     " sofa ",
     " sectional ",
     " chair ",
@@ -2664,7 +2693,19 @@ function detectCategoryFurnitureEvidence(title, descriptionHtml, tags, dimension
   ];
   const paddedText = ` ${[name, descAndTags].filter(Boolean).join(" ")} `;
   const paddedTitle = ` ${name} `;
-  const explicitWallArtSignals = [" wall art", " framed art", " painting", " paintings", " lithograph", " giclee", " sculpture"];
+  const explicitWallArtSignals = [
+    " wall art",
+    " framed art",
+    " painting",
+    " paintings",
+    " lithograph",
+    " giclee",
+    " sculpture",
+    " sculptures",
+    " glass sculpture",
+    " original art",
+    " window frame",
+  ];
   const rugSignals = [" rug ", " rugs ", " runner", " runners ", " area rug", " area rugs"];
   const hasRugSignal = rugSignals.some((s) => paddedText.includes(s));
   const hasArtSignal = artSignals.some((s) => paddedText.includes(s));
@@ -2774,6 +2815,17 @@ function furnitureAccessoryCategoryOverrideTitle(title) {
   ) {
     return "Accessories";
   }
+  if (/\bbookcases?\b/.test(t) || /\bbookshelves?\b/.test(t)) return "OfficeDen";
+  if (
+    /\bglass\s+sculptures?\b/.test(t) ||
+    /\bsculptures?\b/.test(t) ||
+    /\boriginal\s+art\b/.test(t) ||
+    /\bart\s+in\s+window\s+frame\b/.test(t) ||
+    (/\bwindow\s+frame\b/.test(t) && /\b(art|artist|painting)\b/.test(t))
+  ) {
+    return "ArtMirrors";
+  }
+  if (/\bhowling\s+coyotes?\b/.test(t) || /\bcoyotes?\b/.test(t)) return "Accessories";
   if (
     /\bwall\s+hangings?\b/.test(t) ||
     /\bwall\s+(tapestry|tapestries|macrame|woven|beaded|textile)\b/.test(t) ||
@@ -4513,6 +4565,30 @@ function shopifyQtySaysSold(qty) {
   return n <= 0;
 }
 
+/** Sold / archived furniture: do not import or retry Shopify CDN SKU images (no alert emails). */
+function furnitureSkuImageSyncShouldSkip(webflowProduct, shopifyProduct) {
+  if (!webflowProduct) return false;
+  if (webflowProduct.isArchived === true) return true;
+  if (webflowListingLooksSold(webflowProduct, "furniture")) return true;
+  if (shopifyProduct) {
+    const qty = getPrimaryVariantInventoryQuantity(shopifyProduct);
+    if (shopifyQtySaysSold(qty)) return true;
+  }
+  return false;
+}
+
+/** Sold / archived luxury CMS: do not push image repairs from Shopify. */
+function luxuryCmsImageSyncShouldSkip(cmsItem, shopifyProduct) {
+  if (!cmsItem) return false;
+  if (cmsItem.isArchived === true) return true;
+  if (webflowListingLooksSold(cmsItem, "luxury")) return true;
+  if (shopifyProduct) {
+    const qty = getPrimaryVariantInventoryQuantity(shopifyProduct);
+    if (shopifyQtySaysSold(qty)) return true;
+  }
+  return false;
+}
+
 /** Shopify says qty 0 but Webflow is not in sold state — must PATCH, never skip_unchanged. */
 function needsWebflowSoldRepair(existing, vertical, qty) {
   return shopifyQtySaysSold(qty) && !webflowListingLooksSold(existing, vertical);
@@ -5854,6 +5930,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
         let resolved = forcedCat ?? detectCategoryFurniture(name, description, productTags, dimensions);
         if (furnitureSleepSurfaceIndicatesBedroom(name, description, productTags)) resolved = "Bedroom";
         if (productLooksLikeFurnitureHomeTrunk(product)) resolved = "Accessories";
+        if (forcedCat) resolved = forcedCat;
         categoryForMetafield = mapFurnitureCategoryForShopify(resolved);
       }
     } else {
@@ -5933,6 +6010,8 @@ async function syncSingleProductCore(product, cache, options = {}) {
       }
       if (furnitureSleepSurfaceIndicatesBedroom(name, description, productTags)) resolved = "Bedroom";
       if (productLooksLikeFurnitureHomeTrunk(product)) resolved = "Accessories";
+      const forcedCat = furnitureAccessoryCategoryOverrideTitle(name);
+      if (forcedCat) resolved = forcedCat;
       categoryForMetafield = mapFurnitureCategoryForShopify(resolved);
     }
   } else {
@@ -7572,6 +7651,8 @@ async function searchShopifyProducts(name) {
               edges {
                 node {
                   price
+                  weight
+                  weightUnit
                 }
               }
             }
@@ -7641,6 +7722,7 @@ async function searchShopifyProducts(name) {
     .filter(Boolean);
 
   const priceRaw = node.variants?.edges?.[0]?.node?.price;
+  const variantNode = node.variants?.edges?.[0]?.node;
   let price = "";
   if (priceRaw != null) {
     if (typeof priceRaw === "object" && priceRaw.amount != null) {
@@ -7677,6 +7759,13 @@ async function searchShopifyProducts(name) {
       weight = Number(fromDescription.value);
     }
   }
+  if (weight == null && variantNode?.weight != null && Number(variantNode.weight) > 0) {
+    const unit = String(variantNode.weightUnit || "POUNDS").toUpperCase();
+    const w = Number(variantNode.weight);
+    if (unit === "KILOGRAMS" || unit === "KG") weight = w * 2.20462;
+    else if (unit === "GRAMS" || unit === "G") weight = w / 453.592;
+    else weight = w;
+  }
   const metafields = (node.metafields?.edges || [])
     .map((e) => e?.node)
     .filter(Boolean)
@@ -7685,6 +7774,17 @@ async function searchShopifyProducts(name) {
       key: m.key,
       value: m.value,
     }));
+  if (weight == null) {
+    for (const mf of metafields) {
+      const key = String(mf.key || "").toLowerCase();
+      if (!key.includes("weight")) continue;
+      const num = parseFloat(String(mf.value || "").replace(/[^\d.]/g, ""));
+      if (Number.isFinite(num) && num > 0) {
+        weight = num;
+        break;
+      }
+    }
+  }
   return {
     title: node.title || "",
     price,
@@ -8582,6 +8682,7 @@ function shopifyProductHasDisplayImages(product) {
 
 /** Shopify has images but Furniture ecommerce default SKU has no image URLs Webflow can use. */
 function furnitureEcommerceNeedsImageRepairFromShopify(product, ecommerceProduct) {
+  if (furnitureSkuImageSyncShouldSkip(ecommerceProduct, product)) return false;
   if (!shopifyProductHasDisplayImages(product)) return false;
   const skuFd = ecommerceProduct?.skus?.[0]?.fieldData;
   return furnitureSkuFieldDataImageUrls(skuFd).length === 0;
@@ -8589,6 +8690,7 @@ function furnitureEcommerceNeedsImageRepairFromShopify(product, ecommerceProduct
 
 /** Shopify has images but Luxury CMS item has no featured / gallery image URLs. */
 function luxuryCmsNeedsImageRepairFromShopify(product, cmsItem) {
+  if (luxuryCmsImageSyncShouldSkip(cmsItem, product)) return false;
   if (!shopifyProductHasDisplayImages(product)) return false;
   return luxuryFieldDataImageUrls(cmsItem?.fieldData).length === 0;
 }
@@ -8939,19 +9041,25 @@ async function selectPackageWithAi(body) {
   }));
 
   const systemPrompt = [
-    "You select the most reasonable Shopify shipping package for Lost & Found Resale items.",
-    "You MUST choose packageLabel from the provided packages list — exact shopifyLabel string only.",
+    "You are an expert shipping logistics coordinator for Lost & Found Resale.",
+    "Pick the single best Shopify shipping package for this item from the provided packages list only.",
     "Return strict JSON: {\"packageLabel\":string,\"confidence\":\"high\"|\"medium\"|\"low\",\"action\":\"apply\"|\"leave_store_default\"|\"needs_review\",\"reason\":string}.",
     "",
-    "Rules:",
-    "- Prefer the smallest reasonable box that safely fits the item.",
-    "- Packages are malleable: allow ~2 inches padding; soft goods and prints can compress slightly.",
-    "- Weight flex: item may be up to 2× a box maxWeightLb if dimensions fit and stepping up is wasteful — otherwise step up.",
-    "- Factor shipping cost: lower priceMin/priceMax is better when multiple boxes fit.",
-    "- Flat art/prints (thin profile): prefer Flat Art / Print Mailer or artwork boxes.",
-    "- Large furniture, dining tables, bed bases, sectionals, chairs over parcel limits: action leave_store_default with packageLabel \"Store Default\".",
-    "- If dimensions are missing and item type is unclear, action needs_review with your best guess or Store Default.",
-    "- Never invent package names not in the catalog.",
+    "Core goal: the CHEAPEST box (lowest priceMin) that safely fits — like a cost-conscious warehouse pro who still protects the item.",
+    "",
+    "Box selection (all package types compete equally):",
+    "- Compare EVERY package in the catalog. Artwork boxes, flat mailers, and standard parcel boxes are all valid if they fit.",
+    "- A vase, bowl, lamp, or sculpture is NOT flat art — use a 3D parcel box (Medium, Large, Tall Decor, etc.), not an artwork mailer, unless a parcel box cannot fit.",
+    "- Flat framed art, prints, mirrors (thin depth ≤6 in): artwork boxes or flat mailers are often best — but still pick the cheapest that fits.",
+    "- Items may be rotated: compare sorted L×W×H to sorted box dimensions with ~2 in padding.",
+    "- Weight: item may be up to 2× box maxWeightLb when dimensions fit; otherwise step up one size.",
+    "",
+    "Always Store Default (action leave_store_default, packageLabel \"Store Default\"):",
+    "- Furniture: tables, chairs, sofas, beds, dressers, desks, chests, sectionals, nightstands, file cabinets, etc.",
+    "- Items over 50 lb or exceeding all parcel/art box dimensions.",
+    "",
+    "Never invent package names. packageLabel must exactly match one shopifyLabel from the list.",
+    "When several boxes fit, always choose the lowest priceMin — never a more expensive box if a cheaper one fits.",
   ].join("\n");
 
   const userPayload = {
