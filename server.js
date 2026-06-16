@@ -8293,6 +8293,31 @@ function inferDefaultPackageDepthIn(body, width, height) {
   return 5;
 }
 
+/** Belts, scarves, ties, wallets — roll/coiled for parcel shipping; never freight/store default. */
+function productLooksLikeRollableLuxuryAccessory(body) {
+  const text = `${body.title || ""} ${body.productType || ""} ${normalizePackageAssignTags(body).join(" ")}`.toLowerCase();
+  if (/\b(belt|belts|chain belt|waist belt|leather belt)\b/.test(text)) return true;
+  if (/\b(scarf|scarves|shawl|wrap|stole)\b/.test(text)) return true;
+  if (/\b(tie|ties|necktie|bow tie)\b/.test(text)) return true;
+  if (/\b(wallet|wallets|cardholder|card holder|key pouch)\b/.test(text)) return true;
+  return false;
+}
+
+/** Rolled/coil shipping footprint when Traxia tags omit dimensions (belts ship in small parcel boxes). */
+function defaultRollableAccessoryShippingDims(body) {
+  const text = `${body.title || ""} ${body.productType || ""} ${normalizePackageAssignTags(body).join(" ")}`.toLowerCase();
+  if (/\b(belt|belts|chain belt|waist belt|leather belt)\b/.test(text)) {
+    return { width: 12, height: 5, depth: 5, source: "rollable_belt_default" };
+  }
+  if (/\b(scarf|scarves|shawl|wrap|stole)\b/.test(text)) {
+    return { width: 12, height: 8, depth: 3, source: "rollable_scarf_default" };
+  }
+  if (/\b(tie|ties|necktie|bow tie)\b/.test(text)) {
+    return { width: 10, height: 4, depth: 3, source: "rollable_tie_default" };
+  }
+  return { width: 10, height: 6, depth: 4, source: "rollable_accessory_default" };
+}
+
 function getGoogleDimFallbackIn() {
   const width = Number(process.env.GOOGLE_MERCHANT_DEFAULT_WIDTH_IN || "24");
   const length = Number(process.env.GOOGLE_MERCHANT_DEFAULT_LENGTH_IN || "24");
@@ -9493,6 +9518,13 @@ function buildPackageShippingFacts(body) {
         inferredDepth: false,
       };
     }
+    if (productLooksLikeRollableLuxuryAccessory(body)) {
+      const roll = defaultRollableAccessoryShippingDims(body);
+      width = roll.width;
+      height = roll.height;
+      depth = roll.depth;
+      source = roll.source;
+    }
   }
 
   const sorted = sortedInchesFromWhd(width, height, depth);
@@ -9605,6 +9637,8 @@ function selectDeterministicShippingPackage(body, packages) {
 
   const isFlatArt = itemSorted[2] <= 6 && productLooksLikeFlatArtForShipping(body);
 
+  const isRollableAccessory = productLooksLikeRollableLuxuryAccessory(body);
+
   const candidates = packages
     .filter((p) => !isStoreDefaultPackage(p))
     .map((pkg) => ({ pkg, boxSorted: sortedPackageBoxDims(pkg) }))
@@ -9617,6 +9651,11 @@ function selectDeterministicShippingPackage(body, packages) {
       const pa = a.pkg.priceMin != null ? Number(a.pkg.priceMin) : Infinity;
       const pb = b.pkg.priceMin != null ? Number(b.pkg.priceMin) : Infinity;
       if (pa !== pb) return pa - pb;
+      if (isRollableAccessory) {
+        const aSmall = /\bsmall\b/i.test(String(a.pkg.shopifyLabel || "")) ? -1 : 0;
+        const bSmall = /\bsmall\b/i.test(String(b.pkg.shopifyLabel || "")) ? -1 : 0;
+        if (aSmall !== bSmall) return aSmall - bSmall;
+      }
       return boxFitSlack(itemSorted, a.boxSorted) - boxFitSlack(itemSorted, b.boxSorted);
     });
 
@@ -9742,6 +9781,7 @@ async function selectPackageWithAi(body) {
     "- Use practical slack (~2 in total): item + ~2 in padding may still fit if within ~2 in of box interior on any edge (warehouse pro judgment).",
     "- Flat art in artwork boxes: longest edge may EQUAL box longest interior (72 in art → Artwork Box Large 72 in); padding only on width/depth.",
     "- 3D decor (vases, lamps, bowls): standard parcel boxes with ~1 in padding per side on all sorted dimensions.",
+    "- Belts, scarves, and ties ship rolled/coiled — use smallest parcel box that fits (~12×5×5 in for belts). Never Store Default for rollable accessories under 50 lb.",
     "- Items may be rotated: compare sorted L×W×H to sorted box dimensions.",
     "- Weight: item may be up to 2× box maxWeightLb when dimensions fit; otherwise step up one size.",
     "",
@@ -9845,7 +9885,7 @@ async function selectPackageWithAi(body) {
     model,
   };
 
-  if (action === "leave_store_default" || packageLabel.toLowerCase().includes("store default")) {
+  if (action === "leave_store_default" || action === "needs_review" || packageLabel.toLowerCase().includes("store default")) {
     const override = selectDeterministicShippingPackage(shippingBodyResolved, packageCatalog);
     if (override && override.action === "apply") {
       const overrideLabel =
