@@ -4212,6 +4212,110 @@ async function fetchShopifyProductById(productId) {
   }
 }
 
+/** REST exact-title lookup when bulk editor sends title only (no tags / product id). */
+async function fetchShopifyProductByTitle(title) {
+  const store = process.env.SHOPIFY_STORE;
+  const token = process.env.SHOPIFY_ACCESS_TOKEN;
+  const t = String(title || "").trim();
+  if (!store || !token || !t) return null;
+  const url = `https://${store}.myshopify.com/admin/api/2024-01/products.json?title=${encodeURIComponent(t)}&limit=5`;
+  try {
+    const response = await axios.get(url, {
+      headers: {
+        "X-Shopify-Access-Token": token,
+        "Content-Type": "application/json",
+      },
+    });
+    const products = Array.isArray(response.data?.products) ? response.data.products : [];
+    const exact = products.find((p) => String(p?.title || "").trim() === t);
+    return exact || products[0] || null;
+  } catch (err) {
+    webflowLog("info", {
+      event: "shopify.fetch_product_by_title.failed",
+      title: t.slice(0, 120),
+      status: err.response?.status,
+      message: err.message,
+    });
+    return null;
+  }
+}
+
+function parsePackageAssignProductId(body) {
+  const raw = body?.shopifyProductId ?? body?.productId ?? body?.id ?? null;
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  const gid = s.match(/Product\/(\d+)/i);
+  if (gid) return gid[1];
+  if (/^\d+$/.test(s)) return s;
+  return null;
+}
+
+function normalizePackageAssignTags(tagsOrBody) {
+  const tags =
+    tagsOrBody && typeof tagsOrBody === "object" && !Array.isArray(tagsOrBody) && "tags" in tagsOrBody
+      ? tagsOrBody.tags
+      : tagsOrBody;
+  return getProductTagsArray({ tags }).slice(0, 80);
+}
+
+function variantWeightToLb(variant) {
+  if (!variant || variant.weight == null) return null;
+  let w = Number(variant.weight);
+  if (!Number.isFinite(w) || w <= 0) return null;
+  const unit = String(variant.weight_unit || "lb").toLowerCase();
+  if (unit === "kg") w *= 2.20462;
+  else if (unit === "g") w /= 453.592;
+  else if (unit === "oz") w /= 16;
+  return w;
+}
+
+function mergeShopifyProductIntoPackageBody(body, product) {
+  if (!product) return body;
+  const merged = { ...body };
+  if (!String(merged.title || "").trim()) merged.title = product.title || "";
+  if (!String(merged.description || "").trim() && product.body_html) merged.description = product.body_html;
+  if (!String(merged.productType || "").trim() && product.product_type) merged.productType = product.product_type;
+  if (!String(merged.vendor || "").trim() && product.vendor) merged.vendor = product.vendor;
+  merged.tags = getProductTagsArray(product);
+  const dims = getDimensionsFromProduct(product);
+  if (dims.width != null || dims.height != null || dims.length != null) {
+    merged.dimensions = {
+      width: dims.width ?? null,
+      height: dims.height ?? null,
+      length: dims.length ?? null,
+    };
+  }
+  if ((merged.weightLb == null || !Number.isFinite(Number(merged.weightLb))) && dims.weight != null && dims.weight > 0) {
+    merged.weightLb = dims.weight;
+  } else if (merged.weightLb == null) {
+    const w = variantWeightToLb(product.variants?.[0]);
+    if (w != null) merged.weightLb = w;
+  }
+  merged._hydratedFromShopify = true;
+  return merged;
+}
+
+/** Bulk editor often sends title-only; pull tags/description/dimensions/weight from Shopify Admin REST. */
+async function enrichPackageAssignBodyFromShopify(body) {
+  let out = { ...body };
+  const preFacts = buildPackageShippingFacts(out);
+  const tagList = normalizePackageAssignTags(out);
+  const hasDimTags = tagList.some((t) => /^(Width|Height|Depth|Weight):/i.test(String(t)));
+  const hasDesc = String(out.description || out.body_html || "").trim().length > 20;
+  const needsFetch =
+    !preFacts.sorted || preFacts.weightLb == null || (!hasDimTags && !hasDesc && !tagList.length);
+
+  if (!needsFetch) return out;
+
+  const productId = parsePackageAssignProductId(out);
+  let product = productId ? await fetchShopifyProductById(productId) : null;
+  if (!product && String(out.title || "").trim()) {
+    product = await fetchShopifyProductByTitle(out.title);
+  }
+  if (product) out = mergeShopifyProductIntoPackageBody(out, product);
+  return out;
+}
+
 /* ======================================================
    WEBFLOW — STRONG MATCHER (ID / URL / SLUG)
    Uses config (collectionId + token) for target collection.
@@ -8132,9 +8236,9 @@ function extractGoogleDimsFromText(text) {
   if (!text) return {};
   const out = {};
   const source = String(text);
-  const w = source.match(/Width:\s*([\d.]+)"/i);
-  const d = source.match(/Depth:\s*([\d.]+)"/i);
-  const h = source.match(/Height:\s*([\d.]+)"/i);
+  const w = source.match(/Width:\s*([\d.]+)\s*"?/i);
+  const d = source.match(/Depth:\s*([\d.]+)\s*"?/i);
+  const h = source.match(/Height:\s*([\d.]+)\s*"?/i);
   if (w) out.shippingWidth = { value: String(w[1]), unit: "in" };
   if (d) out.shippingLength = { value: String(d[1]), unit: "in" };
   if (h) out.shippingHeight = { value: String(h[1]), unit: "in" };
@@ -8148,6 +8252,45 @@ function extractGoogleDimsFromText(text) {
     }
   }
   return out;
+}
+
+function parsePartialDimsFromDescription(description) {
+  const plain = String(description || "").replace(/<[^>]*>/g, " ");
+  const google = extractGoogleDimsFromText(plain);
+  let width = google.shippingWidth ? parseFloat(google.shippingWidth.value) : null;
+  let height = google.shippingHeight ? parseFloat(google.shippingHeight.value) : null;
+  let length = google.shippingLength ? parseFloat(google.shippingLength.value) : null;
+  if (width == null || height == null) {
+    const wh = plain.match(/Width:\s*([\d.]+)\s*"?\s*[×x]\s*Height:\s*([\d.]+)/i);
+    if (wh) {
+      if (width == null) width = parseFloat(wh[1]);
+      if (height == null) height = parseFloat(wh[2]);
+    }
+  }
+  return { width, height, length, weight: null };
+}
+
+function mergePartialPackageDims(...sources) {
+  const out = { width: null, height: null, length: null, weight: null };
+  for (const s of sources) {
+    if (!s) continue;
+    if (s.width != null && !Number.isNaN(Number(s.width))) out.width = Number(s.width);
+    if (s.height != null && !Number.isNaN(Number(s.height))) out.height = Number(s.height);
+    if (s.length != null && !Number.isNaN(Number(s.length))) out.length = Number(s.length);
+    if (s.weight != null && !Number.isNaN(Number(s.weight))) out.weight = Number(s.weight);
+  }
+  return out;
+}
+
+function inferDefaultPackageDepthIn(body, width, height) {
+  const text = `${body.title || ""} ${body.productType || ""} ${normalizePackageAssignTags(body).join(" ")}`.toLowerCase();
+  if (/\b(clutch|wallet|cardholder|card holder|woc|minaudiere|pouch)\b/.test(text)) return 3;
+  if (/\b(handbag|shoulder bag|crossbody|tote|satchel|hobo|backpack|\bbag\b)\b/.test(text)) return 5;
+  if (/\b(scarf|belt|tie|glove)\b/.test(text)) return 2;
+  if (/\b(jewelry|brooch|earring|necklace|bracelet|ring)\b/.test(text)) return 2;
+  const maxFace = Math.max(Number(width) || 0, Number(height) || 0);
+  if (maxFace > 0 && maxFace <= 14) return 4;
+  return 5;
 }
 
 function getGoogleDimFallbackIn() {
@@ -9288,9 +9431,9 @@ function resolvePackageItemWeight(body) {
   if (body.weightLb != null && Number.isFinite(Number(body.weightLb)) && Number(body.weightLb) > 0) {
     return Number(body.weightLb);
   }
-  const fromTags = parseDimensionsFromTags({ tags: body.tags || [] });
+  const fromTags = parseDimensionsFromTags({ tags: normalizePackageAssignTags(body) });
   if (fromTags.weight != null && fromTags.weight > 0) return fromTags.weight;
-  const plainDesc = String(body.description || "").replace(/<[^>]*>/g, " ");
+  const plainDesc = String(body.description || body.body_html || "").replace(/<[^>]*>/g, " ");
   const w = extractGoogleWeightFromText(plainDesc);
   if (w?.value) {
     const n = parseFloat(w.value);
@@ -9302,37 +9445,39 @@ function resolvePackageItemWeight(body) {
 /** Prefer structured fields → ecommerce tags → description → title (last; title suffixes are often typos). */
 function buildPackageShippingFacts(body) {
   let source = null;
-  let width = null;
-  let height = null;
-  let depth = null;
+  let inferredDepth = false;
 
-  const dims = body.dimensions && typeof body.dimensions === "object" ? body.dimensions : null;
-  if (dims) {
-    depth = dims.length ?? dims.lengthIn ?? dims.depth ?? dims.depthIn;
-    width = dims.width ?? dims.widthIn;
-    height = dims.height ?? dims.heightIn;
-    if (width != null && height != null && depth != null) source = "dimensions_field";
+  const fieldDims =
+    body.dimensions && typeof body.dimensions === "object"
+      ? {
+          width: body.dimensions.width ?? body.dimensions.widthIn,
+          height: body.dimensions.height ?? body.dimensions.heightIn,
+          length: body.dimensions.length ?? body.dimensions.lengthIn ?? body.dimensions.depth ?? body.dimensions.depthIn,
+          weight: null,
+        }
+      : null;
+
+  const fromTags = parseDimensionsFromTags({ tags: normalizePackageAssignTags(body) });
+  const fromDesc = parsePartialDimsFromDescription(body.description || body.body_html);
+  const merged = mergePartialPackageDims(fieldDims, fromTags, fromDesc);
+
+  let width = merged.width;
+  let height = merged.height;
+  let depth = merged.length;
+
+  if (fieldDims?.width != null && fieldDims?.height != null && fieldDims?.length != null) {
+    source = "dimensions_field";
+  } else if (fromTags.width != null || fromTags.height != null || fromTags.length != null) {
+    source = "ecommerce_tags";
+  } else if (fromDesc.width != null || fromDesc.height != null || fromDesc.length != null) {
+    source = "description";
   }
 
-  if (!source) {
-    const fromTags = parseDimensionsFromTags({ tags: body.tags || [] });
-    if (fromTags.width != null && fromTags.height != null && fromTags.length != null) {
-      width = fromTags.width;
-      height = fromTags.height;
-      depth = fromTags.length;
-      source = "ecommerce_tags";
-    }
-  }
-
-  if (!source) {
-    const plainDesc = String(body.description || "").replace(/<[^>]*>/g, " ");
-    const googleDims = extractGoogleDimsFromText(plainDesc);
-    if (googleDims.shippingWidth && googleDims.shippingLength && googleDims.shippingHeight) {
-      width = parseFloat(googleDims.shippingWidth.value);
-      depth = parseFloat(googleDims.shippingLength.value);
-      height = parseFloat(googleDims.shippingHeight.value);
-      source = "description";
-    }
+  if (width != null && height != null && depth == null) {
+    depth = inferDefaultPackageDepthIn(body, width, height);
+    inferredDepth = true;
+    if (source) source = `${source}_inferred_depth`;
+    else source = "inferred_depth";
   }
 
   if (!source) {
@@ -9345,6 +9490,7 @@ function buildPackageShippingFacts(body) {
         width: null,
         height: null,
         depth: null,
+        inferredDepth: false,
       };
     }
   }
@@ -9357,6 +9503,7 @@ function buildPackageShippingFacts(body) {
     width,
     height,
     depth,
+    inferredDepth,
   };
 }
 
@@ -9441,7 +9588,9 @@ function selectDeterministicShippingPackage(body, packages) {
   const facts = buildPackageShippingFacts(body);
   const itemSorted = facts.sorted;
   const weightLb = facts.weightLb;
-  const dimNote = facts.source ? ` (from ${facts.source})` : "";
+  const dimNote = facts.source
+    ? ` (from ${facts.source}${body._hydratedFromShopify ? ", Shopify Admin fetch" : ""})`
+    : "";
 
   if (productIsBulkyFurnitureForShipping(body, itemSorted, weightLb)) {
     return storeDefaultPackageResult(
@@ -9507,11 +9656,13 @@ async function selectPackageWithAi(body) {
     throw err;
   }
 
+  body = await enrichPackageAssignBodyFromShopify(body);
+
   const title = String(body.title || "").trim();
-  const description = String(body.description || "").trim().slice(0, 2200);
-  const productType = String(body.productType || "").trim();
+  const description = String(body.description || body.body_html || "").trim().slice(0, 2200);
+  const productType = String(body.productType || body.product_type || "").trim();
   const vendor = String(body.vendor || "").trim();
-  const tags = Array.isArray(body.tags) ? body.tags.map((t) => String(t || "").trim()).filter(Boolean).slice(0, 30) : [];
+  const tags = normalizePackageAssignTags(body);
   const dimensions = body.dimensions && typeof body.dimensions === "object" ? body.dimensions : null;
   const weightLb = body.weightLb != null && Number.isFinite(Number(body.weightLb)) ? Number(body.weightLb) : null;
   const packages = Array.isArray(body.packages) ? body.packages : [];
@@ -9544,8 +9695,18 @@ async function selectPackageWithAi(body) {
     maxWeightLb: p.maxWeightLb != null ? Number(p.maxWeightLb) : null,
   }));
 
-  const shippingBody = { title, description, productType, vendor, tags, dimensions, weightLb };
+  const shippingBody = { title, description, productType, vendor, tags, dimensions, weightLb, _hydratedFromShopify: body._hydratedFromShopify };
   const shippingFacts = buildPackageShippingFacts(shippingBody);
+  const parsedShippingPayload = {
+    dimensionSource: shippingFacts.source,
+    sortedInchesLwh: shippingFacts.sorted,
+    widthIn: shippingFacts.width,
+    heightIn: shippingFacts.height,
+    depthIn: shippingFacts.depth,
+    weightLb: shippingFacts.weightLb,
+    inferredDepth: shippingFacts.inferredDepth,
+    hydratedFromShopify: Boolean(body._hydratedFromShopify),
+  };
   const shippingBodyResolved = {
     ...shippingBody,
     weightLb: shippingFacts.weightLb,
@@ -9556,7 +9717,11 @@ async function selectPackageWithAi(body) {
   };
   const deterministic = selectDeterministicShippingPackage(shippingBodyResolved, packageCatalog);
   if (deterministic) {
-    return { ...deterministic, model: `deterministic:${model}` };
+    return {
+      ...deterministic,
+      model: `deterministic:${model}`,
+      parsedShipping: parsedShippingPayload,
+    };
   }
 
   const systemPrompt = [
@@ -9567,9 +9732,10 @@ async function selectPackageWithAi(body) {
     "Core goal: the CHEAPEST box (lowest priceMin) that fits — closest practical fit, not oversized.",
     "",
     "Dimensions (mandatory priority — never guess from title when better data exists):",
-    "1) parsedShipping from ecommerce tags (Width:/Height:/Depth:) and description",
+    "1) parsedShipping from ecommerce tags (Width:/Height:/Depth:) and description — Width+Height alone is valid for bags (depth inferred ~4–5 in)",
     "2) body.dimensions if sent",
-    "3) Title suffix dimensions (e.g. 11X519H) ONLY as last resort — often typos; ignore absurd values.",
+    "3) Server auto-fetches tags/description/dimensions from Shopify Admin when bulk editor sends title or shopifyProductId",
+    "4) Title suffix dimensions ONLY as last resort",
     "",
     "Box selection:",
     "- Compare EVERY package (artwork boxes, flat mailers, standard parcel boxes). Pick lowest priceMin among those that fit.",
@@ -9602,6 +9768,7 @@ async function selectPackageWithAi(body) {
       heightIn: shippingFacts.height,
       depthIn: shippingFacts.depth,
       weightLb: shippingFacts.weightLb,
+      hydratedFromShopify: Boolean(body._hydratedFromShopify),
     },
     packages: packageCatalog,
     allowedPackageLabels: allowedLabels,
@@ -9664,6 +9831,7 @@ async function selectPackageWithAi(body) {
       action: "needs_review",
       reason: `GPT returned "${parsed?.packageLabel || ""}" which is not in the Shopify package list.`,
       model,
+      parsedShipping: parsedShippingPayload,
     };
   }
 
@@ -9689,11 +9857,12 @@ async function selectPackageWithAi(body) {
         action: "apply",
         reason: `${override.reason} (Overrode GPT store-default suggestion.)`,
         model: `deterministic+${model}`,
+        parsedShipping: parsedShippingPayload,
       };
     }
   }
 
-  return llmResult;
+  return { ...llmResult, parsedShipping: parsedShippingPayload };
 }
 
 app.post("/api/package-assign", async (req, res) => {
