@@ -75,15 +75,18 @@ Allowed categories: ${FURNITURE_CATEGORIES.join(", ")}.
 (These map to: Living Room, Dining Room, Office Den, Rugs, Art/Mirrors, Bedroom, Accessories, Outdoor/Patio, Lighting.)
 
 RULES (mandatory):
-- Paintings, art prints, framed art, photographs, framed photos, canvas art, sculpture, statues, figurines, mirrors, wall art, lithographs → "ArtMirrors".
+- **Lamp**, **lamps**, **light**, **lights**, **chandelier**, **sconce**, **torchiere**, **lampshade**, or **light fixture** in the title → always **"Lighting"**, even if the title also says sculpture, art, or flower (e.g. "Sculpture Flower Lamp" → Lighting, not ArtMirrors).
+- Paintings, art prints, framed art, photographs, framed photos, canvas art, **original art**, **art in a window frame**, **glass sculpture**, sculpture, statues, mirrors, wall art, lithographs → "ArtMirrors". Marketing copy about a **living room** does **not** override art titles. **Never** ArtMirrors when the title names a lamp or light fixture.
+- **Decorative metal/wire animals** (howling coyote, coyote silhouette, tabletop animal decor) → "Accessories", not LivingRoom or ArtMirrors.
 - Umbrellas, umbrella stand, patio umbrella, outdoor umbrella, patio furniture, outdoor seating, garden, deck, adirondack, hammock, fire pit → "OutdoorPatio".
 - Patio / porch / deck dining — including **patio dining table**, outdoor dining table, mosaic or tile **patio** tables — is **"OutdoorPatio"**, not "DiningRoom". Use "DiningRoom" only for **indoor** dining when there is no patio/outdoor/deck/porch context.
 - Sofas, chairs, tables, coffee table, console, ottoman, sectional, loveseat → "LivingRoom".
 - **Bench / benches** (rustic wood bench, entryway bench, mudroom bench, storage bench, settle bench, bed bench, hall bench) are **seating furniture** → **"LivingRoom"**, never "Accessories". **Grommets** or metal rings on wood describe **furniture detailing / hardware**, not handbags. **Dining bench** → **"DiningRoom"**. **Patio / outdoor / garden / porch bench** (clearly outdoor seating) → **"OutdoorPatio"**.
-- Wall units, shelving units, etageres, modular/media walls, large room dividers with shelves — case goods for living spaces → "LivingRoom" (never "Accessories" just because they hold decor).
+- Wall units, modular/media walls, large room dividers with shelves — case goods for living spaces → "LivingRoom" (never "Accessories" just because they hold decor).
+- **Bookcase**, **bookshelf**, **bookcases**, **bookshelves** (including wood & metal bookcases) → **"OfficeDen"**, never "LivingRoom".
 - Trays alone (butler tray, butlers tray, serving tray, decorative tray, ottoman tray — removable tray or tray-with-stand sold as a tray) → "Accessories". Tray **table** (explicit tray+table furniture, TV tray table, folding tray table meant as a small table) → "LivingRoom".
 - Dining table, dining chairs, buffet, sideboard, bar cart, hutch → "DiningRoom".
-- Desk, office chair, filing cabinet, bookshelf (office) → "OfficeDen".
+- Desk, office chair, filing cabinet → "OfficeDen".
 - Game tables (shuffleboard, pool table, ping pong, foosball), exercise/workout/fitness equipment (dumbbells, treadmill, home gym), play equipment, game room furniture → "OfficeDen".
 - Rug, runner, area rug → "Rugs".
 - Bed, headboard, nightstand, dresser, armoire, vanity → "Bedroom".

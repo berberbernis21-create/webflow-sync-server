@@ -2753,6 +2753,10 @@ function detectCategoryFurnitureEvidence(title, descriptionHtml, tags, dimension
     return { category: forcedFromTitle, confidence: 1, reason: "title_keyword_override" };
   }
 
+  if (titleIndicatesLightingFurniture(title)) {
+    return { category: "Lighting", confidence: 1, reason: "lighting_title_guard" };
+  }
+
   if (furnitureSleepSurfaceIndicatesBedroom(title, descriptionHtml, tags)) {
     return { category: "Bedroom", confidence: 1, reason: "sleep_surface" };
   }
@@ -2828,7 +2832,7 @@ function detectCategoryFurnitureEvidence(title, descriptionHtml, tags, dimension
   const hasArtSignal = artSignals.some((s) => paddedText.includes(s));
   const hasExplicitWallArtSignal = explicitWallArtSignals.some((s) => paddedText.includes(s));
   const hasFurnitureAnchorInTitle = furnitureTitleAnchors.some((s) => paddedTitle.includes(s));
-  if (hasArtSignal && !hasFurnitureAnchorInTitle && !(hasRugSignal && !hasExplicitWallArtSignal)) {
+  if (hasArtSignal && !hasFurnitureAnchorInTitle && !(hasRugSignal && !hasExplicitWallArtSignal) && !titleIndicatesLightingFurniture(title)) {
     return { category: "ArtMirrors", confidence: 1, reason: "art_signals_guard" };
   }
 
@@ -2904,6 +2908,42 @@ function applyTableDimensionRules(dims, name, descAndTags) {
 }
 
 /**
+ * Title clearly names a lamp/light/fixture — always Lighting (beats sculpture/art signals).
+ */
+function titleIndicatesLightingFurniture(title) {
+  const t = normalizeTitleForFurnitureAccessoryMatch(title);
+  if (!t) return false;
+  const jewelryPendantPhrase =
+    /\bpendants?\s+(necklace|necklaces|charm|charms)\b/.test(t) ||
+    /\b(necklace|necklaces)\s+pendants?\b/.test(t) ||
+    /\bpendants?\s+on\s+(a\s+)?(chain|rope|cord)\b/.test(t) ||
+    /\blocket\s+pendants?\b/.test(t);
+  if (!jewelryPendantPhrase) {
+    if (/\bpendants?\s+(light|lights|lamp|lamps|fixture|fixtures|chandelier|chandeliers|sconce)\b/.test(t)) return true;
+    if (/\b(light|lights|lamp|lamps|fixture|fixtures|chandelier|chandeliers)\s+pendants?\b/.test(t)) return true;
+    if (/\bceiling\s+pendants?\b/.test(t)) return true;
+    if (/\bpendants?\s+lighting\b/.test(t)) return true;
+    if (/\bpendants?\s*[-–]\s*\d+\s*[x×]\s*\d+/i.test(t)) return true;
+    if (
+      /\bpendants?\b/.test(t) &&
+      /\b(chandelier|chandeliers|sconce|converted|canopy|hardwired|flush\s+mount|semi-flush|track\s+light|junction|luminaire|electrical)\b/.test(t)
+    ) {
+      return true;
+    }
+  }
+  if (/\b(table|floor|desk|bedside|torchiere)\s+lamps?\b/.test(t)) return true;
+  if (/\b(table|floor|desk|bedside|vanity|reading|task|accent|wall|ceiling)\s+lights?\b/.test(t)) return true;
+  if (/\bchandeliers?\b/.test(t)) return true;
+  if (/\bsconces?\b/.test(t)) return true;
+  if (/\btorchieres?\b/.test(t)) return true;
+  if (/\blampshades?\b/.test(t)) return true;
+  if (/\bpendant lights?\b/.test(t) || /\bceiling lights?\b/.test(t) || /\blight fixtures?\b/.test(t)) return true;
+  if (/\blights?\s+(fixture|fixtures|fitting|fittings)\b/.test(t)) return true;
+  if (/\blamps?\b/.test(t)) return true;
+  return false;
+}
+
+/**
  * Collapse Shopify typography so accessory title overrides still match (ZWSP, fancy hyphens, accented Latin).
  */
 function normalizeTitleForFurnitureAccessoryMatch(raw) {
@@ -2923,6 +2963,7 @@ function normalizeTitleForFurnitureAccessoryMatch(raw) {
 function furnitureAccessoryCategoryOverrideTitle(title) {
   const t = normalizeTitleForFurnitureAccessoryMatch(title);
   if (!t) return null;
+  if (titleIndicatesLightingFurniture(title)) return "Lighting";
   if (
     /\b(coat|hat|magazine|wine|towel|luggage)\s+racks?\b/.test(t) ||
     /\bcoat\s+stands?\b/.test(t) ||
@@ -2934,11 +2975,12 @@ function furnitureAccessoryCategoryOverrideTitle(title) {
   }
   if (/\bbookcases?\b/.test(t) || /\bbookshelves?\b/.test(t)) return "OfficeDen";
   if (
-    /\bglass\s+sculptures?\b/.test(t) ||
+    !titleIndicatesLightingFurniture(title) &&
+    (/\bglass\s+sculptures?\b/.test(t) ||
     /\bsculptures?\b/.test(t) ||
     /\boriginal\s+art\b/.test(t) ||
     /\bart\s+in\s+window\s+frame\b/.test(t) ||
-    (/\bwindow\s+frame\b/.test(t) && /\b(art|artist|painting)\b/.test(t))
+    (/\bwindow\s+frame\b/.test(t) && /\b(art|artist|painting)\b/.test(t)))
   ) {
     return "ArtMirrors";
   }
@@ -6151,6 +6193,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
         if (furnitureSleepSurfaceIndicatesBedroom(name, description, productTags)) resolved = "Bedroom";
         if (productLooksLikeFurnitureHomeTrunk(product)) resolved = "Accessories";
         if (forcedCat) resolved = forcedCat;
+        if (titleIndicatesLightingFurniture(name)) resolved = "Lighting";
         categoryForMetafield = mapFurnitureCategoryForShopify(resolved);
       }
     } else {
@@ -6232,6 +6275,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
       if (productLooksLikeFurnitureHomeTrunk(product)) resolved = "Accessories";
       const forcedCat = furnitureAccessoryCategoryOverrideTitle(name);
       if (forcedCat) resolved = forcedCat;
+      if (titleIndicatesLightingFurniture(name)) resolved = "Lighting";
       categoryForMetafield = mapFurnitureCategoryForShopify(resolved);
     }
   } else {
