@@ -8007,6 +8007,7 @@ async function searchShopifyProducts(name) {
       products(first: 15, query: $q) {
         edges {
           node {
+            id
             title
             handle
             vendor
@@ -8186,6 +8187,12 @@ async function searchShopifyProducts(name) {
       }
     }
   }
+  const shopifyProductId = (() => {
+    const raw = String(node.id || "").trim();
+    const m = raw.match(/Product\/(\d+)/i);
+    return m ? m[1] : /^\d+$/.test(raw) ? raw : null;
+  })();
+
   return {
     title: node.title || "",
     price,
@@ -8201,6 +8208,7 @@ async function searchShopifyProducts(name) {
     tags,
     weight,
     metafields,
+    shopifyProductId,
   };
 }
 
@@ -9449,6 +9457,10 @@ app.get("/api/listing", async (req, res) => {
       tags: Array.isArray(listing.tags) ? listing.tags : [],
       weight: listing.weight != null && Number.isFinite(Number(listing.weight)) ? Number(listing.weight) : null,
       metafields: Array.isArray(listing.metafields) ? listing.metafields : [],
+      shopifyProductId:
+        listing.shopifyProductId != null && String(listing.shopifyProductId).trim() !== ""
+          ? String(listing.shopifyProductId).trim()
+          : null,
     });
   } catch (err) {
     webflowLog("error", { event: "api.listing", message: err?.message, source });
