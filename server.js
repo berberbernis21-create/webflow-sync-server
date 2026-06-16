@@ -8350,6 +8350,29 @@ function productLooksLikeRollableLuxuryAccessory(body) {
   return false;
 }
 
+/** Belt waist/length sizes (65/26) or bad tag dims must not become shipping L×W×H. */
+function rollableAccessoryTagDimsAreClothingSize(body, width, height, depth) {
+  if (!productLooksLikeRollableLuxuryAccessory(body)) return false;
+  const title = String(body.title || "");
+  const text = `${title} ${body.productType || ""}`.toLowerCase();
+  if (/\bbelts?\b/.test(text) && /\d+\s*\/\s*\d+/.test(title)) return true;
+  const max = Math.max(Number(width) || 0, Number(height) || 0, Number(depth) || 0);
+  if (/\bbelts?\b/.test(text) && max > 24) return true;
+  if (/\b(scarf|scarves|tie|ties|wallet)\b/.test(text) && max > 36) return true;
+  return false;
+}
+
+function applyRollableAccessoryDefaultDims(body) {
+  const roll = defaultRollableAccessoryShippingDims(body);
+  return {
+    width: roll.width,
+    height: roll.height,
+    depth: roll.depth,
+    source: roll.source,
+    sorted: sortedInchesFromWhd(roll.width, roll.height, roll.depth),
+  };
+}
+
 /** Rolled/coil shipping footprint when Traxia tags omit dimensions (belts ship in small parcel boxes). */
 function defaultRollableAccessoryShippingDims(body) {
   const text = `${body.title || ""} ${body.productType || ""} ${normalizePackageAssignTags(body).join(" ")}`.toLowerCase();
@@ -9551,6 +9574,14 @@ function buildPackageShippingFacts(body) {
       : "shopify_variant";
   }
 
+  if (rollableAccessoryTagDimsAreClothingSize(body, width, height, depth)) {
+    width = null;
+    height = null;
+    depth = null;
+    source = null;
+    inferredDepth = false;
+  }
+
   if (width != null && height != null && depth == null) {
     depth = inferDefaultPackageDepthIn(body, width, height);
     inferredDepth = true;
@@ -9573,6 +9604,17 @@ function buildPackageShippingFacts(body) {
     }
     if (productLooksLikeRollableLuxuryAccessory(body)) {
       const roll = defaultRollableAccessoryShippingDims(body);
+      width = roll.width;
+      height = roll.height;
+      depth = roll.depth;
+      source = roll.source;
+    }
+  }
+
+  if (productLooksLikeRollableLuxuryAccessory(body)) {
+    const sortedCheck = sortedInchesFromWhd(width, height, depth);
+    if (!sortedCheck || sortedCheck[0] > 24) {
+      const roll = applyRollableAccessoryDefaultDims(body);
       width = roll.width;
       height = roll.height;
       depth = roll.depth;
@@ -9639,6 +9681,7 @@ function itemFitsBoxDims(itemSorted, boxSorted, { skipLongEdgePadding = false, d
 }
 
 function productIsBulkyFurnitureForShipping(body, itemSorted, weightLb) {
+  if (productLooksLikeRollableLuxuryAccessory(body)) return false;
   if (weightLb != null && weightLb > PACKAGE_MAX_PARCEL_WEIGHT_LB) return true;
   const text = `${body.title || ""} ${body.productType || ""} ${(body.tags || []).join(" ")}`.toLowerCase();
   const bulky =
@@ -9670,9 +9713,15 @@ function storeDefaultPackageResult(packages, reason) {
 
 /** Cheapest box that fits (with slack); store default only for bulky furniture or heavy items. */
 function selectDeterministicShippingPackage(body, packages) {
-  const facts = buildPackageShippingFacts(body);
-  const itemSorted = facts.sorted;
+  let facts = buildPackageShippingFacts(body);
+  let itemSorted = facts.sorted;
   const weightLb = facts.weightLb;
+
+  if (productLooksLikeRollableLuxuryAccessory(body) && (!itemSorted || itemSorted[0] > 24)) {
+    const roll = applyRollableAccessoryDefaultDims(body);
+    facts = { ...facts, ...roll, weightLb, inferredDepth: false };
+    itemSorted = roll.sorted;
+  }
   const dimNote = facts.source
     ? ` (from ${facts.source}${body._hydratedFromShopify ? ", Shopify Admin fetch" : ""})`
     : "";
