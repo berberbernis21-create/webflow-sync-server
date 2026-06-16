@@ -3971,48 +3971,9 @@ function parseDimensionsFromTags(product) {
   return { width, height, length, weight };
 }
 
-/** Same description block furniture sync appends — fill gaps when tags omit Weight (common on luxury). */
-function fillDimensionsFromDescriptionHtml(dims, html) {
-  if (!html) return dims;
-  const plain = String(html).replace(/<[^>]*>/g, " ");
-  const out = {
-    weight: dims.weight,
-    width: dims.width,
-    height: dims.height,
-    length: dims.length,
-  };
-  const wMatch = plain.match(/Width:\s*([\d.]+)\s*"?/i);
-  const dMatch = plain.match(/Depth:\s*([\d.]+)\s*"?/i);
-  const hMatch = plain.match(/Height:\s*([\d.]+)\s*"?/i);
-  if (out.width == null && wMatch) out.width = parseFloat(wMatch[1]);
-  if (out.length == null && dMatch) out.length = parseFloat(dMatch[1]);
-  if (out.height == null && hMatch) out.height = parseFloat(hMatch[1]);
-  const whMatch = plain.match(/Width:\s*([\d.]+)\s*"?\s*[×x]\s*Height:\s*([\d.]+)/i);
-  if (whMatch) {
-    if (out.width == null) out.width = parseFloat(whMatch[1]);
-    if (out.height == null) out.height = parseFloat(whMatch[2]);
-  }
-  if (out.weight == null) {
-    const wtMatch = plain.match(/Weight:\s*([\d.]+)\s*lb\.?/i);
-    if (wtMatch) out.weight = parseFloat(wtMatch[1]);
-  }
-  return out;
-}
-
-function variantWeightToLb(variant) {
-  if (!variant || variant.weight == null) return null;
-  let w = Number(variant.weight);
-  if (!Number.isFinite(w) || w <= 0) return null;
-  const unit = String(variant.weight_unit || "lb").toLowerCase();
-  if (unit === "kg") w *= 2.20462;
-  else if (unit === "g") w /= 453.592;
-  else if (unit === "oz") w /= 16;
-  return w;
-}
-
 function getDimensionsFromProduct(product) {
   const v = product.variants?.[0];
-  let weight = variantWeightToLb(v);
+  let weight = v?.weight != null && v.weight > 0 ? Number(v.weight) : null;
   let width = null, height = null, length = null;
   const metafields = Array.isArray(product.metafields) ? product.metafields : [];
   for (const m of metafields) {
@@ -4025,11 +3986,7 @@ function getDimensionsFromProduct(product) {
   if (height == null && fromTags.height != null && !Number.isNaN(fromTags.height)) height = fromTags.height;
   if (length == null && fromTags.length != null && !Number.isNaN(fromTags.length)) length = fromTags.length;
   if (weight == null && fromTags.weight != null && !Number.isNaN(fromTags.weight) && fromTags.weight > 0) weight = fromTags.weight;
-  const filled = fillDimensionsFromDescriptionHtml(
-    { weight, width, height, length },
-    product.body_html || product.description || ""
-  );
-  return filled;
+  return { weight, width, height, length };
 }
 
 function hasAnyDimensions(dims) {
@@ -4253,88 +4210,6 @@ async function fetchShopifyProductById(productId) {
     });
     return null;
   }
-}
-
-/** REST exact-title lookup when bulk editor sends title only (no tags / product id). */
-async function fetchShopifyProductByTitle(title) {
-  const store = process.env.SHOPIFY_STORE;
-  const token = process.env.SHOPIFY_ACCESS_TOKEN;
-  const t = String(title || "").trim();
-  if (!store || !token || !t) return null;
-  const url = `https://${store}.myshopify.com/admin/api/2024-01/products.json?title=${encodeURIComponent(t)}&limit=5`;
-  try {
-    const response = await axios.get(url, {
-      headers: {
-        "X-Shopify-Access-Token": token,
-        "Content-Type": "application/json",
-      },
-    });
-    const products = Array.isArray(response.data?.products) ? response.data.products : [];
-    const exact = products.find((p) => String(p?.title || "").trim() === t);
-    return exact || products[0] || null;
-  } catch (err) {
-    webflowLog("info", {
-      event: "shopify.fetch_product_by_title.failed",
-      title: t.slice(0, 120),
-      status: err.response?.status,
-      message: err.message,
-    });
-    return null;
-  }
-}
-
-function parsePackageAssignProductId(body) {
-  const raw = body?.shopifyProductId ?? body?.productId ?? body?.id ?? null;
-  if (raw == null) return null;
-  const s = String(raw).trim();
-  const gid = s.match(/Product\/(\d+)/i);
-  if (gid) return gid[1];
-  if (/^\d+$/.test(s)) return s;
-  return null;
-}
-
-function normalizePackageAssignTags(tagsOrBody) {
-  const tags =
-    tagsOrBody && typeof tagsOrBody === "object" && !Array.isArray(tagsOrBody) && "tags" in tagsOrBody
-      ? tagsOrBody.tags
-      : tagsOrBody;
-  return getProductTagsArray({ tags }).slice(0, 80);
-}
-
-function mergeShopifyProductIntoPackageBody(body, product) {
-  if (!product) return body;
-  const merged = { ...body };
-  if (!String(merged.title || "").trim()) merged.title = product.title || "";
-  if (!String(merged.description || "").trim() && product.body_html) merged.description = product.body_html;
-  if (!String(merged.productType || "").trim() && product.product_type) merged.productType = product.product_type;
-  if (!String(merged.vendor || "").trim() && product.vendor) merged.vendor = product.vendor;
-  merged.tags = getProductTagsArray(product);
-  merged.variants = product.variants;
-  merged.metafields = product.metafields;
-  const dims = getDimensionsFromProduct({ ...product, body_html: product.body_html || merged.description });
-  if (dims.width != null || dims.height != null || dims.length != null) {
-    merged.dimensions = {
-      width: dims.width ?? null,
-      height: dims.height ?? null,
-      length: dims.length ?? null,
-    };
-  }
-  if (dims.weight != null && dims.weight > 0) merged.weightLb = dims.weight;
-  merged._hydratedFromShopify = true;
-  return merged;
-}
-
-/** Bulk editor often sends title-only — always hydrate from Shopify Admin REST (same path as furniture sync). */
-async function enrichPackageAssignBodyFromShopify(body) {
-  if (body?._hydratedFromShopify) return body;
-  const productId = parsePackageAssignProductId(body);
-  const title = String(body?.title || "").trim();
-  if (!productId && !title) return body;
-
-  let product = productId ? await fetchShopifyProductById(productId) : null;
-  if (!product && title) product = await fetchShopifyProductByTitle(title);
-  if (product) return mergeShopifyProductIntoPackageBody(body, product);
-  return body;
 }
 
 /* ======================================================
@@ -8007,7 +7882,6 @@ async function searchShopifyProducts(name) {
       products(first: 15, query: $q) {
         edges {
           node {
-            id
             title
             handle
             vendor
@@ -8035,14 +7909,8 @@ async function searchShopifyProducts(name) {
               edges {
                 node {
                   price
-                  inventoryItem {
-                    measurement {
-                      weight {
-                        value
-                        unit
-                      }
-                    }
-                  }
+                  weight
+                  weightUnit
                 }
               }
             }
@@ -8149,23 +8017,11 @@ async function searchShopifyProducts(name) {
       weight = Number(fromDescription.value);
     }
   }
-  if (weight == null && variantNode?.inventoryItem?.measurement?.weight) {
-    const wObj = variantNode.inventoryItem.measurement.weight;
-    const w = Number(wObj.value);
-    const unit = String(wObj.unit || "POUNDS").toUpperCase();
-    if (Number.isFinite(w) && w > 0) {
-      if (unit === "KILOGRAMS" || unit === "KG") weight = w * 2.20462;
-      else if (unit === "GRAMS" || unit === "G") weight = w / 453.592;
-      else if (unit === "OUNCES" || unit === "OZ") weight = w / 16;
-      else weight = w;
-    }
-  }
   if (weight == null && variantNode?.weight != null && Number(variantNode.weight) > 0) {
     const unit = String(variantNode.weightUnit || "POUNDS").toUpperCase();
     const w = Number(variantNode.weight);
     if (unit === "KILOGRAMS" || unit === "KG") weight = w * 2.20462;
     else if (unit === "GRAMS" || unit === "G") weight = w / 453.592;
-    else if (unit === "OUNCES" || unit === "OZ") weight = w / 16;
     else weight = w;
   }
   const metafields = (node.metafields?.edges || [])
@@ -8187,12 +8043,6 @@ async function searchShopifyProducts(name) {
       }
     }
   }
-  const shopifyProductId = (() => {
-    const raw = String(node.id || "").trim();
-    const m = raw.match(/Product\/(\d+)/i);
-    return m ? m[1] : /^\d+$/.test(raw) ? raw : null;
-  })();
-
   return {
     title: node.title || "",
     price,
@@ -8208,7 +8058,6 @@ async function searchShopifyProducts(name) {
     tags,
     weight,
     metafields,
-    shopifyProductId,
   };
 }
 
@@ -8283,9 +8132,9 @@ function extractGoogleDimsFromText(text) {
   if (!text) return {};
   const out = {};
   const source = String(text);
-  const w = source.match(/Width:\s*([\d.]+)\s*"?/i);
-  const d = source.match(/Depth:\s*([\d.]+)\s*"?/i);
-  const h = source.match(/Height:\s*([\d.]+)\s*"?/i);
+  const w = source.match(/Width:\s*([\d.]+)"/i);
+  const d = source.match(/Depth:\s*([\d.]+)"/i);
+  const h = source.match(/Height:\s*([\d.]+)"/i);
   if (w) out.shippingWidth = { value: String(w[1]), unit: "in" };
   if (d) out.shippingLength = { value: String(d[1]), unit: "in" };
   if (h) out.shippingHeight = { value: String(h[1]), unit: "in" };
@@ -8299,93 +8148,6 @@ function extractGoogleDimsFromText(text) {
     }
   }
   return out;
-}
-
-function parsePartialDimsFromDescription(description) {
-  const plain = String(description || "").replace(/<[^>]*>/g, " ");
-  const google = extractGoogleDimsFromText(plain);
-  let width = google.shippingWidth ? parseFloat(google.shippingWidth.value) : null;
-  let height = google.shippingHeight ? parseFloat(google.shippingHeight.value) : null;
-  let length = google.shippingLength ? parseFloat(google.shippingLength.value) : null;
-  if (width == null || height == null) {
-    const wh = plain.match(/Width:\s*([\d.]+)\s*"?\s*[×x]\s*Height:\s*([\d.]+)/i);
-    if (wh) {
-      if (width == null) width = parseFloat(wh[1]);
-      if (height == null) height = parseFloat(wh[2]);
-    }
-  }
-  return { width, height, length, weight: null };
-}
-
-function mergePartialPackageDims(...sources) {
-  const out = { width: null, height: null, length: null, weight: null };
-  for (const s of sources) {
-    if (!s) continue;
-    if (s.width != null && !Number.isNaN(Number(s.width))) out.width = Number(s.width);
-    if (s.height != null && !Number.isNaN(Number(s.height))) out.height = Number(s.height);
-    if (s.length != null && !Number.isNaN(Number(s.length))) out.length = Number(s.length);
-    if (s.weight != null && !Number.isNaN(Number(s.weight))) out.weight = Number(s.weight);
-  }
-  return out;
-}
-
-function inferDefaultPackageDepthIn(body, width, height) {
-  const text = `${body.title || ""} ${body.productType || ""} ${normalizePackageAssignTags(body).join(" ")}`.toLowerCase();
-  if (/\b(clutch|wallet|cardholder|card holder|woc|minaudiere|pouch)\b/.test(text)) return 3;
-  if (/\b(handbag|shoulder bag|crossbody|tote|satchel|hobo|backpack|\bbag\b)\b/.test(text)) return 5;
-  if (/\b(scarf|belt|tie|glove)\b/.test(text)) return 2;
-  if (/\b(jewelry|brooch|earring|necklace|bracelet|ring)\b/.test(text)) return 2;
-  const maxFace = Math.max(Number(width) || 0, Number(height) || 0);
-  if (maxFace > 0 && maxFace <= 14) return 4;
-  return 5;
-}
-
-/** Belts, scarves, ties, wallets — roll/coiled for parcel shipping; never freight/store default. */
-function productLooksLikeRollableLuxuryAccessory(body) {
-  const text = `${body.title || ""} ${body.productType || ""} ${normalizePackageAssignTags(body).join(" ")}`.toLowerCase();
-  if (/\b(belt|belts|chain belt|waist belt|leather belt)\b/.test(text)) return true;
-  if (/\b(scarf|scarves|shawl|wrap|stole)\b/.test(text)) return true;
-  if (/\b(tie|ties|necktie|bow tie)\b/.test(text)) return true;
-  if (/\b(wallet|wallets|cardholder|card holder|key pouch)\b/.test(text)) return true;
-  return false;
-}
-
-/** Belt waist/length sizes (65/26) or bad tag dims must not become shipping L×W×H. */
-function rollableAccessoryTagDimsAreClothingSize(body, width, height, depth) {
-  if (!productLooksLikeRollableLuxuryAccessory(body)) return false;
-  const title = String(body.title || "");
-  const text = `${title} ${body.productType || ""}`.toLowerCase();
-  if (/\bbelts?\b/.test(text) && /\d+\s*\/\s*\d+/.test(title)) return true;
-  const max = Math.max(Number(width) || 0, Number(height) || 0, Number(depth) || 0);
-  if (/\bbelts?\b/.test(text) && max > 24) return true;
-  if (/\b(scarf|scarves|tie|ties|wallet)\b/.test(text) && max > 36) return true;
-  return false;
-}
-
-function applyRollableAccessoryDefaultDims(body) {
-  const roll = defaultRollableAccessoryShippingDims(body);
-  return {
-    width: roll.width,
-    height: roll.height,
-    depth: roll.depth,
-    source: roll.source,
-    sorted: sortedInchesFromWhd(roll.width, roll.height, roll.depth),
-  };
-}
-
-/** Rolled/coil shipping footprint when Traxia tags omit dimensions (belts ship in small parcel boxes). */
-function defaultRollableAccessoryShippingDims(body) {
-  const text = `${body.title || ""} ${body.productType || ""} ${normalizePackageAssignTags(body).join(" ")}`.toLowerCase();
-  if (/\b(belt|belts|chain belt|waist belt|leather belt)\b/.test(text)) {
-    return { width: 12, height: 5, depth: 5, source: "rollable_belt_default" };
-  }
-  if (/\b(scarf|scarves|shawl|wrap|stole)\b/.test(text)) {
-    return { width: 12, height: 8, depth: 3, source: "rollable_scarf_default" };
-  }
-  if (/\b(tie|ties|necktie|bow tie)\b/.test(text)) {
-    return { width: 10, height: 4, depth: 3, source: "rollable_tie_default" };
-  }
-  return { width: 10, height: 6, depth: 4, source: "rollable_accessory_default" };
 }
 
 function getGoogleDimFallbackIn() {
@@ -9480,10 +9242,6 @@ app.get("/api/listing", async (req, res) => {
       tags: Array.isArray(listing.tags) ? listing.tags : [],
       weight: listing.weight != null && Number.isFinite(Number(listing.weight)) ? Number(listing.weight) : null,
       metafields: Array.isArray(listing.metafields) ? listing.metafields : [],
-      shopifyProductId:
-        listing.shopifyProductId != null && String(listing.shopifyProductId).trim() !== ""
-          ? String(listing.shopifyProductId).trim()
-          : null,
     });
   } catch (err) {
     webflowLog("error", { event: "api.listing", message: err?.message, source });
@@ -9496,8 +9254,6 @@ app.get("/api/listing", async (req, res) => {
 /** Parse 72X1X36H / 60X36H style dimensions from bulk-editor titles. */
 function parsePackageDimensionsFromTitle(title) {
   const t = String(title || "");
-  if (/\bbelts?\b/i.test(t) && /\d+\s*\/\s*\d+/.test(t)) return null;
-  if (/\bbelts?\b/i.test(t) && !/\d+\s*[xX×]\s*\d+/i.test(t)) return null;
   let m = t.match(/(\d+(?:\.\d+)?)\s*[xX×]\s*(\d+(?:\.\d+)?)\s*[xX×]\s*(\d+(?:\.\d+)?)\s*H?\b/i);
   if (m) {
     const nums = [m[1], m[2], m[3]].map((x) => parseFloat(x)).filter((n) => Number.isFinite(n) && n > 0);
@@ -9532,61 +9288,51 @@ function resolvePackageItemWeight(body) {
   if (body.weightLb != null && Number.isFinite(Number(body.weightLb)) && Number(body.weightLb) > 0) {
     return Number(body.weightLb);
   }
-  const dims = getDimensionsFromProduct({
-    tags: normalizePackageAssignTags(body),
-    body_html: body.description || body.body_html || "",
-    variants: body.variants,
-    metafields: body.metafields,
-  });
-  if (dims.weight != null && dims.weight > 0) return dims.weight;
+  const fromTags = parseDimensionsFromTags({ tags: body.tags || [] });
+  if (fromTags.weight != null && fromTags.weight > 0) return fromTags.weight;
+  const plainDesc = String(body.description || "").replace(/<[^>]*>/g, " ");
+  const w = extractGoogleWeightFromText(plainDesc);
+  if (w?.value) {
+    const n = parseFloat(w.value);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
   return null;
 }
 
-/** Same path as furniture sync: getDimensionsFromProduct (tags → description → variant weight). */
+/** Prefer structured fields → ecommerce tags → description → title (last; title suffixes are often typos). */
 function buildPackageShippingFacts(body) {
   let source = null;
-  let inferredDepth = false;
+  let width = null;
+  let height = null;
+  let depth = null;
 
-  const productLike = {
-    tags: normalizePackageAssignTags(body),
-    body_html: body.description || body.body_html || "",
-    variants: body.variants,
-    metafields: body.metafields,
-  };
-  const fromProduct = getDimensionsFromProduct(productLike);
-
-  let width = fromProduct.width;
-  let height = fromProduct.height;
-  let depth = fromProduct.length;
-  let weightLb = resolvePackageItemWeight(body);
-
-  const fromTags = parseDimensionsFromTags(productLike);
-  if (fromTags.width != null || fromTags.height != null || fromTags.length != null || fromTags.weight != null) {
-    source = "ecommerce_tags";
-  } else if (
-    fromProduct.width != null ||
-    fromProduct.height != null ||
-    fromProduct.length != null ||
-    fromProduct.weight != null
-  ) {
-    source = String(body.description || body.body_html || "").match(/Dimensions:|Weight:/i)
-      ? "description"
-      : "shopify_variant";
+  const dims = body.dimensions && typeof body.dimensions === "object" ? body.dimensions : null;
+  if (dims) {
+    depth = dims.length ?? dims.lengthIn ?? dims.depth ?? dims.depthIn;
+    width = dims.width ?? dims.widthIn;
+    height = dims.height ?? dims.heightIn;
+    if (width != null && height != null && depth != null) source = "dimensions_field";
   }
 
-  if (rollableAccessoryTagDimsAreClothingSize(body, width, height, depth)) {
-    width = null;
-    height = null;
-    depth = null;
-    source = null;
-    inferredDepth = false;
+  if (!source) {
+    const fromTags = parseDimensionsFromTags({ tags: body.tags || [] });
+    if (fromTags.width != null && fromTags.height != null && fromTags.length != null) {
+      width = fromTags.width;
+      height = fromTags.height;
+      depth = fromTags.length;
+      source = "ecommerce_tags";
+    }
   }
 
-  if (width != null && height != null && depth == null) {
-    depth = inferDefaultPackageDepthIn(body, width, height);
-    inferredDepth = true;
-    if (source) source = `${source}_inferred_depth`;
-    else source = "inferred_depth";
+  if (!source) {
+    const plainDesc = String(body.description || "").replace(/<[^>]*>/g, " ");
+    const googleDims = extractGoogleDimsFromText(plainDesc);
+    if (googleDims.shippingWidth && googleDims.shippingLength && googleDims.shippingHeight) {
+      width = parseFloat(googleDims.shippingWidth.value);
+      depth = parseFloat(googleDims.shippingLength.value);
+      height = parseFloat(googleDims.shippingHeight.value);
+      source = "description";
+    }
   }
 
   if (!source) {
@@ -9595,30 +9341,11 @@ function buildPackageShippingFacts(body) {
       return {
         sorted: fromTitle.sort((a, b) => b - a),
         source: "title",
-        weightLb,
+        weightLb: resolvePackageItemWeight(body),
         width: null,
         height: null,
         depth: null,
-        inferredDepth: false,
       };
-    }
-    if (productLooksLikeRollableLuxuryAccessory(body)) {
-      const roll = defaultRollableAccessoryShippingDims(body);
-      width = roll.width;
-      height = roll.height;
-      depth = roll.depth;
-      source = roll.source;
-    }
-  }
-
-  if (productLooksLikeRollableLuxuryAccessory(body)) {
-    const sortedCheck = sortedInchesFromWhd(width, height, depth);
-    if (!sortedCheck || sortedCheck[0] > 24) {
-      const roll = applyRollableAccessoryDefaultDims(body);
-      width = roll.width;
-      height = roll.height;
-      depth = roll.depth;
-      source = roll.source;
     }
   }
 
@@ -9626,11 +9353,10 @@ function buildPackageShippingFacts(body) {
   return {
     sorted,
     source: sorted ? source : null,
-    weightLb,
+    weightLb: resolvePackageItemWeight(body),
     width,
     height,
     depth,
-    inferredDepth,
   };
 }
 
@@ -9681,7 +9407,6 @@ function itemFitsBoxDims(itemSorted, boxSorted, { skipLongEdgePadding = false, d
 }
 
 function productIsBulkyFurnitureForShipping(body, itemSorted, weightLb) {
-  if (productLooksLikeRollableLuxuryAccessory(body)) return false;
   if (weightLb != null && weightLb > PACKAGE_MAX_PARCEL_WEIGHT_LB) return true;
   const text = `${body.title || ""} ${body.productType || ""} ${(body.tags || []).join(" ")}`.toLowerCase();
   const bulky =
@@ -9713,18 +9438,10 @@ function storeDefaultPackageResult(packages, reason) {
 
 /** Cheapest box that fits (with slack); store default only for bulky furniture or heavy items. */
 function selectDeterministicShippingPackage(body, packages) {
-  let facts = buildPackageShippingFacts(body);
-  let itemSorted = facts.sorted;
+  const facts = buildPackageShippingFacts(body);
+  const itemSorted = facts.sorted;
   const weightLb = facts.weightLb;
-
-  if (productLooksLikeRollableLuxuryAccessory(body) && (!itemSorted || itemSorted[0] > 24)) {
-    const roll = applyRollableAccessoryDefaultDims(body);
-    facts = { ...facts, ...roll, weightLb, inferredDepth: false };
-    itemSorted = roll.sorted;
-  }
-  const dimNote = facts.source
-    ? ` (from ${facts.source}${body._hydratedFromShopify ? ", Shopify Admin fetch" : ""})`
-    : "";
+  const dimNote = facts.source ? ` (from ${facts.source})` : "";
 
   if (productIsBulkyFurnitureForShipping(body, itemSorted, weightLb)) {
     return storeDefaultPackageResult(
@@ -9739,8 +9456,6 @@ function selectDeterministicShippingPackage(body, packages) {
 
   const isFlatArt = itemSorted[2] <= 6 && productLooksLikeFlatArtForShipping(body);
 
-  const isRollableAccessory = productLooksLikeRollableLuxuryAccessory(body);
-
   const candidates = packages
     .filter((p) => !isStoreDefaultPackage(p))
     .map((pkg) => ({ pkg, boxSorted: sortedPackageBoxDims(pkg) }))
@@ -9753,11 +9468,6 @@ function selectDeterministicShippingPackage(body, packages) {
       const pa = a.pkg.priceMin != null ? Number(a.pkg.priceMin) : Infinity;
       const pb = b.pkg.priceMin != null ? Number(b.pkg.priceMin) : Infinity;
       if (pa !== pb) return pa - pb;
-      if (isRollableAccessory) {
-        const aSmall = /\bsmall\b/i.test(String(a.pkg.shopifyLabel || "")) ? -1 : 0;
-        const bSmall = /\bsmall\b/i.test(String(b.pkg.shopifyLabel || "")) ? -1 : 0;
-        if (aSmall !== bSmall) return aSmall - bSmall;
-      }
       return boxFitSlack(itemSorted, a.boxSorted) - boxFitSlack(itemSorted, b.boxSorted);
     });
 
@@ -9797,13 +9507,11 @@ async function selectPackageWithAi(body) {
     throw err;
   }
 
-  body = await enrichPackageAssignBodyFromShopify(body);
-
   const title = String(body.title || "").trim();
-  const description = String(body.description || body.body_html || "").trim().slice(0, 2200);
-  const productType = String(body.productType || body.product_type || "").trim();
+  const description = String(body.description || "").trim().slice(0, 2200);
+  const productType = String(body.productType || "").trim();
   const vendor = String(body.vendor || "").trim();
-  const tags = normalizePackageAssignTags(body);
+  const tags = Array.isArray(body.tags) ? body.tags.map((t) => String(t || "").trim()).filter(Boolean).slice(0, 30) : [];
   const dimensions = body.dimensions && typeof body.dimensions === "object" ? body.dimensions : null;
   const weightLb = body.weightLb != null && Number.isFinite(Number(body.weightLb)) ? Number(body.weightLb) : null;
   const packages = Array.isArray(body.packages) ? body.packages : [];
@@ -9836,18 +9544,8 @@ async function selectPackageWithAi(body) {
     maxWeightLb: p.maxWeightLb != null ? Number(p.maxWeightLb) : null,
   }));
 
-  const shippingBody = { title, description, productType, vendor, tags, dimensions, weightLb, _hydratedFromShopify: body._hydratedFromShopify };
+  const shippingBody = { title, description, productType, vendor, tags, dimensions, weightLb };
   const shippingFacts = buildPackageShippingFacts(shippingBody);
-  const parsedShippingPayload = {
-    dimensionSource: shippingFacts.source,
-    sortedInchesLwh: shippingFacts.sorted,
-    widthIn: shippingFacts.width,
-    heightIn: shippingFacts.height,
-    depthIn: shippingFacts.depth,
-    weightLb: shippingFacts.weightLb,
-    inferredDepth: shippingFacts.inferredDepth,
-    hydratedFromShopify: Boolean(body._hydratedFromShopify),
-  };
   const shippingBodyResolved = {
     ...shippingBody,
     weightLb: shippingFacts.weightLb,
@@ -9858,11 +9556,7 @@ async function selectPackageWithAi(body) {
   };
   const deterministic = selectDeterministicShippingPackage(shippingBodyResolved, packageCatalog);
   if (deterministic) {
-    return {
-      ...deterministic,
-      model: `deterministic:${model}`,
-      parsedShipping: parsedShippingPayload,
-    };
+    return { ...deterministic, model: `deterministic:${model}` };
   }
 
   const systemPrompt = [
@@ -9872,18 +9566,16 @@ async function selectPackageWithAi(body) {
     "",
     "Core goal: the CHEAPEST box (lowest priceMin) that fits — closest practical fit, not oversized.",
     "",
-    "Dimensions (mandatory priority — same as furniture sync):",
-    "1) Shopify ecommerce tags Width:/Height:/Depth:/Weight: (always hydrate from Admin when title/id sent)",
-    "2) Description Dimensions/Weight block furniture sync appends",
-    "3) Width+Height tag pairs valid for bags (depth inferred); belts/scarves use rolled defaults",
-    "4) parsedShipping.weightLb must never be null when tags or description include Weight",
+    "Dimensions (mandatory priority — never guess from title when better data exists):",
+    "1) parsedShipping from ecommerce tags (Width:/Height:/Depth:) and description",
+    "2) body.dimensions if sent",
+    "3) Title suffix dimensions (e.g. 11X519H) ONLY as last resort — often typos; ignore absurd values.",
     "",
     "Box selection:",
     "- Compare EVERY package (artwork boxes, flat mailers, standard parcel boxes). Pick lowest priceMin among those that fit.",
     "- Use practical slack (~2 in total): item + ~2 in padding may still fit if within ~2 in of box interior on any edge (warehouse pro judgment).",
     "- Flat art in artwork boxes: longest edge may EQUAL box longest interior (72 in art → Artwork Box Large 72 in); padding only on width/depth.",
     "- 3D decor (vases, lamps, bowls): standard parcel boxes with ~1 in padding per side on all sorted dimensions.",
-    "- Belts, scarves, and ties ship rolled/coiled — use smallest parcel box that fits (~12×5×5 in for belts). Never Store Default for rollable accessories under 50 lb.",
     "- Items may be rotated: compare sorted L×W×H to sorted box dimensions.",
     "- Weight: item may be up to 2× box maxWeightLb when dimensions fit; otherwise step up one size.",
     "",
@@ -9910,7 +9602,6 @@ async function selectPackageWithAi(body) {
       heightIn: shippingFacts.height,
       depthIn: shippingFacts.depth,
       weightLb: shippingFacts.weightLb,
-      hydratedFromShopify: Boolean(body._hydratedFromShopify),
     },
     packages: packageCatalog,
     allowedPackageLabels: allowedLabels,
@@ -9973,7 +9664,6 @@ async function selectPackageWithAi(body) {
       action: "needs_review",
       reason: `GPT returned "${parsed?.packageLabel || ""}" which is not in the Shopify package list.`,
       model,
-      parsedShipping: parsedShippingPayload,
     };
   }
 
@@ -9987,7 +9677,7 @@ async function selectPackageWithAi(body) {
     model,
   };
 
-  if (action === "leave_store_default" || action === "needs_review" || packageLabel.toLowerCase().includes("store default")) {
+  if (action === "leave_store_default" || packageLabel.toLowerCase().includes("store default")) {
     const override = selectDeterministicShippingPackage(shippingBodyResolved, packageCatalog);
     if (override && override.action === "apply") {
       const overrideLabel =
@@ -9999,12 +9689,11 @@ async function selectPackageWithAi(body) {
         action: "apply",
         reason: `${override.reason} (Overrode GPT store-default suggestion.)`,
         model: `deterministic+${model}`,
-        parsedShipping: parsedShippingPayload,
       };
     }
   }
 
-  return { ...llmResult, parsedShipping: parsedShippingPayload };
+  return llmResult;
 }
 
 app.post("/api/package-assign", async (req, res) => {
