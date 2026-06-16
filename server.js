@@ -9271,21 +9271,97 @@ function parsePackageDimensionsFromTitle(title) {
 const PACKAGE_PADDING_IN = 2;
 const PACKAGE_FIT_DEVIATION_IN = 2;
 const PACKAGE_MAX_PARCEL_WEIGHT_LB = 50;
+const PACKAGE_MAX_PLAUSIBLE_DIM_IN = 120;
 
-function resolvePackageItemDimensions(body) {
+function packageDimsLookPlausible(nums) {
+  if (!Array.isArray(nums) || nums.length !== 3) return false;
+  return nums.every((n) => Number.isFinite(n) && n >= 0.5 && n <= PACKAGE_MAX_PLAUSIBLE_DIM_IN);
+}
+
+function sortedInchesFromWhd(width, height, depth) {
+  const nums = [width, height, depth].map(Number).filter((n) => Number.isFinite(n) && n > 0);
+  if (nums.length !== 3 || !packageDimsLookPlausible(nums)) return null;
+  return nums.sort((a, b) => b - a);
+}
+
+function resolvePackageItemWeight(body) {
+  if (body.weightLb != null && Number.isFinite(Number(body.weightLb)) && Number(body.weightLb) > 0) {
+    return Number(body.weightLb);
+  }
+  const fromTags = parseDimensionsFromTags({ tags: body.tags || [] });
+  if (fromTags.weight != null && fromTags.weight > 0) return fromTags.weight;
+  const plainDesc = String(body.description || "").replace(/<[^>]*>/g, " ");
+  const w = extractGoogleWeightFromText(plainDesc);
+  if (w?.value) {
+    const n = parseFloat(w.value);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return null;
+}
+
+/** Prefer structured fields → ecommerce tags → description → title (last; title suffixes are often typos). */
+function buildPackageShippingFacts(body) {
+  let source = null;
+  let width = null;
+  let height = null;
+  let depth = null;
+
   const dims = body.dimensions && typeof body.dimensions === "object" ? body.dimensions : null;
   if (dims) {
-    const l = dims.length ?? dims.lengthIn;
-    const w = dims.width ?? dims.widthIn;
-    const h = dims.height ?? dims.heightIn;
-    if (l != null && w != null && h != null) {
-      const nums = [l, w, h].map(Number).filter((n) => Number.isFinite(n) && n > 0);
-      if (nums.length === 3) return nums.sort((a, b) => b - a);
+    depth = dims.length ?? dims.lengthIn ?? dims.depth ?? dims.depthIn;
+    width = dims.width ?? dims.widthIn;
+    height = dims.height ?? dims.heightIn;
+    if (width != null && height != null && depth != null) source = "dimensions_field";
+  }
+
+  if (!source) {
+    const fromTags = parseDimensionsFromTags({ tags: body.tags || [] });
+    if (fromTags.width != null && fromTags.height != null && fromTags.length != null) {
+      width = fromTags.width;
+      height = fromTags.height;
+      depth = fromTags.length;
+      source = "ecommerce_tags";
     }
   }
-  const fromTitle = parsePackageDimensionsFromTitle(body.title);
-  if (fromTitle) return fromTitle.sort((a, b) => b - a);
-  return null;
+
+  if (!source) {
+    const plainDesc = String(body.description || "").replace(/<[^>]*>/g, " ");
+    const googleDims = extractGoogleDimsFromText(plainDesc);
+    if (googleDims.shippingWidth && googleDims.shippingLength && googleDims.shippingHeight) {
+      width = parseFloat(googleDims.shippingWidth.value);
+      depth = parseFloat(googleDims.shippingLength.value);
+      height = parseFloat(googleDims.shippingHeight.value);
+      source = "description";
+    }
+  }
+
+  if (!source) {
+    const fromTitle = parsePackageDimensionsFromTitle(body.title);
+    if (fromTitle && packageDimsLookPlausible(fromTitle)) {
+      return {
+        sorted: fromTitle.sort((a, b) => b - a),
+        source: "title",
+        weightLb: resolvePackageItemWeight(body),
+        width: null,
+        height: null,
+        depth: null,
+      };
+    }
+  }
+
+  const sorted = sortedInchesFromWhd(width, height, depth);
+  return {
+    sorted,
+    source: sorted ? source : null,
+    weightLb: resolvePackageItemWeight(body),
+    width,
+    height,
+    depth,
+  };
+}
+
+function resolvePackageItemDimensions(body) {
+  return buildPackageShippingFacts(body).sorted;
 }
 
 function sortedPackageBoxDims(pkg) {
@@ -9301,6 +9377,7 @@ function isStoreDefaultPackage(pkg) {
 }
 
 function productLooksLikeFlatArtForShipping(body) {
+  if (titleIndicatesLightingFurniture(body?.title || "")) return false;
   const text = `${body.title || ""} ${body.productType || ""} ${(body.tags || []).join(" ")} ${body.description || ""}`.toLowerCase();
   if (/\b(original\s+art|art\s+print|framed\s+art|canvas|lithograph|oil\s+on|acrylic\s+on|watercolor|photograph|mirror|wall\s+art|artwork|art\s+piece)\b/.test(text)) {
     return true;
@@ -9361,8 +9438,10 @@ function storeDefaultPackageResult(packages, reason) {
 
 /** Cheapest box that fits (with slack); store default only for bulky furniture or heavy items. */
 function selectDeterministicShippingPackage(body, packages) {
-  const itemSorted = resolvePackageItemDimensions(body);
-  const weightLb = body.weightLb != null && Number.isFinite(Number(body.weightLb)) ? Number(body.weightLb) : null;
+  const facts = buildPackageShippingFacts(body);
+  const itemSorted = facts.sorted;
+  const weightLb = facts.weightLb;
+  const dimNote = facts.source ? ` (from ${facts.source})` : "";
 
   if (productIsBulkyFurnitureForShipping(body, itemSorted, weightLb)) {
     return storeDefaultPackageResult(
@@ -9408,7 +9487,7 @@ function selectDeterministicShippingPackage(body, packages) {
     packageLabel: label,
     confidence: "high",
     action: "apply",
-    reason: `Cheapest closest fit: ${itemSorted.join("×")} in → ${label} (${boxSorted.join("×")} in) with ~${PACKAGE_FIT_DEVIATION_IN} in practical slack.${fitNote}`,
+    reason: `Cheapest closest fit: ${itemSorted.join("×")} in${dimNote} → ${label} (${boxSorted.join("×")} in) with ~${PACKAGE_FIT_DEVIATION_IN} in practical slack.${fitNote}`,
   };
 }
 
@@ -9466,7 +9545,16 @@ async function selectPackageWithAi(body) {
   }));
 
   const shippingBody = { title, description, productType, vendor, tags, dimensions, weightLb };
-  const deterministic = selectDeterministicShippingPackage(shippingBody, packageCatalog);
+  const shippingFacts = buildPackageShippingFacts(shippingBody);
+  const shippingBodyResolved = {
+    ...shippingBody,
+    weightLb: shippingFacts.weightLb,
+    dimensions:
+      shippingFacts.width != null
+        ? { width: shippingFacts.width, height: shippingFacts.height, length: shippingFacts.depth }
+        : dimensions,
+  };
+  const deterministic = selectDeterministicShippingPackage(shippingBodyResolved, packageCatalog);
   if (deterministic) {
     return { ...deterministic, model: `deterministic:${model}` };
   }
@@ -9477,6 +9565,11 @@ async function selectPackageWithAi(body) {
     "Return strict JSON: {\"packageLabel\":string,\"confidence\":\"high\"|\"medium\"|\"low\",\"action\":\"apply\"|\"leave_store_default\"|\"needs_review\",\"reason\":string}.",
     "",
     "Core goal: the CHEAPEST box (lowest priceMin) that fits — closest practical fit, not oversized.",
+    "",
+    "Dimensions (mandatory priority — never guess from title when better data exists):",
+    "1) parsedShipping from ecommerce tags (Width:/Height:/Depth:) and description",
+    "2) body.dimensions if sent",
+    "3) Title suffix dimensions (e.g. 11X519H) ONLY as last resort — often typos; ignore absurd values.",
     "",
     "Box selection:",
     "- Compare EVERY package (artwork boxes, flat mailers, standard parcel boxes). Pick lowest priceMin among those that fit.",
@@ -9500,8 +9593,16 @@ async function selectPackageWithAi(body) {
     productType,
     vendor,
     tags,
-    dimensions,
-    weightLb,
+    dimensions: shippingBodyResolved.dimensions,
+    weightLb: shippingBodyResolved.weightLb,
+    parsedShipping: {
+      dimensionSource: shippingFacts.source,
+      sortedInchesLwh: shippingFacts.sorted,
+      widthIn: shippingFacts.width,
+      heightIn: shippingFacts.height,
+      depthIn: shippingFacts.depth,
+      weightLb: shippingFacts.weightLb,
+    },
     packages: packageCatalog,
     allowedPackageLabels: allowedLabels,
   };
@@ -9577,7 +9678,7 @@ async function selectPackageWithAi(body) {
   };
 
   if (action === "leave_store_default" || packageLabel.toLowerCase().includes("store default")) {
-    const override = selectDeterministicShippingPackage(shippingBody, packageCatalog);
+    const override = selectDeterministicShippingPackage(shippingBodyResolved, packageCatalog);
     if (override && override.action === "apply") {
       const overrideLabel =
         allowedLabels.find((label) => normalizeLabel(label) === normalizeLabel(override.packageLabel)) ||
