@@ -3971,9 +3971,48 @@ function parseDimensionsFromTags(product) {
   return { width, height, length, weight };
 }
 
+/** Same description block furniture sync appends — fill gaps when tags omit Weight (common on luxury). */
+function fillDimensionsFromDescriptionHtml(dims, html) {
+  if (!html) return dims;
+  const plain = String(html).replace(/<[^>]*>/g, " ");
+  const out = {
+    weight: dims.weight,
+    width: dims.width,
+    height: dims.height,
+    length: dims.length,
+  };
+  const wMatch = plain.match(/Width:\s*([\d.]+)\s*"?/i);
+  const dMatch = plain.match(/Depth:\s*([\d.]+)\s*"?/i);
+  const hMatch = plain.match(/Height:\s*([\d.]+)\s*"?/i);
+  if (out.width == null && wMatch) out.width = parseFloat(wMatch[1]);
+  if (out.length == null && dMatch) out.length = parseFloat(dMatch[1]);
+  if (out.height == null && hMatch) out.height = parseFloat(hMatch[1]);
+  const whMatch = plain.match(/Width:\s*([\d.]+)\s*"?\s*[×x]\s*Height:\s*([\d.]+)/i);
+  if (whMatch) {
+    if (out.width == null) out.width = parseFloat(whMatch[1]);
+    if (out.height == null) out.height = parseFloat(whMatch[2]);
+  }
+  if (out.weight == null) {
+    const wtMatch = plain.match(/Weight:\s*([\d.]+)\s*lb\.?/i);
+    if (wtMatch) out.weight = parseFloat(wtMatch[1]);
+  }
+  return out;
+}
+
+function variantWeightToLb(variant) {
+  if (!variant || variant.weight == null) return null;
+  let w = Number(variant.weight);
+  if (!Number.isFinite(w) || w <= 0) return null;
+  const unit = String(variant.weight_unit || "lb").toLowerCase();
+  if (unit === "kg") w *= 2.20462;
+  else if (unit === "g") w /= 453.592;
+  else if (unit === "oz") w /= 16;
+  return w;
+}
+
 function getDimensionsFromProduct(product) {
   const v = product.variants?.[0];
-  let weight = v?.weight != null && v.weight > 0 ? Number(v.weight) : null;
+  let weight = variantWeightToLb(v);
   let width = null, height = null, length = null;
   const metafields = Array.isArray(product.metafields) ? product.metafields : [];
   for (const m of metafields) {
@@ -3986,7 +4025,11 @@ function getDimensionsFromProduct(product) {
   if (height == null && fromTags.height != null && !Number.isNaN(fromTags.height)) height = fromTags.height;
   if (length == null && fromTags.length != null && !Number.isNaN(fromTags.length)) length = fromTags.length;
   if (weight == null && fromTags.weight != null && !Number.isNaN(fromTags.weight) && fromTags.weight > 0) weight = fromTags.weight;
-  return { weight, width, height, length };
+  const filled = fillDimensionsFromDescriptionHtml(
+    { weight, width, height, length },
+    product.body_html || product.description || ""
+  );
+  return filled;
 }
 
 function hasAnyDimensions(dims) {
@@ -4258,17 +4301,6 @@ function normalizePackageAssignTags(tagsOrBody) {
   return getProductTagsArray({ tags }).slice(0, 80);
 }
 
-function variantWeightToLb(variant) {
-  if (!variant || variant.weight == null) return null;
-  let w = Number(variant.weight);
-  if (!Number.isFinite(w) || w <= 0) return null;
-  const unit = String(variant.weight_unit || "lb").toLowerCase();
-  if (unit === "kg") w *= 2.20462;
-  else if (unit === "g") w /= 453.592;
-  else if (unit === "oz") w /= 16;
-  return w;
-}
-
 function mergeShopifyProductIntoPackageBody(body, product) {
   if (!product) return body;
   const merged = { ...body };
@@ -4277,7 +4309,9 @@ function mergeShopifyProductIntoPackageBody(body, product) {
   if (!String(merged.productType || "").trim() && product.product_type) merged.productType = product.product_type;
   if (!String(merged.vendor || "").trim() && product.vendor) merged.vendor = product.vendor;
   merged.tags = getProductTagsArray(product);
-  const dims = getDimensionsFromProduct(product);
+  merged.variants = product.variants;
+  merged.metafields = product.metafields;
+  const dims = getDimensionsFromProduct({ ...product, body_html: product.body_html || merged.description });
   if (dims.width != null || dims.height != null || dims.length != null) {
     merged.dimensions = {
       width: dims.width ?? null,
@@ -4285,35 +4319,22 @@ function mergeShopifyProductIntoPackageBody(body, product) {
       length: dims.length ?? null,
     };
   }
-  if ((merged.weightLb == null || !Number.isFinite(Number(merged.weightLb))) && dims.weight != null && dims.weight > 0) {
-    merged.weightLb = dims.weight;
-  } else if (merged.weightLb == null) {
-    const w = variantWeightToLb(product.variants?.[0]);
-    if (w != null) merged.weightLb = w;
-  }
+  if (dims.weight != null && dims.weight > 0) merged.weightLb = dims.weight;
   merged._hydratedFromShopify = true;
   return merged;
 }
 
-/** Bulk editor often sends title-only; pull tags/description/dimensions/weight from Shopify Admin REST. */
+/** Bulk editor often sends title-only — always hydrate from Shopify Admin REST (same path as furniture sync). */
 async function enrichPackageAssignBodyFromShopify(body) {
-  let out = { ...body };
-  const preFacts = buildPackageShippingFacts(out);
-  const tagList = normalizePackageAssignTags(out);
-  const hasDimTags = tagList.some((t) => /^(Width|Height|Depth|Weight):/i.test(String(t)));
-  const hasDesc = String(out.description || out.body_html || "").trim().length > 20;
-  const needsFetch =
-    !preFacts.sorted || preFacts.weightLb == null || (!hasDimTags && !hasDesc && !tagList.length);
+  if (body?._hydratedFromShopify) return body;
+  const productId = parsePackageAssignProductId(body);
+  const title = String(body?.title || "").trim();
+  if (!productId && !title) return body;
 
-  if (!needsFetch) return out;
-
-  const productId = parsePackageAssignProductId(out);
   let product = productId ? await fetchShopifyProductById(productId) : null;
-  if (!product && String(out.title || "").trim()) {
-    product = await fetchShopifyProductByTitle(out.title);
-  }
-  if (product) out = mergeShopifyProductIntoPackageBody(out, product);
-  return out;
+  if (!product && title) product = await fetchShopifyProductByTitle(title);
+  if (product) return mergeShopifyProductIntoPackageBody(body, product);
+  return body;
 }
 
 /* ======================================================
@@ -8013,8 +8034,14 @@ async function searchShopifyProducts(name) {
               edges {
                 node {
                   price
-                  weight
-                  weightUnit
+                  inventoryItem {
+                    measurement {
+                      weight {
+                        value
+                        unit
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -8121,11 +8148,23 @@ async function searchShopifyProducts(name) {
       weight = Number(fromDescription.value);
     }
   }
+  if (weight == null && variantNode?.inventoryItem?.measurement?.weight) {
+    const wObj = variantNode.inventoryItem.measurement.weight;
+    const w = Number(wObj.value);
+    const unit = String(wObj.unit || "POUNDS").toUpperCase();
+    if (Number.isFinite(w) && w > 0) {
+      if (unit === "KILOGRAMS" || unit === "KG") weight = w * 2.20462;
+      else if (unit === "GRAMS" || unit === "G") weight = w / 453.592;
+      else if (unit === "OUNCES" || unit === "OZ") weight = w / 16;
+      else weight = w;
+    }
+  }
   if (weight == null && variantNode?.weight != null && Number(variantNode.weight) > 0) {
     const unit = String(variantNode.weightUnit || "POUNDS").toUpperCase();
     const w = Number(variantNode.weight);
     if (unit === "KILOGRAMS" || unit === "KG") weight = w * 2.20462;
     else if (unit === "GRAMS" || unit === "G") weight = w / 453.592;
+    else if (unit === "OUNCES" || unit === "OZ") weight = w / 16;
     else weight = w;
   }
   const metafields = (node.metafields?.edges || [])
@@ -9422,6 +9461,8 @@ app.get("/api/listing", async (req, res) => {
 /** Parse 72X1X36H / 60X36H style dimensions from bulk-editor titles. */
 function parsePackageDimensionsFromTitle(title) {
   const t = String(title || "");
+  if (/\bbelts?\b/i.test(t) && /\d+\s*\/\s*\d+/.test(t)) return null;
+  if (/\bbelts?\b/i.test(t) && !/\d+\s*[xX×]\s*\d+/i.test(t)) return null;
   let m = t.match(/(\d+(?:\.\d+)?)\s*[xX×]\s*(\d+(?:\.\d+)?)\s*[xX×]\s*(\d+(?:\.\d+)?)\s*H?\b/i);
   if (m) {
     const nums = [m[1], m[2], m[3]].map((x) => parseFloat(x)).filter((n) => Number.isFinite(n) && n > 0);
@@ -9456,46 +9497,46 @@ function resolvePackageItemWeight(body) {
   if (body.weightLb != null && Number.isFinite(Number(body.weightLb)) && Number(body.weightLb) > 0) {
     return Number(body.weightLb);
   }
-  const fromTags = parseDimensionsFromTags({ tags: normalizePackageAssignTags(body) });
-  if (fromTags.weight != null && fromTags.weight > 0) return fromTags.weight;
-  const plainDesc = String(body.description || body.body_html || "").replace(/<[^>]*>/g, " ");
-  const w = extractGoogleWeightFromText(plainDesc);
-  if (w?.value) {
-    const n = parseFloat(w.value);
-    if (Number.isFinite(n) && n > 0) return n;
-  }
+  const dims = getDimensionsFromProduct({
+    tags: normalizePackageAssignTags(body),
+    body_html: body.description || body.body_html || "",
+    variants: body.variants,
+    metafields: body.metafields,
+  });
+  if (dims.weight != null && dims.weight > 0) return dims.weight;
   return null;
 }
 
-/** Prefer structured fields → ecommerce tags → description → title (last; title suffixes are often typos). */
+/** Same path as furniture sync: getDimensionsFromProduct (tags → description → variant weight). */
 function buildPackageShippingFacts(body) {
   let source = null;
   let inferredDepth = false;
 
-  const fieldDims =
-    body.dimensions && typeof body.dimensions === "object"
-      ? {
-          width: body.dimensions.width ?? body.dimensions.widthIn,
-          height: body.dimensions.height ?? body.dimensions.heightIn,
-          length: body.dimensions.length ?? body.dimensions.lengthIn ?? body.dimensions.depth ?? body.dimensions.depthIn,
-          weight: null,
-        }
-      : null;
+  const productLike = {
+    tags: normalizePackageAssignTags(body),
+    body_html: body.description || body.body_html || "",
+    variants: body.variants,
+    metafields: body.metafields,
+  };
+  const fromProduct = getDimensionsFromProduct(productLike);
 
-  const fromTags = parseDimensionsFromTags({ tags: normalizePackageAssignTags(body) });
-  const fromDesc = parsePartialDimsFromDescription(body.description || body.body_html);
-  const merged = mergePartialPackageDims(fieldDims, fromTags, fromDesc);
+  let width = fromProduct.width;
+  let height = fromProduct.height;
+  let depth = fromProduct.length;
+  let weightLb = resolvePackageItemWeight(body);
 
-  let width = merged.width;
-  let height = merged.height;
-  let depth = merged.length;
-
-  if (fieldDims?.width != null && fieldDims?.height != null && fieldDims?.length != null) {
-    source = "dimensions_field";
-  } else if (fromTags.width != null || fromTags.height != null || fromTags.length != null) {
+  const fromTags = parseDimensionsFromTags(productLike);
+  if (fromTags.width != null || fromTags.height != null || fromTags.length != null || fromTags.weight != null) {
     source = "ecommerce_tags";
-  } else if (fromDesc.width != null || fromDesc.height != null || fromDesc.length != null) {
-    source = "description";
+  } else if (
+    fromProduct.width != null ||
+    fromProduct.height != null ||
+    fromProduct.length != null ||
+    fromProduct.weight != null
+  ) {
+    source = String(body.description || body.body_html || "").match(/Dimensions:|Weight:/i)
+      ? "description"
+      : "shopify_variant";
   }
 
   if (width != null && height != null && depth == null) {
@@ -9511,7 +9552,7 @@ function buildPackageShippingFacts(body) {
       return {
         sorted: fromTitle.sort((a, b) => b - a),
         source: "title",
-        weightLb: resolvePackageItemWeight(body),
+        weightLb,
         width: null,
         height: null,
         depth: null,
@@ -9531,7 +9572,7 @@ function buildPackageShippingFacts(body) {
   return {
     sorted,
     source: sorted ? source : null,
-    weightLb: resolvePackageItemWeight(body),
+    weightLb,
     width,
     height,
     depth,
@@ -9770,11 +9811,11 @@ async function selectPackageWithAi(body) {
     "",
     "Core goal: the CHEAPEST box (lowest priceMin) that fits — closest practical fit, not oversized.",
     "",
-    "Dimensions (mandatory priority — never guess from title when better data exists):",
-    "1) parsedShipping from ecommerce tags (Width:/Height:/Depth:) and description — Width+Height alone is valid for bags (depth inferred ~4–5 in)",
-    "2) body.dimensions if sent",
-    "3) Server auto-fetches tags/description/dimensions from Shopify Admin when bulk editor sends title or shopifyProductId",
-    "4) Title suffix dimensions ONLY as last resort",
+    "Dimensions (mandatory priority — same as furniture sync):",
+    "1) Shopify ecommerce tags Width:/Height:/Depth:/Weight: (always hydrate from Admin when title/id sent)",
+    "2) Description Dimensions/Weight block furniture sync appends",
+    "3) Width+Height tag pairs valid for bags (depth inferred); belts/scarves use rolled defaults",
+    "4) parsedShipping.weightLb must never be null when tags or description include Weight",
     "",
     "Box selection:",
     "- Compare EVERY package (artwork boxes, flat mailers, standard parcel boxes). Pick lowest priceMin among those that fit.",
