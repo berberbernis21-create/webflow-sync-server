@@ -7909,8 +7909,14 @@ async function searchShopifyProducts(name) {
               edges {
                 node {
                   price
-                  weight
-                  weightUnit
+                  inventoryItem {
+                    measurement {
+                      weight {
+                        value
+                        unit
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -8015,6 +8021,15 @@ async function searchShopifyProducts(name) {
     const fromDescription = extractGoogleWeightFromText(description);
     if (fromDescription?.value != null && Number.isFinite(Number(fromDescription.value))) {
       weight = Number(fromDescription.value);
+    }
+  }
+  if (weight == null && variantNode?.inventoryItem?.measurement?.weight?.value != null) {
+    const w = Number(variantNode.inventoryItem.measurement.weight.value);
+    const unit = String(variantNode.inventoryItem.measurement.weight.unit || "POUNDS").toUpperCase();
+    if (Number.isFinite(w) && w > 0) {
+      if (unit === "KILOGRAMS" || unit === "KG") weight = w * 2.20462;
+      else if (unit === "GRAMS" || unit === "G") weight = w / 453.592;
+      else weight = w;
     }
   }
   if (weight == null && variantNode?.weight != null && Number(variantNode.weight) > 0) {
