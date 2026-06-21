@@ -16,7 +16,6 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
     "table", "tables", "coffee table", "coffee tables", "side table", "side tables",
     "end table", "end tables", "console", "consoles", "console table", "console tables",
     "media console", "media consoles", "tv stand", "tv stands",
-    "bookshelf", "bookshelves", "bookcase", "bookcases",
     "entertainment center", "credenza", "cabinet", "cabinets", "ottoman", "ottomans",
     "drawer", "drawers", "case goods",
     "wall unit", "wall units", "wall shelf", "wall shelves",
@@ -72,7 +71,8 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
     "pier mirror", "convex mirror", "sunburst mirror", "gilt mirror",
     "floor mirror", "full length mirror", "cheval mirror", "trumeau",
     "poster", "lithograph", "etching", "gallery wall",
-    "sculpture", "sculptures", "statue", "statues", "figurine", "figurines",
+    "sculpture", "sculptures", "glass sculpture", "glass sculptures", "statue", "statues", "figurine", "figurines",
+    "original art", "local artist",
     "photograph", "photographs", "photo", "photos", "framed photograph", "framed photo", "artwork", "art work",
     "trumeau mirror", "mantel mirror"
   ],
@@ -120,7 +120,8 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
     "hardcover book", "hardcover books", "art book", "art books", "illustrated book", "tome",
     "book", "books",
     "lance", "lances", "beaded lance", "skin lance", "deer skin lance",
-    "ceremonial lance", "decorative lance"
+    "ceremonial lance", "decorative lance",
+    "coyote", "coyotes", "howling coyote", "howling coyotes"
   ],
 
   OutdoorPatio: [

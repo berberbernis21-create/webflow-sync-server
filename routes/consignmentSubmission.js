@@ -11,12 +11,20 @@ import { generateConsignmentPdf } from "../lib/consignmentPdf.js";
 import { applyConsignmentCorsHeaders } from "../lib/consignmentCors.js";
 import { resolveConsignmentBrand } from "../lib/consignmentBrand.js";
 import { MAX_CONSIGNMENT_PHOTOS, MAX_UPLOAD_FILES } from "../lib/consignmentLimits.js";
+import { preparePhotoGroupsForConsignment } from "../lib/consignmentImageNormalize.js";
+import {
+  archiveConsignmentIfNeeded,
+  archiveConsignmentSubmission,
+  removeConsignmentIntakeArchive,
+} from "../lib/consignmentFailureArchive.js";
 import {
   groupPhotosByItemNumber,
   validateConsignmentSubmission,
 } from "../lib/consignmentValidation.js";
 
 const router = express.Router();
+const BACKGROUND_MAX_ATTEMPTS = 2;
+const EMAIL_SEND_MAX_ATTEMPTS = 3;
 
 router.use((req, res, next) => {
   applyConsignmentCorsHeaders(req, res);
@@ -37,6 +45,10 @@ const upload = multer({
     parts: MAX_FILES + 64,
   },
 });
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function rejectOversizedUpload(req, res, next) {
   const contentLength = parseInt(req.headers["content-length"] || "0", 10);
@@ -101,7 +113,7 @@ async function runPricingSafe({ items, photoGroups }) {
     if (pricing.skipped) {
       console.warn("[consignment] pricing disabled via CONSIGNMENT_PRICING_ENABLED");
     } else if (pricing.timedOut) {
-      console.warn("[consignment] pricing budget exceeded — internal email sent without full comps", {
+      console.warn("[consignment] pricing budget exceeded — email will note partial comps", {
         itemCount: items.length,
       });
     } else if (!pricing.configured) {
@@ -120,14 +132,56 @@ async function runPricingSafe({ items, photoGroups }) {
       });
     }
 
-    return { pricingResults, pricingModelsUsed };
+    return {
+      pricingResults,
+      pricingModelsUsed,
+      pricingTimedOut: Boolean(pricing.timedOut),
+      pricingConfigured: Boolean(pricing.configured),
+      pricingSkipped: Boolean(pricing.skipped),
+    };
   } catch (pricingErr) {
     console.error(
       "[consignment] pricing analysis failed (continuing):",
       pricingErr?.message || pricingErr
     );
-    return { pricingResults: null, pricingModelsUsed: [] };
+    return {
+      pricingResults: null,
+      pricingModelsUsed: [],
+      pricingTimedOut: false,
+      pricingConfigured: false,
+      pricingSkipped: false,
+      pricingError: pricingErr?.message || String(pricingErr),
+    };
   }
+}
+
+async function sendInternalEmailWithRetry(emailPayload) {
+  let lastErr;
+  for (let attempt = 1; attempt <= EMAIL_SEND_MAX_ATTEMPTS; attempt++) {
+    try {
+      await sendInternalNotificationWithAttachments({
+        subject: emailPayload.subject,
+        html: emailPayload.html,
+        text: emailPayload.text,
+        replyTo: emailPayload.replyTo,
+        attachments: emailPayload.attachments,
+      });
+      if (attempt > 1) {
+        console.log("[consignment] internal email sent after retry", { attempt });
+      }
+      return;
+    } catch (err) {
+      lastErr = err;
+      console.error(
+        `[consignment] internal email send failed (attempt ${attempt}/${EMAIL_SEND_MAX_ATTEMPTS}):`,
+        err?.message || err
+      );
+      if (attempt < EMAIL_SEND_MAX_ATTEMPTS) {
+        await sleep(2000 * attempt);
+      }
+    }
+  }
+  throw lastErr;
 }
 
 /**
@@ -137,66 +191,263 @@ async function runPricingSafe({ items, photoGroups }) {
 async function processConsignmentSubmission({ body, items, photoGroups, submittedAt }) {
   const startedMs = Date.now();
   const brandKey = resolveConsignmentBrand(body, items);
+  const uploadedPhotoCount = [...photoGroups.values()].reduce((n, p) => n + p.length, 0);
+
+  const intakeArchivePath = archiveConsignmentSubmission({
+    body,
+    items,
+    photoGroups,
+    submittedAt,
+    stage: "intake",
+    emailSent: false,
+  });
+
   console.log("[consignment] processing submission", {
     brand: brandKey,
     source: body?.source || null,
     submissionCategory: body?.submissionCategory || null,
     itemCount: items.length,
-    photoCount: [...photoGroups.values()].reduce((n, p) => n + p.length, 0),
+    photoCount: uploadedPhotoCount,
   });
 
-  const { pricingResults } = await runPricingSafe({ items, photoGroups });
+  const processingWarnings = [];
+  let preparedPhotoGroups = photoGroups;
+  let photoFailures = [];
+
+  try {
+    const prepared = await preparePhotoGroupsForConsignment(photoGroups);
+    preparedPhotoGroups = prepared.photoGroups;
+    photoFailures = prepared.failures || [];
+    if (photoFailures.length) {
+      console.warn("[consignment] photo normalization failures", {
+        failed: photoFailures.length,
+        uploaded: uploadedPhotoCount,
+      });
+    }
+  } catch (normalizeErr) {
+    const message = normalizeErr?.message || String(normalizeErr);
+    processingWarnings.push(`Photo normalization failed: ${message}`);
+    console.error("[consignment] photo normalization failed (continuing without images):", message);
+    preparedPhotoGroups = new Map();
+    for (const [itemNumber, photos] of photoGroups.entries()) {
+      for (const file of photos || []) {
+        photoFailures.push({
+          itemNumber,
+          originalname: String(file?.originalname || "photo"),
+          mimetype: String(file?.mimetype || "unknown"),
+          size: Number(file?.size) || 0,
+          message,
+        });
+      }
+    }
+  }
+
+  const pricing = await runPricingSafe({ items, photoGroups: preparedPhotoGroups });
+  const { pricingResults } = pricing;
+  if (pricing.pricingError) {
+    processingWarnings.push(`Pricing analysis failed: ${pricing.pricingError}`);
+  } else if (pricing.pricingSkipped) {
+    processingWarnings.push("Pricing analysis was disabled (CONSIGNMENT_PRICING_ENABLED).");
+  } else if (!pricing.pricingConfigured) {
+    processingWarnings.push("Pricing analysis skipped — API keys not fully configured.");
+  } else if (pricing.pricingTimedOut) {
+    processingWarnings.push("Pricing analysis timed out — comps may be partial or missing.");
+  }
+
   const pdfBuffer = await generateInternalPdfSafe({
     body,
     items,
-    photoGroups,
+    photoGroups: preparedPhotoGroups,
     submittedAt,
     pricingResults,
   });
 
-  const pdfFilename = buildPdfFilename(body.customerName);
-
-  let emailPayload;
-  try {
-    emailPayload = await buildConsignmentEmail({
-      body,
-      items,
-      photoGroups,
-      pdfBuffer,
-      pdfFilename,
-      submittedAt,
-      pricingResults,
-    });
-  } catch (emailBuildErr) {
-    console.error(
-      "[consignment] internal email build failed:",
-      emailBuildErr?.message || emailBuildErr
-    );
-    return;
+  if (!pdfBuffer?.length) {
+    processingWarnings.push("Internal PDF was not generated.");
   }
 
-  await sendInternalNotificationWithAttachments({
-    subject: emailPayload.subject,
-    html: emailPayload.html,
-    text: emailPayload.text,
-    replyTo: String(body.customerEmail || "").trim() || undefined,
-    attachments: emailPayload.attachments,
+  const archiveContext = () => ({
+    body,
+    items,
+    photoGroups,
+    submittedAt,
+    photoFailures,
+    processingWarnings: [...processingWarnings],
+    pricingResults,
   });
 
+  const savedArchivePath = archiveConsignmentIfNeeded({
+    ...archiveContext(),
+    stage: "pre_email",
+    emailSent: false,
+  });
+  if (savedArchivePath) {
+    processingWarnings.push(
+      "Customer and item details were saved to the server failure archive."
+    );
+  }
+
+  const pdfFilename = buildPdfFilename(body.customerName);
+  const emailPayload = buildConsignmentEmail({
+    body,
+    items,
+    photoGroups: preparedPhotoGroups,
+    originalPhotoGroups: photoGroups,
+    photoFailures,
+    processingWarnings,
+    pdfBuffer,
+    pdfFilename,
+    submittedAt,
+    pricingResults,
+  });
+  emailPayload.replyTo = String(body.customerEmail || "").trim() || undefined;
+
+  let emailSent = false;
   try {
-    await sendCustomerConfirmationEmail(body, items, photoGroups, { submittedAt });
+    await sendInternalEmailWithRetry(emailPayload);
+    emailSent = true;
+  } catch (emailErr) {
+    archiveConsignmentSubmission({
+      ...archiveContext(),
+      stage: "email_failed",
+      error: emailErr?.message || String(emailErr),
+      emailSent: false,
+    });
+    throw emailErr;
+  }
+
+  try {
+    await sendCustomerConfirmationEmail(body, items, preparedPhotoGroups, { submittedAt });
   } catch (customerErr) {
     console.error(
       "[consignment] customer confirmation email failed:",
       customerErr?.message || customerErr
     );
+    processingWarnings.push(
+      `Customer confirmation email failed: ${customerErr?.message || customerErr}`
+    );
+    archiveConsignmentIfNeeded({
+      ...archiveContext(),
+      stage: "customer_email_failed",
+      emailSent: true,
+    });
+  }
+
+  if (emailSent) {
+    archiveConsignmentIfNeeded({
+      ...archiveContext(),
+      stage: "delivered_with_issues",
+      emailSent: true,
+    });
+  }
+
+  if (emailSent && !photoFailures.length && !processingWarnings.length) {
+    removeConsignmentIntakeArchive(intakeArchivePath);
   }
 
   console.log("[consignment] background processing complete", {
     ms: Date.now() - startedMs,
     itemCount: items.length,
-    photoCount: [...photoGroups.values()].reduce((n, p) => n + p.length, 0),
+    photoCount: uploadedPhotoCount,
+    photosAttached: [...preparedPhotoGroups.values()].reduce((n, p) => n + p.length, 0),
+    photoFailures: photoFailures.length,
+    warnings: processingWarnings.length,
   });
+}
+
+async function processConsignmentSubmissionWithRetry(args, attempt = 1) {
+  try {
+    await processConsignmentSubmission(args);
+  } catch (err) {
+    console.error(
+      `[consignment] background processing failed (attempt ${attempt}/${BACKGROUND_MAX_ATTEMPTS}):`,
+      err?.message || err
+    );
+    if (attempt < BACKGROUND_MAX_ATTEMPTS) {
+      await sleep(5000 * attempt);
+      return processConsignmentSubmissionWithRetry(args, attempt + 1);
+    }
+
+    archiveConsignmentSubmission({
+      body: args.body,
+      items: args.items,
+      photoGroups: args.photoGroups,
+      submittedAt: args.submittedAt,
+      photoFailures: [...args.photoGroups.entries()].flatMap(([itemNumber, photos]) =>
+        (photos || []).map((file) => ({
+          itemNumber,
+          originalname: String(file?.originalname || "photo"),
+          mimetype: String(file?.mimetype || "unknown"),
+          size: Number(file?.size) || 0,
+          message: "Processing failed before photos could be converted.",
+        }))
+      ),
+      processingWarnings: [
+        `Submission processing failed after ${BACKGROUND_MAX_ATTEMPTS} attempts.`,
+      ],
+      error: err?.message || String(err),
+      stage: "processing_failed",
+      emailSent: false,
+      pricingResults: null,
+    });
+
+    try {
+      const fallbackPayload = buildConsignmentEmail({
+        body: args.body,
+        items: args.items,
+        photoGroups: new Map(),
+        originalPhotoGroups: args.photoGroups,
+        photoFailures: [...args.photoGroups.entries()].flatMap(([itemNumber, photos]) =>
+          (photos || []).map((file) => ({
+            itemNumber,
+            originalname: String(file?.originalname || "photo"),
+            mimetype: String(file?.mimetype || "unknown"),
+            size: Number(file?.size) || 0,
+            message: "Background processing failed before images could be attached.",
+          }))
+        ),
+        processingWarnings: [
+          `Submission processing failed after ${BACKGROUND_MAX_ATTEMPTS} attempts: ${err?.message || err}`,
+          "Form data is included below. Photos were not attached.",
+        ],
+        pdfBuffer: null,
+        pdfFilename: buildPdfFilename(args.body?.customerName),
+        submittedAt: args.submittedAt,
+        pricingResults: null,
+      });
+      fallbackPayload.replyTo = String(args.body?.customerEmail || "").trim() || undefined;
+      await sendInternalEmailWithRetry(fallbackPayload);
+      console.log("[consignment] fallback internal email sent after processing failure");
+    } catch (fallbackErr) {
+      console.error(
+        "[consignment] fallback internal email failed:",
+        fallbackErr?.message || fallbackErr
+      );
+      archiveConsignmentSubmission({
+        body: args.body,
+        items: args.items,
+        photoGroups: args.photoGroups,
+        submittedAt: args.submittedAt,
+        photoFailures: [...args.photoGroups.entries()].flatMap(([itemNumber, photos]) =>
+          (photos || []).map((file) => ({
+            itemNumber,
+            originalname: String(file?.originalname || "photo"),
+            mimetype: String(file?.mimetype || "unknown"),
+            size: Number(file?.size) || 0,
+            message: "Processing and fallback email both failed.",
+          }))
+        ),
+        processingWarnings: [
+          "Internal email failed after processing failure.",
+          "Fallback email also failed.",
+        ],
+        error: fallbackErr?.message || String(fallbackErr),
+        stage: "email_and_fallback_failed",
+        emailSent: false,
+        pricingResults: null,
+      });
+    }
+  }
 }
 
 router.options("/consignment-submission", (req, res) => {
@@ -249,9 +500,7 @@ router.post(
         message: "Submission received successfully.",
       });
 
-      void processConsignmentSubmission({ body, items, photoGroups, submittedAt }).catch((err) => {
-        console.error("[consignment] background processing failed:", err?.message || err);
-      });
+      void processConsignmentSubmissionWithRetry({ body, items, photoGroups, submittedAt });
     } catch (err) {
       console.error("[consignment] submission failed:", err?.message || err);
       if (!res.headersSent) {
