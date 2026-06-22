@@ -5935,89 +5935,6 @@ async function syncSingleProductCore(product, cache, options = {}) {
     };
   }
 
-  // Cleanup: ensure this product exists only in the current vertical. Remove from the other vertical if found.
-  const slugForCleanup = product.handle || "";
-  const shopifyUrlForCleanup = `https://${process.env.SHOPIFY_STORE || ""}.myshopify.com/products/${slugForCleanup}`;
-
-  if (vertical === "luxury" && !manualEcommerceLock) {
-    const furnitureConfig = getWebflowConfig("furniture");
-    if (furnitureConfig?.siteId && furnitureConfig?.token) {
-      const existingInFurniture = await findExistingWebflowEcommerceProduct(
-        shopifyProductId,
-        slugForCleanup,
-        furnitureConfig,
-        product.title || null
-      );
-      if (existingInFurniture) {
-        const full = await getWebflowEcommerceProductById(furnitureConfig.siteId, existingInFurniture.id, furnitureConfig.token);
-        const alreadyArchived = full?.isArchived === true;
-        if (alreadyArchived) {
-          webflowLog("info", { event: "cleanup.skipped_already_archived", shopifyProductId, webflowId: existingInFurniture.id });
-          saveDuplicatePlacementSentId(shopifyProductId);
-        } else {
-          webflowLog("info", {
-            event: "cleanup.found_in_other_vertical",
-            shopifyProductId,
-            currentVertical: "luxury",
-            otherVertical: "furniture",
-            webflowId: existingInFurniture.id,
-            productTitle: product.title,
-          });
-          try {
-            await deleteWebflowEcommerceProduct(furnitureConfig.siteId, existingInFurniture.id, furnitureConfig.token);
-            webflowLog("info", { event: "cleanup.removed_from_furniture", shopifyProductId, webflowId: existingInFurniture.id });
-            await sendDuplicatePlacementEmail(
-              {
-                productTitle: product.title || "",
-                shopifyProductId,
-                previousVertical: "furniture",
-                detectedVertical: "luxury",
-                webflowItemIdRemoved: existingInFurniture.id,
-                sweep: true,
-              },
-              duplicateEmailSentFor
-            );
-          } catch (err) {
-            webflowLog("error", { event: "cleanup.remove_furniture_failed", shopifyProductId, webflowId: existingInFurniture.id, message: err.message });
-          }
-        }
-      }
-    }
-  }
-
-  if (vertical === "furniture" && !isLockedLuxuryProduct(product)) {
-    const luxuryConfig = getWebflowConfig("luxury");
-    if (luxuryConfig?.collectionId && luxuryConfig?.token) {
-      const existingInLuxury = await findExistingWebflowItem(shopifyProductId, shopifyUrlForCleanup, slugForCleanup, luxuryConfig);
-      if (existingInLuxury) {
-        webflowLog("info", {
-          event: "cleanup.found_in_other_vertical",
-          shopifyProductId,
-          currentVertical: "furniture",
-          otherVertical: "luxury",
-          webflowId: existingInLuxury.id,
-          productTitle: product.title,
-        });
-        try {
-          await deleteWebflowCollectionItem(luxuryConfig.collectionId, existingInLuxury.id, luxuryConfig.token);
-          webflowLog("info", { event: "cleanup.deleted_from_luxury", shopifyProductId, webflowId: existingInLuxury.id });
-          await sendDuplicatePlacementEmail(
-            {
-              productTitle: product.title || "",
-              shopifyProductId,
-              previousVertical: "luxury",
-              detectedVertical: "furniture",
-              webflowItemIdRemoved: existingInLuxury.id,
-              sweep: true,
-            },
-            duplicateEmailSentFor
-          );
-        } catch (err) {
-          webflowLog("error", { event: "cleanup.delete_luxury_failed", shopifyProductId, webflowId: existingInLuxury.id, message: err.message });
-        }
-      }
-    }
-  }
   } else {
     vertical = recoveredFromWebflow.vertical;
     detectedVertical = vertical;
@@ -6131,6 +6048,98 @@ async function syncSingleProductCore(product, cache, options = {}) {
           ? "Tag FH forces Furniture & Home"
           : "Tag LG forces Luxury Goods",
     });
+  }
+
+  // Remove copy on the other vertical when tag or classifier places item here (incl. manual FH/LG changes).
+  const slugForCleanup = product.handle || "";
+  const shopifyUrlForCleanup = `https://${process.env.SHOPIFY_STORE || ""}.myshopify.com/products/${slugForCleanup}`;
+
+  if (vertical === "luxury") {
+    const furnitureConfig = getWebflowConfig("furniture");
+    if (furnitureConfig?.siteId && furnitureConfig?.token) {
+      const existingInFurniture = await findExistingWebflowEcommerceProduct(
+        shopifyProductId,
+        slugForCleanup,
+        furnitureConfig,
+        product.title || null
+      );
+      if (existingInFurniture) {
+        const full = await getWebflowEcommerceProductById(furnitureConfig.siteId, existingInFurniture.id, furnitureConfig.token);
+        const alreadyArchived = full?.isArchived === true;
+        if (alreadyArchived) {
+          webflowLog("info", { event: "cleanup.skipped_already_archived", shopifyProductId, webflowId: existingInFurniture.id });
+          if (!manualEcommerceLock) saveDuplicatePlacementSentId(shopifyProductId);
+        } else {
+          webflowLog("info", {
+            event: "cleanup.found_in_other_vertical",
+            shopifyProductId,
+            currentVertical: "luxury",
+            otherVertical: "furniture",
+            webflowId: existingInFurniture.id,
+            productTitle: product.title,
+            manualTag: manualEcommerceLock?.tag ?? null,
+          });
+          try {
+            await deleteWebflowEcommerceProduct(furnitureConfig.siteId, existingInFurniture.id, furnitureConfig.token);
+            webflowLog("info", { event: "cleanup.removed_from_furniture", shopifyProductId, webflowId: existingInFurniture.id });
+            if (cacheEntry?.vertical === "furniture") delete cache[shopifyProductId];
+            if (!manualEcommerceLock) {
+              await sendDuplicatePlacementEmail(
+                {
+                  productTitle: product.title || "",
+                  shopifyProductId,
+                  previousVertical: "furniture",
+                  detectedVertical: "luxury",
+                  webflowItemIdRemoved: existingInFurniture.id,
+                  sweep: true,
+                },
+                duplicateEmailSentFor
+              );
+            }
+          } catch (err) {
+            webflowLog("error", { event: "cleanup.remove_furniture_failed", shopifyProductId, webflowId: existingInFurniture.id, message: err.message });
+          }
+        }
+      }
+    }
+  }
+
+  if (vertical === "furniture" && !isLockedLuxuryProduct(product)) {
+    const luxuryConfig = getWebflowConfig("luxury");
+    if (luxuryConfig?.collectionId && luxuryConfig?.token) {
+      const existingInLuxury = await findExistingWebflowItem(shopifyProductId, shopifyUrlForCleanup, slugForCleanup, luxuryConfig);
+      if (existingInLuxury) {
+        webflowLog("info", {
+          event: "cleanup.found_in_other_vertical",
+          shopifyProductId,
+          currentVertical: "furniture",
+          otherVertical: "luxury",
+          webflowId: existingInLuxury.id,
+          productTitle: product.title,
+          manualTag: manualEcommerceLock?.tag ?? null,
+        });
+        try {
+          await deleteWebflowCollectionItem(luxuryConfig.collectionId, existingInLuxury.id, luxuryConfig.token);
+          webflowLog("info", { event: "cleanup.deleted_from_luxury", shopifyProductId, webflowId: existingInLuxury.id });
+          if (cacheEntry?.vertical === "luxury") delete cache[shopifyProductId];
+          if (!manualEcommerceLock) {
+            await sendDuplicatePlacementEmail(
+              {
+                productTitle: product.title || "",
+                shopifyProductId,
+                previousVertical: "luxury",
+                detectedVertical: "furniture",
+                webflowItemIdRemoved: existingInLuxury.id,
+                sweep: true,
+              },
+              duplicateEmailSentFor
+            );
+          }
+        } catch (err) {
+          webflowLog("error", { event: "cleanup.delete_luxury_failed", shopifyProductId, webflowId: existingInLuxury.id, message: err.message });
+        }
+      }
+    }
   }
 
   // Jewelry guard can set luxury after cache still says furniture — run same move as verticalCorrected.
@@ -7194,9 +7203,10 @@ async function syncSingleProductCore(product, cache, options = {}) {
       }
     }
 
-    // Sweep: if we're creating in Luxury, check if this product wrongly exists in Furniture (e.g. no cache / cache lost). Archive it so it doesn't stay in both places.
-    if (detectedVertical === "luxury" && !getManualEcommerceVerticalLock(product)) {
+    // Sweep: if we're creating in Luxury, remove stray Furniture copy (including after manual LG tag).
+    if (detectedVertical === "luxury") {
       const furnitureConfig = getWebflowConfig("furniture");
+      const manualLock = getManualEcommerceVerticalLock(product);
       if (furnitureConfig?.siteId && furnitureConfig?.token) {
         const existingInFurniture = await findExistingWebflowEcommerceProduct(shopifyProductId, slug, furnitureConfig, name);
         if (existingInFurniture) {
@@ -7204,7 +7214,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
           const alreadyArchived = full?.isArchived === true;
           if (alreadyArchived) {
             webflowLog("info", { event: "sweep.skipped_already_archived", shopifyProductId, webflowId: existingInFurniture.id });
-            saveDuplicatePlacementSentId(shopifyProductId);
+            if (!manualLock) saveDuplicatePlacementSentId(shopifyProductId);
           } else {
             webflowLog("info", {
               event: "sweep.found_in_furniture",
@@ -7212,21 +7222,24 @@ async function syncSingleProductCore(product, cache, options = {}) {
               webflowId: existingInFurniture.id,
               productTitle: name,
               message: "Archiving from Furniture before creating in Luxury",
+              manualTag: manualLock?.tag ?? null,
             });
             try {
               await deleteWebflowEcommerceProduct(furnitureConfig.siteId, existingInFurniture.id, furnitureConfig.token);
               webflowLog("info", { event: "sweep.removed_from_furniture", shopifyProductId, webflowId: existingInFurniture.id });
-              await sendDuplicatePlacementEmail(
-                {
-                  productTitle: name,
-                  shopifyProductId,
-                  previousVertical: "furniture",
-                  detectedVertical: "luxury",
-                  webflowItemIdRemoved: existingInFurniture.id,
-                  sweep: true,
-                },
-                duplicateEmailSentFor
-              );
+              if (!manualLock) {
+                await sendDuplicatePlacementEmail(
+                  {
+                    productTitle: name,
+                    shopifyProductId,
+                    previousVertical: "furniture",
+                    detectedVertical: "luxury",
+                    webflowItemIdRemoved: existingInFurniture.id,
+                    sweep: true,
+                  },
+                  duplicateEmailSentFor
+                );
+              }
             } catch (err) {
               webflowLog("error", { event: "sweep.remove_furniture_failed", shopifyProductId, webflowId: existingInFurniture.id, message: err.message });
             }
