@@ -1852,6 +1852,59 @@ async function archiveWebflowEcommerceProduct(siteId, productId, token) {
   });
 }
 
+/** Unarchive a furniture ecommerce product when it returns to the Furniture vertical (e.g. after FH tag). */
+async function unarchiveWebflowEcommerceProduct(siteId, productId, token) {
+  if (!siteId || !productId || !token) return null;
+  const full = await getWebflowEcommerceProductById(siteId, productId, token);
+  if (!full) return null;
+  if (full.isArchived !== true) {
+    webflowLog("info", { event: "unarchive.ecommerce_skip_not_archived", productId });
+    return full;
+  }
+  const productFieldData = full.fieldData || {};
+  const skuFieldData = full?.skus?.[0]?.fieldData ?? {};
+  const url = `https://api.webflow.com/v2/sites/${siteId}/products/${productId}`;
+  const body = {
+    product: { fieldData: productFieldData, isArchived: false },
+    sku: { fieldData: skuFieldData },
+  };
+  webflowLog("info", {
+    event: "unarchive.ecommerce",
+    productId,
+    message: "Reactivating archived furniture listing",
+  });
+  await axios.patch(url, body, {
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+  });
+  const refreshed = await getWebflowEcommerceProductById(siteId, productId, token);
+  return refreshed || { ...full, isArchived: false };
+}
+
+function shouldReactivateArchivedFurnitureListing(qty) {
+  return !shopifyQtySaysSold(qty);
+}
+
+async function reactivateArchivedFurnitureIfNeeded({
+  config,
+  existing,
+  shopifyProductId,
+  productTitle,
+  qty,
+}) {
+  if (!existing || existing.isArchived !== true) return { existing, reactivated: false };
+  if (!config?.siteId || !config?.token) return { existing, reactivated: false };
+  if (!shouldReactivateArchivedFurnitureListing(qty)) return { existing, reactivated: false };
+  const refreshed = await unarchiveWebflowEcommerceProduct(config.siteId, existing.id, config.token);
+  webflowLog("info", {
+    event: "furniture.unarchived_on_tag_return",
+    shopifyProductId,
+    productTitle,
+    webflowId: existing.id,
+    message: "Archived furniture copy reactivated — item back on Furniture with stock",
+  });
+  return { existing: refreshed || { ...existing, isArchived: false }, reactivated: true };
+}
+
 /**
  * Remove a Furniture ecommerce product (duplicate / wrong-vertical cleanup).
  * Tries DELETE first; on failure (405/501/network, etc.) falls back to archive (known to work on Webflow).
@@ -5541,6 +5594,32 @@ async function syncSingleProductCore(product, cache, options = {}) {
     }
     if (existing) {
       if (vertical === "furniture" && existing.isArchived === true) {
+        const { existing: reactivated, reactivated: didUnarchive } = await reactivateArchivedFurnitureIfNeeded({
+          config,
+          existing,
+          shopifyProductId,
+          productTitle: product.title,
+          qty,
+        });
+        if (!didUnarchive) {
+          cache[shopifyProductId] = {
+            hash: currentHash,
+            contentHash: currentContentHash,
+            webflowId: existing.id,
+            lastQty: qty,
+            vertical,
+            ...soldMarkedAtPayload(cacheEntry, qty),
+          };
+          webflowLog("info", {
+            event: "sync_product.skip_unchanged_archived",
+            shopifyProductId,
+            productTitle: product.title,
+            webflowId: existing.id,
+            message: "Furniture listing is archived; no Webflow PATCH",
+          });
+          return { operation: "skip", id: existing.id };
+        }
+        existing = reactivated;
         cache[shopifyProductId] = {
           hash: currentHash,
           contentHash: currentContentHash,
@@ -5549,14 +5628,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
           vertical,
           ...soldMarkedAtPayload(cacheEntry, qty),
         };
-        webflowLog("info", {
-          event: "sync_product.skip_unchanged_archived",
-          shopifyProductId,
-          productTitle: product.title,
-          webflowId: existing.id,
-          message: "Furniture listing is archived; no Webflow PATCH",
-        });
-        return { operation: "skip", id: existing.id };
+        return { operation: "update", id: existing.id };
       }
       const repairSold = needsWebflowSoldRepair(existing, vertical, qty);
       const repairNoLongerAvailable = needsNoLongerAvailableRepair(existing, vertical, qty);
@@ -6752,22 +6824,32 @@ async function syncSingleProductCore(product, cache, options = {}) {
           detectedVertical = "luxury";
           config = getWebflowConfig("luxury");
         } else {
-          cache[shopifyProductId] = {
-            hash: currentHash,
-            contentHash: currentContentHash,
-            webflowId: existing.id,
-            lastQty: qty,
-            vertical,
-            ...soldMarkedAtPayload(cacheEntry, qty),
-          };
-          webflowLog("info", {
-            event: "sync_product.skip_archived_furniture",
+          const { existing: reactivated, reactivated: didUnarchive } = await reactivateArchivedFurnitureIfNeeded({
+            config,
+            existing,
             shopifyProductId,
             productTitle: name,
-            webflowId: existing.id,
-            message: "Listing archived; skipping mark-sold and product updates",
+            qty,
           });
-          return { operation: "skip", id: existing.id };
+          if (!didUnarchive) {
+            cache[shopifyProductId] = {
+              hash: currentHash,
+              contentHash: currentContentHash,
+              webflowId: existing.id,
+              lastQty: qty,
+              vertical,
+              ...soldMarkedAtPayload(cacheEntry, qty),
+            };
+            webflowLog("info", {
+              event: "sync_product.skip_archived_furniture",
+              shopifyProductId,
+              productTitle: name,
+              webflowId: existing.id,
+              message: "Listing archived; skipping mark-sold and product updates",
+            });
+            return { operation: "skip", id: existing.id };
+          }
+          existing = reactivated;
         }
       }
     }
