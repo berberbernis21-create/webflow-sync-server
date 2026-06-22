@@ -2691,6 +2691,30 @@ function getLuxuryCategoryOverrideFromEcommerceTags(tags) {
   return category ? { letter, category } : null;
 }
 
+/**
+ * Manual Shopify ecommerce placement — when present, vertical/classifier must not move the item.
+ * FH/LG vertical tags, or a furniture category letter (X, L, B, …) without LG.
+ */
+function getManualEcommerceVerticalLock(product) {
+  const tags = getProductTagsArray(product);
+  const verticalTag = getEcommerceVerticalOverrideFromTags(tags);
+  if (verticalTag?.vertical === "furniture") {
+    return { vertical: "furniture", tag: verticalTag.tag, source: "ecommerce_vertical_tag" };
+  }
+  if (verticalTag?.vertical === "luxury") {
+    return { vertical: "luxury", tag: verticalTag.tag, source: "ecommerce_vertical_tag" };
+  }
+  const furnitureCategory = getFurnitureCategoryOverrideFromEcommerceTags(tags);
+  if (furnitureCategory) {
+    return {
+      vertical: "furniture",
+      tag: furnitureCategory.letter,
+      source: "ecommerce_furniture_category_letter",
+    };
+  }
+  return null;
+}
+
 /* ======================================================
    FURNITURE CATEGORY — detect + map to Shopify display
    Fallback: Accessories when no keyword matches.
@@ -3939,7 +3963,9 @@ function productHasJewelryCategoryTag(product) {
 function isLockedLuxuryProduct(product) {
   const tags = getProductTagsArray(product);
   const verticalTag = getEcommerceVerticalOverrideFromTags(tags);
+  if (verticalTag?.vertical === "furniture") return false;
   if (verticalTag?.vertical === "luxury") return true;
+  if (getFurnitureCategoryOverrideFromEcommerceTags(tags)) return false;
   if (productHasJewelryCategoryTag(product)) return true;
   const title = String(product?.title || "");
   if (/\bbrooch(es)?\b/i.test(title)) return true;
@@ -5457,7 +5483,10 @@ async function syncSingleProductCore(product, cache, options = {}) {
     (cacheEntry?.webflowId && previousContentHash == null);
   const forceReclassify = options.forceReclassify === true;
   const cachedVerticalForSkip = cacheEntry?.vertical ?? "luxury";
-  const evidenceVsCache = resolveVerticalFromEvidence(product, cachedVerticalForSkip);
+  const manualLockForSkip = getManualEcommerceVerticalLock(product);
+  const evidenceVsCache = manualLockForSkip
+    ? { vertical: manualLockForSkip.vertical, reason: `ecommerce_lock_${manualLockForSkip.tag}` }
+    : resolveVerticalFromEvidence(product, cachedVerticalForSkip);
   const verticalNeedsCorrection = evidenceVsCache.vertical !== cachedVerticalForSkip;
 
   // Do NOT lock vertical from cache when webflowId is missing and qty is 0 — wrong vertical (e.g. luxury) blocked
@@ -5746,7 +5775,22 @@ async function syncSingleProductCore(product, cache, options = {}) {
 
   let vertical, detectedVertical, verticalCorrected;
   const ecommerceVerticalTag = getEcommerceVerticalOverrideFromTags(getProductTagsArray(product));
-  if (!recoveredFromWebflow) {
+  const manualEcommerceLock = getManualEcommerceVerticalLock(product);
+
+  if (manualEcommerceLock && !forceReclassify) {
+    vertical = manualEcommerceLock.vertical;
+    detectedVertical = manualEcommerceLock.vertical;
+    verticalCorrected = false;
+    webflowLog("info", {
+      event: "vertical.locked_ecommerce_tags",
+      shopifyProductId,
+      productTitle: product.title || "",
+      vertical: manualEcommerceLock.vertical,
+      tag: manualEcommerceLock.tag,
+      source: manualEcommerceLock.source,
+      message: "Manual ecommerce tag(s) lock vertical — skipping classifier corrections",
+    });
+  } else if (!recoveredFromWebflow) {
     const llmLogPayload = {};
     const llmResult = await classifyWithLLM(product, llmLogPayload, webflowLog);
     const llmDetectedVertical = llmResult.category === "LUXURY" ? "luxury" : "furniture";
@@ -5755,15 +5799,16 @@ async function syncSingleProductCore(product, cache, options = {}) {
     if (ecommerceVerticalTag) {
       detectedVertical = ecommerceVerticalTag.vertical;
     }
-    if (isLockedLuxuryProduct(product)) {
+    if (!manualEcommerceLock && isLockedLuxuryProduct(product)) {
       detectedVertical = "luxury";
     }
     // Hard guard: wristwatches/timepieces are always Luxury (never furniture bedroom/other).
-    if (productLooksLikeWristwatchLuxury(product)) {
+    if (!manualEcommerceLock && productLooksLikeWristwatchLuxury(product)) {
       detectedVertical = "luxury";
     }
     // Hard guard: jewelry cues must always live under Luxury Goods in Shopify/Webflow (never overrides books/media, boxes, or lamps).
     if (
+      !manualEcommerceLock &&
       !productLooksLikeBookFilmOrMedia(product) &&
       !productLooksLikeFurnitureHomeBox(product) &&
       !productLooksLikeLightingFixture(product) &&
@@ -5774,10 +5819,12 @@ async function syncSingleProductCore(product, cache, options = {}) {
       detectedVertical = "luxury";
     }
     const correctedToLuxury =
+      !manualEcommerceLock &&
       cacheEntry?.vertical === "furniture" &&
       detectedVertical === "luxury" &&
       !productLooksLikeFurnitureTrap(product);
     const correctedToFurniture =
+      !manualEcommerceLock &&
       !isLockedLuxuryProduct(product) &&
       cacheEntry?.vertical === "luxury" &&
       detectedVertical === "furniture";
@@ -5789,7 +5836,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
           ? "furniture"
           : (cacheEntry?.vertical ?? detectedVertical);
     verticalCorrected = correctedToLuxury;
-    if (productLooksLikeWristwatchLuxury(product)) {
+    if (!manualEcommerceLock && productLooksLikeWristwatchLuxury(product)) {
       if (vertical !== "luxury") {
         verticalCorrected = cacheEntry?.vertical === "furniture";
         webflowLog("info", {
@@ -5892,7 +5939,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
   const slugForCleanup = product.handle || "";
   const shopifyUrlForCleanup = `https://${process.env.SHOPIFY_STORE || ""}.myshopify.com/products/${slugForCleanup}`;
 
-  if (vertical === "luxury") {
+  if (vertical === "luxury" && !manualEcommerceLock) {
     const furnitureConfig = getWebflowConfig("furniture");
     if (furnitureConfig?.siteId && furnitureConfig?.token) {
       const existingInFurniture = await findExistingWebflowEcommerceProduct(
@@ -5986,11 +6033,12 @@ async function syncSingleProductCore(product, cache, options = {}) {
         message: "Recovered vertical was overridden by evidence guard",
       });
     }
-    if (!ecommerceVerticalTag && productLooksLikeWristwatchLuxury(product)) {
+    if (!manualEcommerceLock && !ecommerceVerticalTag && productLooksLikeWristwatchLuxury(product)) {
       vertical = "luxury";
       detectedVertical = "luxury";
     }
     if (
+      !manualEcommerceLock &&
       !productLooksLikeBookFilmOrMedia(product) &&
       !productLooksLikeFurnitureHomeBox(product) &&
       !productLooksLikeLightingFixture(product) &&
@@ -6001,13 +6049,13 @@ async function syncSingleProductCore(product, cache, options = {}) {
       vertical = "luxury";
       detectedVertical = "luxury";
     }
-    if (isLockedLuxuryProduct(product)) {
+    if (!manualEcommerceLock && isLockedLuxuryProduct(product)) {
       vertical = "luxury";
       detectedVertical = "luxury";
     }
   }
 
-  if (!ecommerceVerticalTag && productLooksLikeWristwatchLuxury(product) && vertical !== "luxury") {
+  if (!manualEcommerceLock && !ecommerceVerticalTag && productLooksLikeWristwatchLuxury(product) && vertical !== "luxury") {
     webflowLog("info", {
       event: "vertical.override_wristwatch_final",
       shopifyProductId,
@@ -6086,7 +6134,12 @@ async function syncSingleProductCore(product, cache, options = {}) {
   }
 
   // Jewelry guard can set luxury after cache still says furniture — run same move as verticalCorrected.
-  if (vertical === "luxury" && cacheEntry?.vertical === "furniture" && cacheEntry?.webflowId) {
+  if (
+    !manualEcommerceLock &&
+    vertical === "luxury" &&
+    cacheEntry?.vertical === "furniture" &&
+    cacheEntry?.webflowId
+  ) {
     const furnitureConfig = getWebflowConfig("furniture");
     let alreadyArchived = false;
     if (furnitureConfig?.siteId && furnitureConfig?.token) {
@@ -6672,7 +6725,11 @@ async function syncSingleProductCore(product, cache, options = {}) {
       }
       if (existing.isArchived === true) {
         const luxuryHit = luxuryItemIndex?.byShopifyId?.get(String(shopifyProductId));
-        if (options.forceReclassify === true && luxuryHit?.id) {
+        if (
+          options.forceReclassify === true &&
+          luxuryHit?.id &&
+          !getManualEcommerceVerticalLock(product)
+        ) {
           webflowLog("info", {
             event: "sync_product.archived_furniture_redirect_luxury",
             shopifyProductId,
@@ -7138,7 +7195,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
     }
 
     // Sweep: if we're creating in Luxury, check if this product wrongly exists in Furniture (e.g. no cache / cache lost). Archive it so it doesn't stay in both places.
-    if (detectedVertical === "luxury") {
+    if (detectedVertical === "luxury" && !getManualEcommerceVerticalLock(product)) {
       const furnitureConfig = getWebflowConfig("furniture");
       if (furnitureConfig?.siteId && furnitureConfig?.token) {
         const existingInFurniture = await findExistingWebflowEcommerceProduct(shopifyProductId, slug, furnitureConfig, name);

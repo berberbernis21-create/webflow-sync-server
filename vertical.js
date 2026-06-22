@@ -25,6 +25,8 @@ const FURNITURE_TRAP_PHRASES = [
   "beaded wall hanging", "tapestry wall hanging", "textile wall hanging",
   "serving tray", "serving trays", "linen tray", "decorative tray", "ottoman tray",
   "butler tray", "butlers tray", "butler's tray", "catchall tray", "valet tray",
+  "decorative bowl", "decor bowl", "clam shell", "clamshell", "catchall dish", "catch-all dish",
+  "shell bowl", "resin shell", "sculptural decor",
   "storage trunk", "storage trunks", "blanket trunk", "coffee table trunk", "lift-top trunk",
   "lift top trunk", "faux leather trunk", "decorative trunk", "accent trunk",
   "wood doll", "wooden doll", "vintage doll", "nesting doll", "matryoshka", "dollhouse",
