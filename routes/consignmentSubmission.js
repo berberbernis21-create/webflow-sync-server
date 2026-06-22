@@ -10,7 +10,7 @@ import {
 import { generateConsignmentPdf } from "../lib/consignmentPdf.js";
 import { applyConsignmentCorsHeaders } from "../lib/consignmentCors.js";
 import { resolveConsignmentBrand } from "../lib/consignmentBrand.js";
-import { MAX_CONSIGNMENT_PHOTOS, MAX_UPLOAD_FILES } from "../lib/consignmentLimits.js";
+import { MAX_CONSIGNMENT_PHOTOS, MAX_UPLOAD_FILES, isHeavyConsignmentSubmission } from "../lib/consignmentLimits.js";
 import { preparePhotoGroupsForConsignment } from "../lib/consignmentImageNormalize.js";
 import {
   archiveConsignmentIfNeeded,
@@ -213,6 +213,17 @@ async function processConsignmentSubmission({ body, items, photoGroups, submitte
   const processingWarnings = [];
   let preparedPhotoGroups = photoGroups;
   let photoFailures = [];
+  const heavySubmission = isHeavyConsignmentSubmission(items.length, uploadedPhotoCount);
+
+  if (heavySubmission) {
+    processingWarnings.push(
+      `Large submission (${items.length} items, ${uploadedPhotoCount} photos): AI pricing and PDF generation were skipped to keep the server stable. Photos are still attached in this email when conversion succeeds.`
+    );
+    console.warn("[consignment] heavy submission — skipping pricing and PDFs", {
+      itemCount: items.length,
+      photoCount: uploadedPhotoCount,
+    });
+  }
 
   try {
     const prepared = await preparePhotoGroupsForConsignment(photoGroups);
@@ -242,28 +253,36 @@ async function processConsignmentSubmission({ body, items, photoGroups, submitte
     }
   }
 
-  const pricing = await runPricingSafe({ items, photoGroups: preparedPhotoGroups });
-  const { pricingResults } = pricing;
-  if (pricing.pricingError) {
-    processingWarnings.push(`Pricing analysis failed: ${pricing.pricingError}`);
-  } else if (pricing.pricingSkipped) {
-    processingWarnings.push("Pricing analysis was disabled (CONSIGNMENT_PRICING_ENABLED).");
-  } else if (!pricing.pricingConfigured) {
-    processingWarnings.push("Pricing analysis skipped — API keys not fully configured.");
-  } else if (pricing.pricingTimedOut) {
-    processingWarnings.push("Pricing analysis timed out — comps may be partial or missing.");
+  let pricingResults = null;
+  if (!heavySubmission) {
+    const pricing = await runPricingSafe({ items, photoGroups: preparedPhotoGroups });
+    pricingResults = pricing.pricingResults;
+    if (pricing.pricingError) {
+      processingWarnings.push(`Pricing analysis failed: ${pricing.pricingError}`);
+    } else if (pricing.pricingSkipped) {
+      processingWarnings.push("Pricing analysis was disabled (CONSIGNMENT_PRICING_ENABLED).");
+    } else if (!pricing.pricingConfigured) {
+      processingWarnings.push("Pricing analysis skipped — API keys not fully configured.");
+    } else if (pricing.pricingTimedOut) {
+      processingWarnings.push("Pricing analysis timed out — comps may be partial or missing.");
+    }
   }
 
-  const pdfBuffer = await generateInternalPdfSafe({
-    body,
-    items,
-    photoGroups: preparedPhotoGroups,
-    submittedAt,
-    pricingResults,
-  });
+  let pdfBuffer = null;
+  if (!heavySubmission) {
+    pdfBuffer = await generateInternalPdfSafe({
+      body,
+      items,
+      photoGroups: preparedPhotoGroups,
+      submittedAt,
+      pricingResults,
+    });
 
-  if (!pdfBuffer?.length) {
-    processingWarnings.push("Internal PDF was not generated.");
+    if (!pdfBuffer?.length) {
+      processingWarnings.push("Internal PDF was not generated.");
+    }
+  } else {
+    processingWarnings.push("Internal PDF skipped for large submission.");
   }
 
   const archiveContext = () => ({
@@ -317,7 +336,10 @@ async function processConsignmentSubmission({ body, items, photoGroups, submitte
   }
 
   try {
-    await sendCustomerConfirmationEmail(body, items, preparedPhotoGroups, { submittedAt });
+    await sendCustomerConfirmationEmail(body, items, preparedPhotoGroups, {
+      submittedAt,
+      skipPdf: heavySubmission,
+    });
   } catch (customerErr) {
     console.error(
       "[consignment] customer confirmation email failed:",

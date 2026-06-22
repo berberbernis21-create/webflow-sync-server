@@ -33,6 +33,7 @@ import {
   isAllowedConsignmentOrigin,
 } from "./lib/consignmentCors.js";
 import consignmentRouter from "./routes/consignmentSubmission.js";
+import { recoverStaleConsignmentIntakes } from "./lib/consignmentIntakeRecovery.js";
 import {
   productLooksLikeFurnitureTrap,
   productLooksLikeFurnitureHomeTrunk,
@@ -10682,6 +10683,12 @@ app.listen(PORT, () => {
   console.log(`  Shopify mode: ${scheme}://${host}/api/listing?name=...&source=shopify`);
   console.log(`  Facebook copy (OpenAI): POST ${scheme}://${host}/api/listing-blurb (needs OPENAI_API_KEY)`);
   console.log(`  Package assign (OpenAI): POST ${scheme}://${host}/api/package-assign (OPENAI_PACKAGE_MODEL, default gpt-5.2)`);
+  void recoverStaleConsignmentIntakes().catch((err) => {
+    webflowLog("error", {
+      event: "consignment.intake_recovery_failed",
+      message: err?.message ?? String(err),
+    });
+  });
 });
 
 
