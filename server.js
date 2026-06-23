@@ -2461,7 +2461,7 @@ async function removeConditionOptionIfFurniture(product) {
    HASH FOR CHANGE DETECTION
    Includes dimensions (variant + metafields + tag lines) so dimension changes still invalidate the fast path.
    body_html is normalized (collapse whitespace) so Shopify formatting drift doesn't cause false "changed".
-   taxonomyVersion: bump this when category/vertical logic changes so all items resync once (18 = glass canisters/jars → Furniture Accessories not Luxury).
+   taxonomyVersion: bump this when category/vertical logic changes so all items resync once (19 = side/end tables → Living Room not Bedroom from nightstand tags).
    Image URLs strip query strings (CDN signature / width params often rotate without a real asset change).
    Price and dimensions are normalized so "199.0" vs "199.00" or float noise doesn't churn the cache.
 ====================================================== */
@@ -2541,7 +2541,7 @@ function shopifyHash(product) {
     images: imagesStable,
     slug: product.handle,
     dimensions,
-    taxonomyVersion: 18,
+    taxonomyVersion: 19,
     jewelryReclassVersion,
   };
 }
@@ -2554,7 +2554,7 @@ function contentHashForLLM(product) {
     product_type: (product.product_type || "").trim(),
     tagsKey: tagsFingerprintForHash(product),
     body_html: normalizeHtmlForHash(product.body_html),
-    taxonomyVersion: 18,
+    taxonomyVersion: 19,
     jewelryReclassVersion,
   };
 }
@@ -2862,6 +2862,10 @@ function detectCategoryFurnitureEvidence(title, descriptionHtml, tags, dimension
     return { category: "Lighting", confidence: 1, reason: "lighting_title_guard" };
   }
 
+  if (furnitureTitleIndicatesLivingRoomTable(title)) {
+    return { category: "LivingRoom", confidence: 1, reason: "living_room_table_title_guard" };
+  }
+
   if (furnitureSleepSurfaceIndicatesBedroom(title, descriptionHtml, tags)) {
     return { category: "Bedroom", confidence: 1, reason: "sleep_surface" };
   }
@@ -2991,6 +2995,16 @@ function detectCategoryFurnitureEvidence(title, descriptionHtml, tags, dimension
       category: "Accessories",
       confidence: 1,
       reason: "home_decor_glassware_keyword_override",
+      bestScore,
+      secondBest,
+    };
+  }
+
+  if (furnitureTitleIndicatesLivingRoomTable(title)) {
+    return {
+      category: "LivingRoom",
+      confidence: 1,
+      reason: "living_room_table_title_keyword_override",
       bestScore,
       secondBest,
     };
@@ -3171,6 +3185,7 @@ function applyFurnitureSubcategoryPostOverrides({
   ) {
     out = "Accessories";
   }
+  if (furnitureTitleIndicatesLivingRoomTable(name)) out = "LivingRoom";
   return out;
 }
 
@@ -3212,6 +3227,7 @@ function furnitureAccessoryCategoryOverrideTitle(title) {
   const t = normalizeTitleForFurnitureAccessoryMatch(title);
   if (!t) return null;
   if (titleIndicatesLightingFurniture(title)) return "Lighting";
+  if (furnitureTitleIndicatesLivingRoomTable(title)) return "LivingRoom";
   if (
     /\b(coat|hat|magazine|wine|towel|luggage)\s+racks?\b/.test(t) ||
     /\bcoat\s+stands?\b/.test(t) ||
@@ -3366,12 +3382,37 @@ function furnitureBedroomIndicatesBedroom(title, descriptionHtml, tags) {
   if (/\bnightstands?\s+(accent|accents|decor|vignette)s?\b/i.test(hay)) return false;
   if (/\b(on|for|beside|atop)\s+(a\s+|the\s+|your\s+)?nightstands?\b/i.test(hay)) return false;
   if (/\bbedroom\s+nightstand\s+(accent|accents|decor)\b/i.test(hay)) return false;
-  if (/\bnightstands?\b/i.test(hay)) return true;
+  if (/\b(as|or)\s+(a\s+)?bedroom\s+nightstands?\b/i.test(hay)) return false;
+  if (/\bnightstands?\b/i.test(hay)) {
+    if (furnitureTitleIndicatesLivingRoomTable(title)) return false;
+    return true;
+  }
   if (/\bbedroom\b/i.test(hay) && !/\b(bed|beds|headboards?|dressers?|nightstands?|armoires?|wardrobes?)\b/i.test(hay)) {
     return false;
   }
   if (/\bdressers?\b/i.test(hay)) return true;
   return false;
+}
+
+/** Side/end/accent tables in the title — Living Room, not Bedroom from nightstand tags or staging copy. */
+function furnitureTitleIndicatesLivingRoomTable(title) {
+  const t = normalizeTitleForFurnitureAccessoryMatch(title);
+  if (!t) return false;
+  if (/\bnightstands?\b/.test(t) || /\bbedside\s+tables?\b/.test(t)) return false;
+  return (
+    /\bside\s+tables?\b/.test(t) ||
+    /\bend\s+tables?\b/.test(t) ||
+    /\baccent\s+tables?\b/.test(t) ||
+    /\bsofa\s+tables?\b/.test(t) ||
+    /\bhall\s+tables?\b/.test(t) ||
+    /\bentry(?:way)?\s+tables?\b/.test(t) ||
+    /\bcoffee\s+tables?\b/.test(t) ||
+    /\bconsole\s+tables?\b/.test(t) ||
+    /\bnesting\s+tables?\b/.test(t) ||
+    /\bcocktail\s+tables?\b/.test(t) ||
+    /\bdrink\s+tables?\b/.test(t) ||
+    (/\b\d[\s-]*tier\b/.test(t) && /\btables?\b/.test(t))
+  );
 }
 
 function furnitureRugIndicatesRugs(title, descriptionHtml, tags) {
