@@ -4196,6 +4196,80 @@ function detectLuxuryCategoryFromTitle(title, descriptionHtml, product = null) {
 /** In-memory map: display name (and slug) -> Webflow category item ID. Filled by loadFurnitureCategoryMap(). */
 let furnitureCategoryMapCache = null;
 
+/** Allowed Webflow Option values for furniture CMS `ec-product-type` (loaded from collection schema). */
+let furnitureEcProductTypeAllowlist = null;
+
+function parseEcProductTypeOptionsFromCollectionFields(fields) {
+  if (!Array.isArray(fields)) return [];
+  const field = fields.find((f) => f?.slug === "ec-product-type");
+  if (!field) return [];
+  const options = field.validations?.options ?? [];
+  return options
+    .map((o) => {
+      if (typeof o === "string") return o;
+      if (o?.name) return String(o.name);
+      if (o?.id) return String(o.id);
+      return null;
+    })
+    .filter(Boolean);
+}
+
+async function loadFurnitureEcProductTypeAllowlist() {
+  if (furnitureEcProductTypeAllowlist) return furnitureEcProductTypeAllowlist;
+  const config = getWebflowConfig("furniture");
+  if (!config?.collectionId || !config?.token) {
+    furnitureEcProductTypeAllowlist = new Set();
+    return furnitureEcProductTypeAllowlist;
+  }
+  try {
+    const resp = await axios.get(`https://api.webflow.com/v2/collections/${config.collectionId}`, {
+      headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
+    });
+    const names = parseEcProductTypeOptionsFromCollectionFields(resp.data?.fields);
+    furnitureEcProductTypeAllowlist = new Set(names);
+    webflowLog("info", {
+      event: "furniture_ec_product_type.loaded",
+      collectionId: config.collectionId,
+      count: names.length,
+    });
+  } catch (err) {
+    furnitureEcProductTypeAllowlist = new Set();
+    webflowLog("warn", {
+      event: "furniture_ec_product_type.load_failed",
+      message: err.message,
+    });
+  }
+  return furnitureEcProductTypeAllowlist;
+}
+
+/** Omit ec-product-type when Shopify value is not a Webflow Option (e.g. ART-GENERAL). */
+function furnitureEcProductTypeForWebflow(productType, existingValue) {
+  const allow = furnitureEcProductTypeAllowlist;
+  const raw = productType != null ? String(productType).trim() : "";
+  const existing = existingValue != null ? String(existingValue).trim() : "";
+  if (!allow?.size) {
+    return existing || null;
+  }
+  if (raw && allow.has(raw)) return raw;
+  if (raw) {
+    const ci = [...allow].find((a) => a.toLowerCase() === raw.toLowerCase());
+    if (ci) return ci;
+  }
+  if (existing && allow.has(existing)) return existing;
+  return null;
+}
+
+function cacheEntryAfterCreateOnlySkip(cacheEntry, currentHash, currentContentHash, shopifyProductId, webflowId, vertical, qty) {
+  return {
+    hash: currentHash,
+    contentHash: currentContentHash,
+    webflowId,
+    lastQty: qty,
+    vertical,
+    ...soldMarkedAtPayload(cacheEntry, qty),
+  };
+}
+
 /** Fetch Categories collection from Webflow and build name/slug -> item ID map so we don't need env vars. */
 async function loadFurnitureCategoryMap() {
   if (furnitureCategoryMapCache) return furnitureCategoryMapCache;
@@ -6075,6 +6149,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
     (previousContentHash && JSON.stringify(currentContentHash) === JSON.stringify(previousContentHash)) ||
     (cacheEntry?.webflowId && previousContentHash == null);
   const forceReclassify = options.forceReclassify === true;
+  const createOnly = options.createOnly === true;
   const cachedVerticalForSkip = cacheEntry?.vertical ?? "luxury";
   const manualLockForSkip = getManualEcommerceVerticalLock(product);
   const evidenceVsCache = manualLockForSkip
@@ -7418,6 +7493,27 @@ async function syncSingleProductCore(product, cache, options = {}) {
   if (existing) {
     webflowLog("info", { event: "sync_product.linked", shopifyProductId, productTitle: name, webflowId: existing.id });
 
+    if (createOnly) {
+      cache[shopifyProductId] = cacheEntryAfterCreateOnlySkip(
+        cacheEntry,
+        currentHash,
+        currentContentHash,
+        shopifyProductId,
+        existing.id,
+        vertical,
+        qty
+      );
+      webflowLog("info", {
+        event: "sync_product.create_only.skip_existing",
+        shopifyProductId,
+        productTitle: name,
+        webflowId: existing.id,
+        vertical,
+        message: "createOnly: item already in Webflow; no PATCH",
+      });
+      return { operation: "skip", id: existing.id };
+    }
+
     if (vertical === "furniture" && furnitureUsesEcommerceApi(config)) {
       if (!Object.prototype.hasOwnProperty.call(existing, "isArchived")) {
         const live = await getWebflowEcommerceProductById(config.siteId, existing.id, config.token);
@@ -7813,6 +7909,27 @@ async function syncSingleProductCore(product, cache, options = {}) {
     }
     const existingFromGuard = (detectedVertical === "furniture" && alreadyInFurniture) ? alreadyInFurniture : (detectedVertical === "luxury" && alreadyInLuxury) ? alreadyInLuxury : null;
     if (existingFromGuard) {
+      if (createOnly) {
+        cache[shopifyProductId] = cacheEntryAfterCreateOnlySkip(
+          cacheEntry,
+          currentHash,
+          currentContentHash,
+          shopifyProductId,
+          existingFromGuard.id,
+          detectedVertical,
+          qty
+        );
+        webflowLog("info", {
+          event: "sync_product.create_only.skip_existing",
+          shopifyProductId,
+          productTitle: name,
+          webflowId: existingFromGuard.id,
+          vertical: detectedVertical,
+          source: "create_guard",
+          message: "createOnly: item already in Webflow; no create or PATCH",
+        });
+        return { operation: "skip", id: existingFromGuard.id };
+      }
       webflowLog("info", {
         event: "sync_product.found_existing_by_shopify_id",
         shopifyProductId,
@@ -8549,6 +8666,8 @@ function buildWebflowFieldData(opts) {
       const envKey = `FURNITURE_CATEGORY_${category.replace(/\s*\/\s*/g, "_").replace(/\s+/g, "_").toUpperCase().replace(/[^A-Z0-9_]/g, "")}`;
       webflowLog("warn", { event: "build_field_data.category_unassigned", category, envKey, message: `Set ${envKey} to Webflow category item ID` });
     }
+    const ex = existingFieldData && typeof existingFieldData === "object" ? existingFieldData : null;
+    const ecType = furnitureEcProductTypeForWebflow(productType, ex?.["ec-product-type"]);
     const out = {
       name,
       slug,
@@ -8557,13 +8676,11 @@ function buildWebflowFieldData(opts) {
       "shopify-product-id": shopifyProductId,
       "shopify-slug-2": shopifySlug ?? newSlug ?? "",
       "main-description-2": description ?? null,
-      "ec-product-type": productType ?? null,
       shippable: true,
     };
-    if (shopifyUrl) out["shopify-url"] = shopifyUrl;
+    if (ecType != null && ecType !== "") out["ec-product-type"] = ecType;
     if (categoryRef != null && WEBFLOW_ITEM_REF_REGEX.test(String(categoryRef))) out.category = categoryRef;
     const soldDateSlug = getFurnitureSoldSinceFieldSlug();
-    const ex = existingFieldData && typeof existingFieldData === "object" ? existingFieldData : null;
     if (soldDateSlug) {
       if (soldNow) {
         const wasSold = webflowListingLooksSold({ fieldData: ex || {} }, "furniture");
@@ -11429,9 +11546,11 @@ app.post("/sync-by-ids", async (req, res) => {
     return res.status(400).json({ error: "shopifyProductIds (array) is required" });
   }
   const forceReclassify = req.body?.forceReclassify !== false;
-  webflowLog("info", { event: "sync-by-ids.entry", count: ids.length, forceReclassify });
+  const createOnly = req.body?.createOnly === true;
+  webflowLog("info", { event: "sync-by-ids.entry", count: ids.length, forceReclassify, createOnly });
   try {
     await loadFurnitureCategoryMap();
+    furnitureEcProductTypeAllowlist = null;
     luxuryItemIndex = null;
     furnitureProductIndex = null;
     furnitureSkuIndex = null;
@@ -11439,6 +11558,7 @@ app.post("/sync-by-ids", async (req, res) => {
       loadLuxuryItemIndex(),
       loadFurnitureProductIndex(),
       loadFurnitureSkuIndex(),
+      loadFurnitureEcProductTypeAllowlist(),
     ]);
     const cache = loadCache();
     const duplicateEmailSentFor = new Set();
@@ -11461,6 +11581,7 @@ app.post("/sync-by-ids", async (req, res) => {
           duplicateEmailSentFor,
           shopifyWriteEmailSentFor,
           forceReclassify,
+          createOnly,
           skipMissingFieldsAlert: true,
         });
         if (result?.duplicateCorrected && result?.duplicateLog) {
