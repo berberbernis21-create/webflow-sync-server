@@ -102,6 +102,8 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
     "jar", "jars", "planter", "planters",
     "canister", "canisters", "glass canister", "pressed glass", "cookie jar", "candy jar", "storage jar",
     "decanter", "decanters", "wine decanter", "wine decanters", "carafe", "carafes",
+    "tureen", "tureens", "soup tureen", "serving tureen", "ironstone tureen", "lidded tureen",
+    "gravy boat", "gravy boats", "ladle",
     "box", "boxes", "scroll box", "scroll boxes", "document box", "document boxes",
     "trinket box", "storage box", "decorative box", "keepsake box", "jewelry box", "jewellery box",
     "basket", "baskets", "bookend", "bookends",

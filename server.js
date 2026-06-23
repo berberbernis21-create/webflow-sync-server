@@ -2461,7 +2461,7 @@ async function removeConditionOptionIfFurniture(product) {
    HASH FOR CHANGE DETECTION
    Includes dimensions (variant + metafields + tag lines) so dimension changes still invalidate the fast path.
    body_html is normalized (collapse whitespace) so Shopify formatting drift doesn't cause false "changed".
-   taxonomyVersion: bump this when category/vertical logic changes so all items resync once (19 = side/end tables → Living Room not Bedroom from nightstand tags).
+   taxonomyVersion: bump this when category/vertical logic changes so all items resync once (20 = tureens/serveware → Furniture Accessories not Living/Dining Room).
    Image URLs strip query strings (CDN signature / width params often rotate without a real asset change).
    Price and dimensions are normalized so "199.0" vs "199.00" or float noise doesn't churn the cache.
 ====================================================== */
@@ -2541,7 +2541,7 @@ function shopifyHash(product) {
     images: imagesStable,
     slug: product.handle,
     dimensions,
-    taxonomyVersion: 19,
+    taxonomyVersion: 20,
     jewelryReclassVersion,
   };
 }
@@ -2554,7 +2554,7 @@ function contentHashForLLM(product) {
     product_type: (product.product_type || "").trim(),
     tagsKey: tagsFingerprintForHash(product),
     body_html: normalizeHtmlForHash(product.body_html),
-    taxonomyVersion: 19,
+    taxonomyVersion: 20,
     jewelryReclassVersion,
   };
 }
@@ -2853,6 +2853,10 @@ function detectCategoryFurnitureEvidence(title, descriptionHtml, tags, dimension
     return { category: "Accessories", confidence: 1, reason: "home_decor_glassware_guard" };
   }
 
+  if (listingLooksLikeFurnitureHomeDecorServeware(title, descriptionHtml, tags)) {
+    return { category: "Accessories", confidence: 1, reason: "home_decor_serveware_guard" };
+  }
+
   const forcedFromTitle = furnitureAccessoryCategoryOverrideTitle(title);
   if (forcedFromTitle) {
     return { category: forcedFromTitle, confidence: 1, reason: "title_keyword_override" };
@@ -2995,6 +2999,16 @@ function detectCategoryFurnitureEvidence(title, descriptionHtml, tags, dimension
       category: "Accessories",
       confidence: 1,
       reason: "home_decor_glassware_keyword_override",
+      bestScore,
+      secondBest,
+    };
+  }
+
+  if (listingLooksLikeFurnitureHomeDecorServeware(title, descriptionHtml, tags)) {
+    return {
+      category: "Accessories",
+      confidence: 1,
+      reason: "home_decor_serveware_keyword_override",
       bestScore,
       secondBest,
     };
@@ -3161,6 +3175,7 @@ function applyFurnitureSubcategoryPostOverrides({
     !listingLooksLikeDecorFigurineOrCarving(name, description, productTags) &&
     !listingLooksLikeFurnitureHomeDecorHolder(name, description, productTags) &&
     !listingLooksLikeFurnitureHomeDecorGlassware(name, description, productTags) &&
+    !listingLooksLikeFurnitureHomeDecorServeware(name, description, productTags) &&
     furnitureSleepSurfaceIndicatesBedroom(name, description, productTags)
   ) {
     out = "Bedroom";
@@ -3169,6 +3184,7 @@ function applyFurnitureSubcategoryPostOverrides({
     !listingLooksLikeDecorFigurineOrCarving(name, description, productTags) &&
     !listingLooksLikeFurnitureHomeDecorHolder(name, description, productTags) &&
     !listingLooksLikeFurnitureHomeDecorGlassware(name, description, productTags) &&
+    !listingLooksLikeFurnitureHomeDecorServeware(name, description, productTags) &&
     furnitureBedroomIndicatesBedroom(name, description, productTags)
   ) {
     out = "Bedroom";
@@ -3181,7 +3197,8 @@ function applyFurnitureSubcategoryPostOverrides({
   if (
     listingLooksLikeDecorFigurineOrCarving(name, description, productTags) ||
     listingLooksLikeFurnitureHomeDecorHolder(name, description, productTags) ||
-    listingLooksLikeFurnitureHomeDecorGlassware(name, description, productTags)
+    listingLooksLikeFurnitureHomeDecorGlassware(name, description, productTags) ||
+    listingLooksLikeFurnitureHomeDecorServeware(name, description, productTags)
   ) {
     out = "Accessories";
   }
@@ -3217,6 +3234,25 @@ function listingLooksLikeFurnitureHomeDecorGlassware(title, descriptionHtml, tag
     tags: tagList,
     product_type: "",
   });
+}
+
+/** Tureens, soup tureens, and decorative serving vessels — Furniture Accessories, not Living/Dining Room. */
+function listingLooksLikeFurnitureHomeDecorServeware(title, descriptionHtml, tags) {
+  const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const tagsStr = Array.isArray(tags) ? tags.join(" ") : typeof tags === "string" ? tags : "";
+  const hay = `${title || ""} ${stripHtml(descriptionHtml || "")} ${tagsStr}`.toLowerCase().replace(/-/g, " ");
+  if (!hay.trim()) return false;
+  return (
+    /\btureens?\b/.test(hay) ||
+    /\bsoup[\s-]+tureens?\b/.test(hay) ||
+    /\bserving[\s-]+tureens?\b/.test(hay) ||
+    /\bironstone[\s-]+tureens?\b/.test(hay) ||
+    /\blidded[\s-]+tureens?\b/.test(hay) ||
+    (/\bladles?\b/.test(hay) && /\btureens?\b/.test(hay)) ||
+    (/\bw[\s/]l(?:id)?\b/.test(hay) && /\btureens?\b/.test(hay)) ||
+    /\bgravy[\s-]+boats?\b/.test(hay) ||
+    /\bterrine[\s-]+(with|w[\s/])\b/.test(hay)
+  );
 }
 
 /**
@@ -3342,6 +3378,10 @@ function furnitureAccessoryCategoryOverrideTitle(title) {
     /\bbutler'?s trays? tables?\b/.test(t);
   if (!trayIsFurnitureTable && /\btrays?\b/.test(t)) return "Accessories";
   if (/\bdecanters?\b/.test(t) || /\bcarafes?\b/.test(t)) return "Accessories";
+  if (/\btureens?\b/.test(t) || /\bsoup[\s-]+tureens?\b/.test(t) || /\bserving[\s-]+tureens?\b/.test(t)) {
+    return "Accessories";
+  }
+  if (/\bgravy[\s-]+boats?\b/.test(t)) return "Accessories";
   return null;
 }
 
