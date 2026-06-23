@@ -2826,6 +2826,10 @@ function detectCategoryFurnitureEvidence(title, descriptionHtml, tags, dimension
     return { category: "Accessories", confidence: 0, reason: "empty_listing" };
   }
 
+  if (listingLooksLikeBook(title, descriptionHtml, tags)) {
+    return { category: "Accessories", confidence: 1, reason: "book_media_guard" };
+  }
+
   const forcedFromTitle = furnitureAccessoryCategoryOverrideTitle(title);
   if (forcedFromTitle) {
     return { category: forcedFromTitle, confidence: 1, reason: "title_keyword_override" };
@@ -2977,8 +2981,10 @@ function applyTableDimensionRules(dims, name, descAndTags) {
 
   // Books: "coffee table book", encyclopedia copy, or "table of contents" are not case-goods tables
   if (/\bcoffee table books?\b/.test(text)) return null;
+  if (/\b(hardcover|paperback|illustrated|art)\s+books?\b/.test(text)) return null;
   if (/\btable of contents\b/.test(text)) return null;
   if (/\bencyclopedia\b/.test(text)) return null;
+  if (/\bbooks?\b/.test(text) && !/\b(bookcases?|bookshelves?)\b/.test(text)) return null;
 
   if (h <= 22 || d <= 24) return "LivingRoom"; // cannot be dining
   if (h >= 28 && d >= 30 && w >= 40) return "DiningRoom"; // dining table dimensions
@@ -3034,6 +3040,21 @@ function normalizeTitleForFurnitureAccessoryMatch(raw) {
     .toLowerCase();
 }
 
+/** Books and physical media — always Furniture Accessories (not Living Room from "coffee table book" copy). */
+function listingLooksLikeBook(title, descriptionHtml, tags) {
+  const tagList = Array.isArray(tags)
+    ? tags
+    : typeof tags === "string"
+      ? tags.split(",").map((s) => s.trim()).filter(Boolean)
+      : [];
+  return productLooksLikeBookFilmOrMedia({
+    title: title || "",
+    body_html: descriptionHtml || "",
+    tags: tagList,
+    product_type: "",
+  });
+}
+
 /**
  * Furniture subcategory: LLM often returns LivingRoom when copy mentions dining/coffee tables or “living space”.
  * When title is unambiguous, override LLM so keyword truth wins (we still call LLM for audit; cost already paid).
@@ -3052,6 +3073,12 @@ function furnitureAccessoryCategoryOverrideTitle(title) {
     return "Accessories";
   }
   if (/\bbookcases?\b/.test(t) || /\bbookshelves?\b/.test(t)) return "OfficeDen";
+  if (
+    /\b(coffee table books?|hardcover books?|paperback books?|art books?|illustrated books?)\b/.test(t) ||
+    (/\bbooks?\b/.test(t) && !/\bbookcases?\b/.test(t) && !/\bbookshelves?\b/.test(t))
+  ) {
+    return "Accessories";
+  }
   if (
     !titleIndicatesLightingFurniture(title) &&
     (/\bglass\s+sculptures?\b/.test(t) ||
@@ -3189,6 +3216,7 @@ function furnitureTableIndicatesCategory(title, descriptionHtml, tags, dimension
   const descText = stripHtml(descriptionHtml || "").trim().toLowerCase();
   const tagsStr = Array.isArray(tags) ? tags.join(" ").toLowerCase() : typeof tags === "string" ? tags.toLowerCase() : "";
   const hay = `${name} ${descText} ${tagsStr}`;
+  if (listingLooksLikeBook(title, descriptionHtml, tags)) return null;
   if (!/\btable\b/i.test(hay)) return null;
   if (/\bdining table(s)?\b/i.test(hay) || /\bbreakfast table(s)?\b/i.test(hay)) return "DiningRoom";
   const dimOverride = applyTableDimensionRules(dimensions, name, `${descText} ${tagsStr}`.trim());
@@ -6327,6 +6355,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
         let resolved = forcedCat ?? detectCategoryFurniture(name, description, productTags, dimensions);
         if (furnitureSleepSurfaceIndicatesBedroom(name, description, productTags)) resolved = "Bedroom";
         if (productLooksLikeFurnitureHomeTrunk(product)) resolved = "Accessories";
+        if (productLooksLikeBookFilmOrMedia(product)) resolved = "Accessories";
         if (forcedCat) resolved = forcedCat;
         if (titleIndicatesLightingFurniture(name)) resolved = "Lighting";
         categoryForMetafield = mapFurnitureCategoryForShopify(resolved);
@@ -6408,6 +6437,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
       }
       if (furnitureSleepSurfaceIndicatesBedroom(name, description, productTags)) resolved = "Bedroom";
       if (productLooksLikeFurnitureHomeTrunk(product)) resolved = "Accessories";
+      if (productLooksLikeBookFilmOrMedia(product)) resolved = "Accessories";
       const forcedCat = furnitureAccessoryCategoryOverrideTitle(name);
       if (forcedCat) resolved = forcedCat;
       if (titleIndicatesLightingFurniture(name)) resolved = "Lighting";
