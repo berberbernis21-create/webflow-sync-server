@@ -2828,7 +2828,7 @@ function detectCategoryFurnitureEvidence(title, descriptionHtml, tags, dimension
   const descAndTags = descText ? [descText, tagsStr].filter(Boolean).join(" ").toLowerCase() : "";
   const hasDesc = !!descText;
 
-  if (productTitleLooksLikeWearableJewelry({ title: title || "", product_type: "", tags: tags || [] })) {
+  if (productTitleLooksLikeWearableJewelry({ title: title || "", product_type: "", tags: [] })) {
     return { category: "Accessories", confidence: 0, reason: "wearable_jewelry_title" };
   }
 
@@ -2842,6 +2842,10 @@ function detectCategoryFurnitureEvidence(title, descriptionHtml, tags, dimension
 
   if (listingLooksLikeDecorFigurineOrCarving(title, descriptionHtml, tags)) {
     return { category: "Accessories", confidence: 1, reason: "decor_figurine_guard" };
+  }
+
+  if (listingLooksLikeFurnitureHomeDecorHolder(title, descriptionHtml, tags)) {
+    return { category: "Accessories", confidence: 1, reason: "home_decor_holder_guard" };
   }
 
   const forcedFromTitle = furnitureAccessoryCategoryOverrideTitle(title);
@@ -3088,6 +3092,21 @@ function listingLooksLikeDecorFigurineOrCarving(title, descriptionHtml, tags) {
   );
 }
 
+/** Home tabletop holders (incense, candles, etc.) — Furniture Accessories, not Luxury Jewelry. */
+function listingLooksLikeFurnitureHomeDecorHolder(title, descriptionHtml, tags) {
+  const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const tagsStr = Array.isArray(tags) ? tags.join(" ") : typeof tags === "string" ? tags : "";
+  const hay = `${title || ""} ${stripHtml(descriptionHtml || "")} ${tagsStr}`.toLowerCase().replace(/-/g, " ");
+  if (!hay.trim()) return false;
+  return (
+    /\bincense[\s-]+holders?\b/.test(hay) ||
+    /\bincense[\s-]+burners?\b/.test(hay) ||
+    /\b(incense|candle|soap|potpourri|smudge)[\s-]+holders?\b/.test(hay) ||
+    /\btabletop[\s-]+(accessory|accessories|decor)\b/.test(hay) ||
+    /\bsmudge[\s-]+(bowl|pot)s?\b/.test(hay)
+  );
+}
+
 /**
  * Furniture subcategory: LLM often returns LivingRoom when copy mentions dining/coffee tables or “living space”.
  * When title is unambiguous, override LLM so keyword truth wins (we still call LLM for audit; cost already paid).
@@ -3185,6 +3204,8 @@ function furnitureAccessoryCategoryOverrideTitle(title) {
   // candlestick(s), candle stick(s), candle-stick(s); NFKC typography handled above
   if (/\bcandle[\s-]*sticks?\b/.test(t)) return "Accessories";
   if (/\bcandle-?holders?\b/.test(t) || /\bcandle holders?\b/.test(t)) return "Accessories";
+  if (/\bincense[\s-]+holders?\b/.test(t) || /\bincense[\s-]+burners?\b/.test(t)) return "Accessories";
+  if (/\btabletop[\s-]+(accessory|accessories|decor)\b/.test(t)) return "Accessories";
   if (/\bpedestal bowls?\b/.test(t)) return "Accessories";
   const bowlIsChair = /\bbowl chairs?\b/.test(t);
   if (!bowlIsChair && /\bbowls?\b/.test(t)) return "Accessories";
@@ -4110,6 +4131,7 @@ function getFurnitureCategoryManualOverride(tags, product = null) {
 /** LG tag, Traxia JEWELRY category, or obvious jewelry copy — never route to Furniture & Home. */
 function isLockedLuxuryProduct(product) {
   const tags = getProductTagsArray(product);
+  if (productLooksLikeFurnitureTrap(product)) return false;
   const verticalTag = getEcommerceVerticalOverrideFromTags(tags);
   if (verticalTag?.vertical === "furniture") return false;
   if (verticalTag?.vertical === "luxury") return true;
@@ -6425,6 +6447,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
         if (productLooksLikeFurnitureHomeTrunk(product)) resolved = "Accessories";
         if (productLooksLikeBookFilmOrMedia(product)) resolved = "Accessories";
         if (listingLooksLikeDecorFigurineOrCarving(name, description, productTags)) resolved = "Accessories";
+        if (listingLooksLikeFurnitureHomeDecorHolder(name, description, productTags)) resolved = "Accessories";
         if (forcedCat) resolved = forcedCat;
         if (titleIndicatesLightingFurniture(name)) resolved = "Lighting";
         categoryForMetafield = mapFurnitureCategoryForShopify(resolved);
@@ -6509,6 +6532,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
       if (productLooksLikeFurnitureHomeTrunk(product)) resolved = "Accessories";
       if (productLooksLikeBookFilmOrMedia(product)) resolved = "Accessories";
       if (listingLooksLikeDecorFigurineOrCarving(name, description, productTags)) resolved = "Accessories";
+      if (listingLooksLikeFurnitureHomeDecorHolder(name, description, productTags)) resolved = "Accessories";
       const forcedCat = furnitureAccessoryCategoryOverrideTitle(name);
       if (forcedCat) resolved = forcedCat;
       if (titleIndicatesLightingFurniture(name)) resolved = "Lighting";

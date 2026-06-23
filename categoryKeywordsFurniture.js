@@ -108,6 +108,8 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
     "candlestick", "candlesticks", "candle stick", "candle sticks",
     "candleholder", "candleholders",
     "candle holder", "candle holders", "taper holder", "hurricane candle",
+    "incense holder", "incense holders", "incense burner", "incense burners",
+    "tabletop accessory", "tabletop accessories", "tabletop decor",
     "picture frame", "frames", "clock", "clocks", "mantel", "mantle",
     "throw pillow", "pillow", "pillows", "cushion", "blanket", "throw",
     "curtain", "curtains", "drapery", "draperies", "valance",

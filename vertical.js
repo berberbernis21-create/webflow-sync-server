@@ -27,6 +27,10 @@ const FURNITURE_TRAP_PHRASES = [
   "butler tray", "butlers tray", "butler's tray", "catchall tray", "valet tray",
   "decorative bowl", "decor bowl", "clam shell", "clamshell", "catchall dish", "catch-all dish",
   "shell bowl", "resin shell", "sculptural decor",
+  "incense holder", "incense holders", "incense burner", "incense burners",
+  "candle holder", "candle holders", "candleholder", "candleholders",
+  "tabletop accessory", "tabletop accessories", "tabletop decor",
+  "smudge bowl", "smudge pot", "potpourri bowl",
   "storage trunk", "storage trunks", "blanket trunk", "coffee table trunk", "lift-top trunk",
   "lift top trunk", "faux leather trunk", "decorative trunk", "accent trunk",
   "wood doll", "wooden doll", "vintage doll", "nesting doll", "matryoshka", "dollhouse",
@@ -247,11 +251,22 @@ const DESCRIPTION_PRODUCT_IS_FURNITURE_PHRASES = [
   "holds your jewelry", "organize your jewelry", "keeps your shoes", "store your shoes",
   "entrance bench", "hall tree",
   "leather-wrapped ring", "wrapped ring", "wall decor", "wall-decor",
+  "incense holder", "incense holders", "incense burner", "incense burners",
+  "tabletop accessory", "tabletop accessories", "tabletop decor",
+  "candle holder", "candle holders", "smudge bowl",
 ];
 
 /** Brooch/earring/etc. in title — description staging must not route to Furniture & Home. */
 export function productTitleLooksLikeWearableJewelry(product) {
+  if (productLooksLikeFurnitureTrap(product)) return false;
   const title = (product?.title || "").toLowerCase();
+  if (
+    /\b(incense|candle|soap|potpourri|smudge)\s+holders?\b/.test(title) ||
+    /\bincense\s+burners?\b/.test(title) ||
+    /\btabletop\s+(accessory|accessories|decor)\b/.test(title)
+  ) {
+    return false;
+  }
   const typeAndTags = [product?.product_type || "", getTagsArray(product).join(" ")].join(" ").toLowerCase();
   const nameForCheck = `${title} ${typeAndTags}`;
   return SHOE_JEWELRY_TITLE_WORDS.some((w) => matchWordBoundary(nameForCheck, w));
@@ -281,6 +296,7 @@ const BAG_SUBSTRINGS = [
 
 /** True when title/type/tags clearly indicate a bag, shoe, or jewelry (so we don't send canvas totes to Furniture due to "canvas"). */
 export function hasStrongLuxurySignalsInTitle(product) {
+  if (productLooksLikeFurnitureTrap(product)) return false;
   const title = (product.title || "").toLowerCase();
   const typeAndTags = [product.product_type || "", getTagsArray(product).join(" ")].join(" ").toLowerCase();
   const nameForCheck = `${title} ${typeAndTags}`;
