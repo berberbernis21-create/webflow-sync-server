@@ -100,6 +100,7 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
     "pedestal bowl", "pedestal bowls", "fruit bowl", "fruit bowls", "decorative bowl", "decorative bowls",
     "compote", "compotes", "center bowl",
     "jar", "jars", "planter", "planters",
+    "canister", "canisters", "glass canister", "pressed glass", "cookie jar", "candy jar", "storage jar",
     "decanter", "decanters", "wine decanter", "wine decanters", "carafe", "carafes",
     "box", "boxes", "scroll box", "scroll boxes", "document box", "document boxes",
     "trinket box", "storage box", "decorative box", "keepsake box", "jewelry box", "jewellery box",

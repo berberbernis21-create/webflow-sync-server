@@ -23,6 +23,7 @@ import {
   productLooksLikeFootwearLuxury,
   productLooksLikeFurnitureCaseGoods,
   productLooksLikeFurnitureHomeBox,
+  productLooksLikeFurnitureHomeGlassware,
   productLooksLikeLightingFixture,
   mirroredCaseGoodsVersusBagWearableConflict,
   verticalHardSignalAmbiguity,
@@ -2460,7 +2461,7 @@ async function removeConditionOptionIfFurniture(product) {
    HASH FOR CHANGE DETECTION
    Includes dimensions (variant + metafields + tag lines) so dimension changes still invalidate the fast path.
    body_html is normalized (collapse whitespace) so Shopify formatting drift doesn't cause false "changed".
-   taxonomyVersion: bump this when category/vertical logic changes so all items resync once (17 = decor figurines/Hummel → Accessories not Bedroom).
+   taxonomyVersion: bump this when category/vertical logic changes so all items resync once (18 = glass canisters/jars → Furniture Accessories not Luxury).
    Image URLs strip query strings (CDN signature / width params often rotate without a real asset change).
    Price and dimensions are normalized so "199.0" vs "199.00" or float noise doesn't churn the cache.
 ====================================================== */
@@ -2540,7 +2541,7 @@ function shopifyHash(product) {
     images: imagesStable,
     slug: product.handle,
     dimensions,
-    taxonomyVersion: 17,
+    taxonomyVersion: 18,
     jewelryReclassVersion,
   };
 }
@@ -2553,7 +2554,7 @@ function contentHashForLLM(product) {
     product_type: (product.product_type || "").trim(),
     tagsKey: tagsFingerprintForHash(product),
     body_html: normalizeHtmlForHash(product.body_html),
-    taxonomyVersion: 17,
+    taxonomyVersion: 18,
     jewelryReclassVersion,
   };
 }
@@ -2848,6 +2849,10 @@ function detectCategoryFurnitureEvidence(title, descriptionHtml, tags, dimension
     return { category: "Accessories", confidence: 1, reason: "home_decor_holder_guard" };
   }
 
+  if (listingLooksLikeFurnitureHomeDecorGlassware(title, descriptionHtml, tags)) {
+    return { category: "Accessories", confidence: 1, reason: "home_decor_glassware_guard" };
+  }
+
   const forcedFromTitle = furnitureAccessoryCategoryOverrideTitle(title);
   if (forcedFromTitle) {
     return { category: forcedFromTitle, confidence: 1, reason: "title_keyword_override" };
@@ -2976,6 +2981,16 @@ function detectCategoryFurnitureEvidence(title, descriptionHtml, tags, dimension
       category: "Accessories",
       confidence: 1,
       reason: "decor_figurine_keyword_override",
+      bestScore,
+      secondBest,
+    };
+  }
+
+  if (listingLooksLikeFurnitureHomeDecorGlassware(title, descriptionHtml, tags)) {
+    return {
+      category: "Accessories",
+      confidence: 1,
+      reason: "home_decor_glassware_keyword_override",
       bestScore,
       secondBest,
     };
@@ -3112,6 +3127,14 @@ function listingLooksLikeDecorFigurineOrCarving(title, descriptionHtml, tags) {
   );
 }
 
+function productLooksLikeFurnitureHomeDecorVessel(product) {
+  if (!product) return false;
+  return (
+    productLooksLikeFurnitureHomeBox(product) ||
+    productLooksLikeFurnitureHomeGlassware(product)
+  );
+}
+
 function applyFurnitureSubcategoryPostOverrides({
   name,
   description,
@@ -3123,6 +3146,7 @@ function applyFurnitureSubcategoryPostOverrides({
   if (
     !listingLooksLikeDecorFigurineOrCarving(name, description, productTags) &&
     !listingLooksLikeFurnitureHomeDecorHolder(name, description, productTags) &&
+    !listingLooksLikeFurnitureHomeDecorGlassware(name, description, productTags) &&
     furnitureSleepSurfaceIndicatesBedroom(name, description, productTags)
   ) {
     out = "Bedroom";
@@ -3130,6 +3154,7 @@ function applyFurnitureSubcategoryPostOverrides({
   if (
     !listingLooksLikeDecorFigurineOrCarving(name, description, productTags) &&
     !listingLooksLikeFurnitureHomeDecorHolder(name, description, productTags) &&
+    !listingLooksLikeFurnitureHomeDecorGlassware(name, description, productTags) &&
     furnitureBedroomIndicatesBedroom(name, description, productTags)
   ) {
     out = "Bedroom";
@@ -3141,7 +3166,8 @@ function applyFurnitureSubcategoryPostOverrides({
   if (titleIndicatesLightingFurniture(name)) out = "Lighting";
   if (
     listingLooksLikeDecorFigurineOrCarving(name, description, productTags) ||
-    listingLooksLikeFurnitureHomeDecorHolder(name, description, productTags)
+    listingLooksLikeFurnitureHomeDecorHolder(name, description, productTags) ||
+    listingLooksLikeFurnitureHomeDecorGlassware(name, description, productTags)
   ) {
     out = "Accessories";
   }
@@ -3161,6 +3187,21 @@ function listingLooksLikeFurnitureHomeDecorHolder(title, descriptionHtml, tags) 
     /\btabletop[\s-]+(accessory|accessories|decor)\b/.test(hay) ||
     /\bsmudge[\s-]+(bowl|pot)s?\b/.test(hay)
   );
+}
+
+/** Glass canisters, cookie jars, and lidded tabletop vessels — Furniture Accessories. */
+function listingLooksLikeFurnitureHomeDecorGlassware(title, descriptionHtml, tags) {
+  const tagList = Array.isArray(tags)
+    ? tags
+    : typeof tags === "string"
+      ? tags.split(",").map((s) => s.trim()).filter(Boolean)
+      : [];
+  return productLooksLikeFurnitureHomeGlassware({
+    title: title || "",
+    body_html: descriptionHtml || "",
+    tags: tagList,
+    product_type: "",
+  });
 }
 
 /**
@@ -3269,6 +3310,10 @@ function furnitureAccessoryCategoryOverrideTitle(title) {
   if (/\bcandle-?holders?\b/.test(t) || /\bcandle holders?\b/.test(t)) return "Accessories";
   if (/\bincense[\s-]+holders?\b/.test(t) || /\bincense[\s-]+burners?\b/.test(t)) return "Accessories";
   if (/\btabletop[\s-]+(accessory|accessories|decor)\b/.test(t)) return "Accessories";
+  if (/\bcanisters?\b/.test(t) && /\b(glass|lid|pressed)\b/.test(t)) return "Accessories";
+  if (/\b(glass\s+)?jars?\b/.test(t) && /\b(lid|storage|cookie|candy|decorative|pressed)\b/.test(t)) {
+    return "Accessories";
+  }
   if (/\bpedestal bowls?\b/.test(t)) return "Accessories";
   const bowlIsChair = /\bbowl chairs?\b/.test(t);
   if (!bowlIsChair && /\bbowls?\b/.test(t)) return "Accessories";
@@ -3516,6 +3561,9 @@ function resolveVerticalFromEvidence(product, llmDetectedVertical) {
   }
   if (productLooksLikeFurnitureHomeBox(product)) {
     return { vertical: "furniture", reason: "evidence_home_decor_box" };
+  }
+  if (productLooksLikeFurnitureHomeGlassware(product)) {
+    return { vertical: "furniture", reason: "evidence_home_decor_glassware" };
   }
   if (productLooksLikeFurnitureCaseGoods(product) && !mirroredCaseGoodsVersusBagWearableConflict(product)) {
     return { vertical: "furniture", reason: "evidence_case_goods" };
@@ -3844,6 +3892,7 @@ function isJewelryProduct(title, descriptionHtml, product = null) {
   const pseudo = { title: title || "", body_html: descriptionHtml || "", product_type: "", tags: "" };
   if (productLooksLikeBookFilmOrMedia(pseudo)) return false;
   if (productLooksLikeFurnitureHomeBox(pseudo)) return false;
+  if (productLooksLikeFurnitureHomeGlassware(pseudo)) return false;
   if (productLooksLikeLightingFixture(pseudo)) return false;
   if (isLikelyJewelryBandRing(text)) return true;
   return JEWELRY_KEYWORDS.some((kw) => matchWordBoundary(text, kw));
@@ -3895,6 +3944,7 @@ function detectLuxuryCategoryEvidence(title, descriptionHtml, product = null) {
   const blockedMedia =
     productLooksLikeBookFilmOrMedia(pseudoForMedia) ||
     productLooksLikeFurnitureHomeBox(pseudoForMedia) ||
+    productLooksLikeFurnitureHomeGlassware(pseudoForMedia) ||
     productLooksLikeLightingFixture(pseudoForMedia);
 
   if (
@@ -4203,6 +4253,7 @@ function getFurnitureCategoryManualOverride(tags, product = null) {
 function isLockedLuxuryProduct(product) {
   const tags = getProductTagsArray(product);
   if (productLooksLikeFurnitureTrap(product)) return false;
+  if (productLooksLikeFurnitureHomeGlassware(product)) return false;
   const verticalTag = getEcommerceVerticalOverrideFromTags(tags);
   if (verticalTag?.vertical === "furniture") return false;
   if (verticalTag?.vertical === "luxury") return true;
@@ -6070,7 +6121,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
     if (
       !manualEcommerceLock &&
       !productLooksLikeBookFilmOrMedia(product) &&
-      !productLooksLikeFurnitureHomeBox(product) &&
+      !productLooksLikeFurnitureHomeDecorVessel(product) &&
       !productLooksLikeLightingFixture(product) &&
       !productLooksLikeFurnitureTrap(product) &&
       !productLooksLikeHomeDecorTray(product) &&
@@ -6217,7 +6268,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
     if (
       !manualEcommerceLock &&
       !productLooksLikeBookFilmOrMedia(product) &&
-      !productLooksLikeFurnitureHomeBox(product) &&
+      !productLooksLikeFurnitureHomeDecorVessel(product) &&
       !productLooksLikeLightingFixture(product) &&
       !productLooksLikeFurnitureTrap(product) &&
       !productLooksLikeHomeDecorTray(product) &&
@@ -6252,6 +6303,16 @@ async function syncSingleProductCore(product, cache, options = {}) {
     vertical = "furniture";
     detectedVertical = "furniture";
   }
+  if (!ecommerceVerticalTag && productLooksLikeFurnitureHomeGlassware(product) && vertical !== "furniture") {
+    webflowLog("info", {
+      event: "vertical.override_furniture_glassware_final",
+      shopifyProductId,
+      productTitle: product.title || "",
+      previousVertical: vertical,
+    });
+    vertical = "furniture";
+    detectedVertical = "furniture";
+  }
   if (
     !ecommerceVerticalTag &&
     (productLooksLikeHomeClock(product) ||
@@ -6277,7 +6338,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
     isJewelryProduct(product?.title || "", product?.body_html || "", product) &&
     !productLooksLikeFurnitureTrap(product) &&
     !productLooksLikeHomeDecorTray(product) &&
-    !productLooksLikeFurnitureHomeBox(product) &&
+    !productLooksLikeFurnitureHomeDecorVessel(product) &&
     !productLooksLikeLightingFixture(product) &&
     !productLooksLikeBookFilmOrMedia(product)
   ) {

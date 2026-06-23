@@ -451,6 +451,45 @@ const FURNITURE_HOME_BOX_SUBSTRINGS = [
   "music box",
 ];
 
+/** Tabletop glass jars, canisters, and lidded storage vessels — home decor, not Luxury/Jewelry. */
+const FURNITURE_HOME_GLASSWARE_SUBSTRINGS = [
+  "glass canister",
+  "canister w/ lid",
+  "canister w/lid",
+  "canister with lid",
+  "pressed glass",
+  "cookie jar",
+  "candy jar",
+  "storage jar",
+  "glass jar",
+  "apothecary jar",
+  "decorative jar",
+  "decorative storage jar",
+  "vintage glass canister",
+  "crystal look glass",
+];
+
+/**
+ * @param {object} product - Shopify product
+ * @returns {boolean}
+ */
+export function productLooksLikeFurnitureHomeGlassware(product) {
+  const { title, productType, tagsStr, description } = getProductText(product);
+  const blob = normalizeForVerticalMatch(`${title} ${productType} ${tagsStr} ${description}`)
+    .toLowerCase()
+    .replace(/-/g, " ");
+  if (!blob.trim()) return false;
+  for (const s of FURNITURE_HOME_GLASSWARE_SUBSTRINGS) {
+    if (s && blob.includes(s)) return true;
+  }
+  if (/\bcanisters?\b/.test(blob) && /\b(glass|lid|pressed)\b/.test(blob)) return true;
+  if (/\b(glass\s+)?jars?\b/.test(blob) && /\b(lid|storage|cookie|candy|decorative|pressed)\b/.test(blob)) {
+    return true;
+  }
+  if (/\bpressed\s+glass\b/.test(blob) && /\b(canisters?|jars?|lid)\b/.test(blob)) return true;
+  return false;
+}
+
 /**
  * @param {object} product - Shopify product
  * @returns {boolean}
@@ -577,6 +616,7 @@ const VISION_FALLBACK_LEXICAL = [
 function shouldRunVisionVerticalFallback(product, textResult) {
   if (productLooksLikeBookFilmOrMedia(product)) return false;
   if (productLooksLikeFurnitureHomeBox(product)) return false;
+  if (productLooksLikeFurnitureHomeGlassware(product)) return false;
   if (productLooksLikeFurnitureCaseGoods(product)) return false;
   if (productLooksLikeLightingFixture(product)) return false;
   if (textResult?.category !== "HOME_INTERIOR") return false;
@@ -911,6 +951,20 @@ export async function classifyWithLLM(product, logPayload = {}, logFn = null) {
     logPayload.override = "furniture_home_box";
     if (logFn) logFn("info", { event: "llm_vertical.furniture_home_box", category: "HOME_INTERIOR" });
     return boxResult;
+  }
+
+  if (productLooksLikeFurnitureHomeGlassware(product)) {
+    const glassResult = {
+      category: "HOME_INTERIOR",
+      confidence: 1,
+      reasoning: "Glass canister, jar, or lidded tabletop vessel; Furniture & Home decor, not Luxury/Jewelry.",
+    };
+    logPayload.raw = null;
+    logPayload.parsed = null;
+    logPayload.final = glassResult;
+    logPayload.override = "furniture_home_glassware";
+    if (logFn) logFn("info", { event: "llm_vertical.furniture_home_glassware", category: "HOME_INTERIOR" });
+    return glassResult;
   }
 
   if (productLooksLikeFurnitureCaseGoods(product)) {
