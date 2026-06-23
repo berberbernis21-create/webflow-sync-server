@@ -2765,6 +2765,16 @@ function getManualEcommerceVerticalLock(product) {
       source: "ecommerce_furniture_category_letter",
     };
   }
+  if (productHasFurnitureAccessoriesCategoryTag(product)) {
+    const verticalTag = getEcommerceVerticalOverrideFromTags(tags);
+    if (verticalTag?.vertical !== "luxury" && !productHasJewelryCategoryTag(product)) {
+      return {
+        vertical: "furniture",
+        tag: "ACCESSORIES",
+        source: "traxia_category_accessories",
+      };
+    }
+  }
   return null;
 }
 
@@ -2828,6 +2838,10 @@ function detectCategoryFurnitureEvidence(title, descriptionHtml, tags, dimension
 
   if (listingLooksLikeBook(title, descriptionHtml, tags)) {
     return { category: "Accessories", confidence: 1, reason: "book_media_guard" };
+  }
+
+  if (listingLooksLikeDecorFigurineOrCarving(title, descriptionHtml, tags)) {
+    return { category: "Accessories", confidence: 1, reason: "decor_figurine_guard" };
   }
 
   const forcedFromTitle = furnitureAccessoryCategoryOverrideTitle(title);
@@ -3055,6 +3069,25 @@ function listingLooksLikeBook(title, descriptionHtml, tags) {
   });
 }
 
+/** Small decor figurines / carved animals — Accessories, not Art / Mirrors. */
+function listingLooksLikeDecorFigurineOrCarving(title, descriptionHtml, tags) {
+  const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const tagsStr = Array.isArray(tags) ? tags.join(" ") : typeof tags === "string" ? tags : "";
+  const hay = `${title || ""} ${stripHtml(descriptionHtml || "")} ${tagsStr}`.toLowerCase();
+  if (!hay.trim()) return false;
+  return (
+    /\bfigurines?\b/.test(hay) ||
+    /\bcarved[\s-]+animals?\b/.test(hay) ||
+    /\bcarved[\s-]+wood\b/.test(hay) ||
+    /\bwood[\s-]+figurines?\b/.test(hay) ||
+    /\bnative[\s-]+american\b/.test(hay) ||
+    /\bdecor(ative)?[\s-]+(figurines?|sculptures?|carvings?)\b/.test(hay) ||
+    /\bcarved[\s-]+wood[\s-]+sculptures?\b/.test(hay) ||
+    /\bcarved[\s-]+animal[\s-]+figurines?\b/.test(hay) ||
+    /\bstatuettes?\b/.test(hay)
+  );
+}
+
 /**
  * Furniture subcategory: LLM often returns LivingRoom when copy mentions dining/coffee tables or “living space”.
  * When title is unambiguous, override LLM so keyword truth wins (we still call LLM for audit; cost already paid).
@@ -3073,6 +3106,14 @@ function furnitureAccessoryCategoryOverrideTitle(title) {
     return "Accessories";
   }
   if (/\bbookcases?\b/.test(t) || /\bbookshelves?\b/.test(t)) return "OfficeDen";
+  if (
+    /\bfigurines?\b/.test(t) ||
+    /\bcarved\s+animals?\b/.test(t) ||
+    /\bwood\s+figurines?\b/.test(t) ||
+    /\bnative\s+american\s+carved\b/.test(t)
+  ) {
+    return "Accessories";
+  }
   if (
     /\b(coffee table books?|hardcover books?|paperback books?|art books?|illustrated books?)\b/.test(t) ||
     (/\bbooks?\b/.test(t) && !/\bbookcases?\b/.test(t) && !/\bbookshelves?\b/.test(t))
@@ -3347,6 +3388,12 @@ function resolveVerticalFromEvidence(product, llmDetectedVertical) {
   }
   if (productHasJewelryCategoryTag(product)) {
     return { vertical: "luxury", reason: "traxia_category_jewelry" };
+  }
+  if (productHasFurnitureAccessoriesCategoryTag(product)) {
+    const verticalTag = getEcommerceVerticalOverrideFromTags(tags);
+    if (!verticalTag || verticalTag.vertical === "furniture") {
+      return { vertical: "furniture", reason: "traxia_category_accessories" };
+    }
   }
   if (isLockedLuxuryProduct(product)) {
     return { vertical: "luxury", reason: "locked_luxury_jewelry" };
@@ -4038,6 +4085,26 @@ function getTraxiaCategoryFromTags(tags) {
 function productHasJewelryCategoryTag(product) {
   const cat = getTraxiaCategoryFromTags(getProductTagsArray(product));
   return Boolean(cat && /\bjewel/i.test(cat));
+}
+
+/** Traxia "Category: ACCESSORIES" — Furniture & Home decor (not Luxury), unless LG or JEWELRY. */
+function productHasFurnitureAccessoriesCategoryTag(product) {
+  const cat = getTraxiaCategoryFromTags(getProductTagsArray(product));
+  return Boolean(cat && /^\s*accessories\s*$/i.test(cat));
+}
+
+function getFurnitureCategoryManualOverride(tags, product = null) {
+  const fromLetter = getFurnitureCategoryOverrideFromEcommerceTags(tags);
+  if (fromLetter) {
+    return { category: fromLetter.category, letter: fromLetter.letter, source: "ecommerce_letter_tag" };
+  }
+  if (product && productHasFurnitureAccessoriesCategoryTag(product)) {
+    const verticalTag = getEcommerceVerticalOverrideFromTags(tags);
+    if (verticalTag?.vertical === "luxury") return null;
+    if (productHasJewelryCategoryTag(product)) return null;
+    return { category: "Accessories", letter: null, source: "traxia_category_accessories" };
+  }
+  return null;
 }
 
 /** LG tag, Traxia JEWELRY category, or obvious jewelry copy — never route to Furniture & Home. */
@@ -6321,8 +6388,8 @@ async function syncSingleProductCore(product, cache, options = {}) {
   let dimensionsStatus = null;
   const dimensions = getDimensionsFromProduct(product);
   const productTags = getProductTagsArray(product);
-  const furnitureEcommerceOverride = vertical === "furniture"
-    ? getFurnitureCategoryOverrideFromEcommerceTags(productTags)
+  const furnitureCategoryManualOverride = vertical === "furniture"
+    ? getFurnitureCategoryManualOverride(productTags, product)
     : null;
   const luxuryEcommerceOverride = vertical === "luxury"
     ? getLuxuryCategoryOverrideFromEcommerceTags(productTags)
@@ -6342,12 +6409,13 @@ async function syncSingleProductCore(product, cache, options = {}) {
           shopifyProductId,
           message: "Wristwatch must not use furniture category; forcing Accessories",
         });
-      } else if (furnitureEcommerceOverride) {
-        categoryForMetafield = furnitureEcommerceOverride.category;
+      } else if (furnitureCategoryManualOverride) {
+        categoryForMetafield = furnitureCategoryManualOverride.category;
         webflowLog("info", {
           event: "furniture_category.override_tag",
           shopifyProductId,
-          letter: furnitureEcommerceOverride.letter,
+          letter: furnitureCategoryManualOverride.letter,
+          source: furnitureCategoryManualOverride.source,
           resolved: categoryForMetafield,
         });
       } else {
@@ -6356,6 +6424,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
         if (furnitureSleepSurfaceIndicatesBedroom(name, description, productTags)) resolved = "Bedroom";
         if (productLooksLikeFurnitureHomeTrunk(product)) resolved = "Accessories";
         if (productLooksLikeBookFilmOrMedia(product)) resolved = "Accessories";
+        if (listingLooksLikeDecorFigurineOrCarving(name, description, productTags)) resolved = "Accessories";
         if (forcedCat) resolved = forcedCat;
         if (titleIndicatesLightingFurniture(name)) resolved = "Lighting";
         categoryForMetafield = mapFurnitureCategoryForShopify(resolved);
@@ -6396,12 +6465,13 @@ async function syncSingleProductCore(product, cache, options = {}) {
         shopifyProductId,
         message: "Wristwatch must not use furniture category; forcing Accessories",
       });
-    } else if (furnitureEcommerceOverride) {
-      categoryForMetafield = furnitureEcommerceOverride.category;
+    } else if (furnitureCategoryManualOverride) {
+      categoryForMetafield = furnitureCategoryManualOverride.category;
       webflowLog("info", {
         event: "furniture_category.override_tag",
         shopifyProductId,
-        letter: furnitureEcommerceOverride.letter,
+        letter: furnitureCategoryManualOverride.letter,
+        source: furnitureCategoryManualOverride.source,
         resolved: categoryForMetafield,
       });
     } else {
@@ -6438,6 +6508,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
       if (furnitureSleepSurfaceIndicatesBedroom(name, description, productTags)) resolved = "Bedroom";
       if (productLooksLikeFurnitureHomeTrunk(product)) resolved = "Accessories";
       if (productLooksLikeBookFilmOrMedia(product)) resolved = "Accessories";
+      if (listingLooksLikeDecorFigurineOrCarving(name, description, productTags)) resolved = "Accessories";
       const forcedCat = furnitureAccessoryCategoryOverrideTitle(name);
       if (forcedCat) resolved = forcedCat;
       if (titleIndicatesLightingFurniture(name)) resolved = "Lighting";
