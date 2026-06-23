@@ -101,6 +101,8 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
     "compote", "compotes", "center bowl",
     "jar", "jars", "planter", "planters",
     "canister", "canisters", "glass canister", "pressed glass", "cookie jar", "candy jar", "storage jar",
+    "berry dish", "berry dishes", "trinket dish", "trinket dishes", "catchall dish", "catchall dishes",
+    "glass dish", "glass dishes", "frosted glass", "vintage glassware",
     "decanter", "decanters", "wine decanter", "wine decanters", "carafe", "carafes",
     "tureen", "tureens", "soup tureen", "serving tureen", "ironstone tureen", "lidded tureen",
     "gravy boat", "gravy boats", "ladle",

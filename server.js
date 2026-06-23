@@ -2461,7 +2461,7 @@ async function removeConditionOptionIfFurniture(product) {
    HASH FOR CHANGE DETECTION
    Includes dimensions (variant + metafields + tag lines) so dimension changes still invalidate the fast path.
    body_html is normalized (collapse whitespace) so Shopify formatting drift doesn't cause false "changed".
-   taxonomyVersion: bump this when category/vertical logic changes so all items resync once (20 = tureens/serveware → Furniture Accessories not Living/Dining Room).
+   taxonomyVersion: bump this when category/vertical logic changes so all items resync once (21 = berry/trinket glass dishes → Furniture Accessories not Living Room).
    Image URLs strip query strings (CDN signature / width params often rotate without a real asset change).
    Price and dimensions are normalized so "199.0" vs "199.00" or float noise doesn't churn the cache.
 ====================================================== */
@@ -2541,7 +2541,7 @@ function shopifyHash(product) {
     images: imagesStable,
     slug: product.handle,
     dimensions,
-    taxonomyVersion: 20,
+    taxonomyVersion: 21,
     jewelryReclassVersion,
   };
 }
@@ -2554,7 +2554,7 @@ function contentHashForLLM(product) {
     product_type: (product.product_type || "").trim(),
     tagsKey: tagsFingerprintForHash(product),
     body_html: normalizeHtmlForHash(product.body_html),
-    taxonomyVersion: 20,
+    taxonomyVersion: 21,
     jewelryReclassVersion,
   };
 }
@@ -3364,6 +3364,10 @@ function furnitureAccessoryCategoryOverrideTitle(title) {
   if (/\btabletop[\s-]+(accessory|accessories|decor)\b/.test(t)) return "Accessories";
   if (/\bcanisters?\b/.test(t) && /\b(glass|lid|pressed)\b/.test(t)) return "Accessories";
   if (/\b(glass\s+)?jars?\b/.test(t) && /\b(lid|storage|cookie|candy|decorative|pressed)\b/.test(t)) {
+    return "Accessories";
+  }
+  if (/\b(berry|trinket|catch[\s-]?all|compote)\s+dishes?\b/.test(t)) return "Accessories";
+  if (/\bglass[\s-]+dishes?\b/.test(t) && /\b(frosted|pressed|vintage|decorative|berry|trinket|scalloped)\b/.test(t)) {
     return "Accessories";
   }
   if (/\bpedestal bowls?\b/.test(t)) return "Accessories";

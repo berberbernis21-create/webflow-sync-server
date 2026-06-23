@@ -31,6 +31,8 @@ const FURNITURE_TRAP_PHRASES = [
   "candle holder", "candle holders", "candleholder", "candleholders",
   "tabletop accessory", "tabletop accessories", "tabletop decor",
   "glass canister", "glass canisters", "pressed glass", "cookie jar", "candy jar", "storage jar",
+  "berry dish", "berry dishes", "trinket dish", "trinket dishes", "catchall dish", "catchall dishes",
+  "glass dish", "glass dishes", "compote", "compotes", "frosted glass", "vintage glassware",
   "smudge bowl", "smudge pot", "potpourri bowl",
   "storage trunk", "storage trunks", "blanket trunk", "coffee table trunk", "lift-top trunk",
   "lift top trunk", "faux leather trunk", "decorative trunk", "accent trunk",

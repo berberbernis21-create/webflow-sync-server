@@ -467,6 +467,16 @@ const FURNITURE_HOME_GLASSWARE_SUBSTRINGS = [
   "decorative storage jar",
   "vintage glass canister",
   "crystal look glass",
+  "berry dish",
+  "trinket dish",
+  "catchall dish",
+  "catch all dish",
+  "catch-all dish",
+  "glass dish",
+  "frosted glass",
+  "vintage glassware",
+  "pressed glass dish",
+  "compote dish",
 ];
 
 /**
@@ -486,7 +496,14 @@ export function productLooksLikeFurnitureHomeGlassware(product) {
   if (/\b(glass\s+)?jars?\b/.test(blob) && /\b(lid|storage|cookie|candy|decorative|pressed)\b/.test(blob)) {
     return true;
   }
-  if (/\bpressed\s+glass\b/.test(blob) && /\b(canisters?|jars?|lid)\b/.test(blob)) return true;
+  if (/\bpressed\s+glass\b/.test(blob) && /\b(canisters?|jars?|lid|dishes?)\b/.test(blob)) return true;
+  if (/\b(berry|trinket|catch[\s-]?all|compote)\s+dishes?\b/.test(blob)) return true;
+  if (/\bglass[\s-]+dishes?\b/.test(blob) && /\b(frosted|pressed|vintage|decorative|berry|trinket|scalloped|amber)\b/.test(blob)) {
+    return true;
+  }
+  if (/\b(decorative|accent|serving)\s+dishes?\b/.test(blob) && /\b(glass|frosted|pressed|vintage)\b/.test(blob)) {
+    return true;
+  }
   return false;
 }
 
