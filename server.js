@@ -3073,14 +3073,16 @@ function listingLooksLikeBook(title, descriptionHtml, tags) {
   });
 }
 
-/** Small decor figurines / carved animals — Accessories, not Art / Mirrors. */
+/** Small decor figurines / carved animals — Accessories, not Art / Mirrors or Bedroom. */
 function listingLooksLikeDecorFigurineOrCarving(title, descriptionHtml, tags) {
   const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
   const tagsStr = Array.isArray(tags) ? tags.join(" ") : typeof tags === "string" ? tags : "";
-  const hay = `${title || ""} ${stripHtml(descriptionHtml || "")} ${tagsStr}`.toLowerCase();
+  const hay = `${title || ""} ${stripHtml(descriptionHtml || "")} ${tagsStr}`.toLowerCase().replace(/-/g, " ");
   if (!hay.trim()) return false;
   return (
     /\bfigurines?\b/.test(hay) ||
+    /\bstatues?\b/.test(hay) ||
+    /\bstatuettes?\b/.test(hay) ||
     /\bcarved[\s-]+animals?\b/.test(hay) ||
     /\bcarved[\s-]+wood\b/.test(hay) ||
     /\bwood[\s-]+figurines?\b/.test(hay) ||
@@ -3088,7 +3090,12 @@ function listingLooksLikeDecorFigurineOrCarving(title, descriptionHtml, tags) {
     /\bdecor(ative)?[\s-]+(figurines?|sculptures?|carvings?)\b/.test(hay) ||
     /\bcarved[\s-]+wood[\s-]+sculptures?\b/.test(hay) ||
     /\bcarved[\s-]+animal[\s-]+figurines?\b/.test(hay) ||
-    /\bstatuettes?\b/.test(hay)
+    /\bbrass[\s-]+swans?\b/.test(hay) ||
+    /\bswan[\s-]+(figurines?|statues?)\b/.test(hay) ||
+    (/\bswans?\b/.test(hay) &&
+      /\b(brass|bronze|solid brass|figurines?|statues?|pair|pairs|decor|mantel|paperweight)\b/.test(hay)) ||
+    /\b(brass|bronze|ceramic|resin)[\s-]+(figurines?|statues?|animals?)\b/.test(hay) ||
+    /\bpaperweights?\b/.test(hay)
   );
 }
 
@@ -3129,7 +3136,10 @@ function furnitureAccessoryCategoryOverrideTitle(title) {
     /\bfigurines?\b/.test(t) ||
     /\bcarved\s+animals?\b/.test(t) ||
     /\bwood\s+figurines?\b/.test(t) ||
-    /\bnative\s+american\s+carved\b/.test(t)
+    /\bnative\s+american\s+carved\b/.test(t) ||
+    /\bbrass\s+swans?\b/.test(t) ||
+    /\bswan\s+(figurines?|statues?)\b/.test(t) ||
+    (/\bswans?\b/.test(t) && /\b(brass|bronze|pair|pairs|figurines?|statues?)\b/.test(t))
   ) {
     return "Accessories";
   }
@@ -3241,7 +3251,8 @@ function furnitureSleepSurfaceIndicatesBedroom(title, descriptionHtml, tags) {
 }
 
 function furnitureBedroomIndicatesBedroom(title, descriptionHtml, tags) {
-  if (productTitleLooksLikeWearableJewelry({ title: title || "", product_type: "", tags: tags || [] })) return false;
+  if (productTitleLooksLikeWearableJewelry({ title: title || "", product_type: "", tags: [] })) return false;
+  if (listingLooksLikeDecorFigurineOrCarving(title, descriptionHtml, tags)) return false;
   const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
   const name = ((title || "").trim()).toLowerCase();
   const descText = stripHtml(descriptionHtml || "").trim().toLowerCase();
@@ -3253,6 +3264,10 @@ function furnitureBedroomIndicatesBedroom(title, descriptionHtml, tags) {
   if (/\bbunk beds?\b/i.test(hay)) return true;
   if (/\barmoires?\b/i.test(hay)) return true;
   if (/\bwardrobes?\b/i.test(hay)) return true;
+  // Staging copy ("nightstand accent", "on a nightstand") — not bedroom case goods.
+  if (/\bnightstands?\s+(accent|accents|decor|vignette)s?\b/i.test(hay)) return false;
+  if (/\b(on|for|beside|atop)\s+(a\s+|the\s+|your\s+)?nightstands?\b/i.test(hay)) return false;
+  if (/\bbedroom\s+nightstand\s+(accent|accents|decor)\b/i.test(hay)) return false;
   if (/\bnightstands?\b/i.test(hay)) return true;
   if (/\bdressers?\b/i.test(hay)) return true;
   return false;
@@ -6443,7 +6458,11 @@ async function syncSingleProductCore(product, cache, options = {}) {
       } else {
         const forcedCat = furnitureAccessoryCategoryOverrideTitle(name);
         let resolved = forcedCat ?? detectCategoryFurniture(name, description, productTags, dimensions);
-        if (furnitureSleepSurfaceIndicatesBedroom(name, description, productTags)) resolved = "Bedroom";
+        if (!listingLooksLikeDecorFigurineOrCarving(name, description, productTags) &&
+          !listingLooksLikeFurnitureHomeDecorHolder(name, description, productTags) &&
+          furnitureSleepSurfaceIndicatesBedroom(name, description, productTags)) {
+          resolved = "Bedroom";
+        }
         if (productLooksLikeFurnitureHomeTrunk(product)) resolved = "Accessories";
         if (productLooksLikeBookFilmOrMedia(product)) resolved = "Accessories";
         if (listingLooksLikeDecorFigurineOrCarving(name, description, productTags)) resolved = "Accessories";
@@ -6528,7 +6547,11 @@ async function syncSingleProductCore(product, cache, options = {}) {
           resolved,
         });
       }
-      if (furnitureSleepSurfaceIndicatesBedroom(name, description, productTags)) resolved = "Bedroom";
+      if (!listingLooksLikeDecorFigurineOrCarving(name, description, productTags) &&
+        !listingLooksLikeFurnitureHomeDecorHolder(name, description, productTags) &&
+        furnitureSleepSurfaceIndicatesBedroom(name, description, productTags)) {
+        resolved = "Bedroom";
+      }
       if (productLooksLikeFurnitureHomeTrunk(product)) resolved = "Accessories";
       if (productLooksLikeBookFilmOrMedia(product)) resolved = "Accessories";
       if (listingLooksLikeDecorFigurineOrCarving(name, description, productTags)) resolved = "Accessories";

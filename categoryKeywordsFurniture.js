@@ -119,6 +119,7 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
     "faux leather trunk", "lift-top trunk", "coffee table trunk",
     "trinket", "objet", "ornament", "decorative", "accent piece",
     "figurine", "figurines", "statuette", "statuettes", "carved animal", "carved animals",
+    "swan", "swans", "brass swan", "brass swans", "statue", "statues", "paperweight", "paperweights",
     "encyclopedia", "encyclopedias", "coffee table book", "coffee table books",
     "hardcover book", "hardcover books", "art book", "art books", "illustrated book", "tome",
     "book", "books",
