@@ -2460,7 +2460,7 @@ async function removeConditionOptionIfFurniture(product) {
    HASH FOR CHANGE DETECTION
    Includes dimensions (variant + metafields + tag lines) so dimension changes still invalidate the fast path.
    body_html is normalized (collapse whitespace) so Shopify formatting drift doesn't cause false "changed".
-   taxonomyVersion: bump this when category/vertical logic changes so all items resync once (15 = home decor trunks vs designer luggage).
+   taxonomyVersion: bump this when category/vertical logic changes so all items resync once (17 = decor figurines/Hummel → Accessories not Bedroom).
    Image URLs strip query strings (CDN signature / width params often rotate without a real asset change).
    Price and dimensions are normalized so "199.0" vs "199.00" or float noise doesn't churn the cache.
 ====================================================== */
@@ -2540,7 +2540,7 @@ function shopifyHash(product) {
     images: imagesStable,
     slug: product.handle,
     dimensions,
-    taxonomyVersion: 16,
+    taxonomyVersion: 17,
     jewelryReclassVersion,
   };
 }
@@ -2553,7 +2553,7 @@ function contentHashForLLM(product) {
     product_type: (product.product_type || "").trim(),
     tagsKey: tagsFingerprintForHash(product),
     body_html: normalizeHtmlForHash(product.body_html),
-    taxonomyVersion: 16,
+    taxonomyVersion: 17,
     jewelryReclassVersion,
   };
 }
@@ -2971,6 +2971,16 @@ function detectCategoryFurnitureEvidence(title, descriptionHtml, tags, dimension
   const keywordCat = bestScore > 0 ? bestCategory : "Accessories";
   const kwConf = furnitureKeywordMatchConfidence(bestScore, secondBest);
 
+  if (listingLooksLikeDecorFigurineOrCarving(title, descriptionHtml, tags)) {
+    return {
+      category: "Accessories",
+      confidence: 1,
+      reason: "decor_figurine_keyword_override",
+      bestScore,
+      secondBest,
+    };
+  }
+
   return {
     category: keywordCat,
     confidence: kwConf,
@@ -3094,9 +3104,48 @@ function listingLooksLikeDecorFigurineOrCarving(title, descriptionHtml, tags) {
     /\bswan[\s-]+(figurines?|statues?)\b/.test(hay) ||
     (/\bswans?\b/.test(hay) &&
       /\b(brass|bronze|solid brass|figurines?|statues?|pair|pairs|decor|mantel|paperweight)\b/.test(hay)) ||
-    /\b(brass|bronze|ceramic|resin)[\s-]+(figurines?|statues?|animals?)\b/.test(hay) ||
+    /\b(brass|bronze|ceramic|resin|porcelain|bisque)[\s-]+(figurines?|statues?|animals?)\b/.test(hay) ||
+    /\b(hummel|goebel)\b/.test(hay) ||
+    /\bcollectible[\s-]+figurines?\b/.test(hay) ||
+    /\bshelf[\s-]+decor\b/.test(hay) ||
     /\bpaperweights?\b/.test(hay)
   );
+}
+
+function applyFurnitureSubcategoryPostOverrides({
+  name,
+  description,
+  productTags,
+  product,
+  resolved,
+}) {
+  let out = resolved;
+  if (
+    !listingLooksLikeDecorFigurineOrCarving(name, description, productTags) &&
+    !listingLooksLikeFurnitureHomeDecorHolder(name, description, productTags) &&
+    furnitureSleepSurfaceIndicatesBedroom(name, description, productTags)
+  ) {
+    out = "Bedroom";
+  }
+  if (
+    !listingLooksLikeDecorFigurineOrCarving(name, description, productTags) &&
+    !listingLooksLikeFurnitureHomeDecorHolder(name, description, productTags) &&
+    furnitureBedroomIndicatesBedroom(name, description, productTags)
+  ) {
+    out = "Bedroom";
+  }
+  if (productLooksLikeFurnitureHomeTrunk(product)) out = "Accessories";
+  if (productLooksLikeBookFilmOrMedia(product)) out = "Accessories";
+  const forcedCat = furnitureAccessoryCategoryOverrideTitle(name);
+  if (forcedCat) out = forcedCat;
+  if (titleIndicatesLightingFurniture(name)) out = "Lighting";
+  if (
+    listingLooksLikeDecorFigurineOrCarving(name, description, productTags) ||
+    listingLooksLikeFurnitureHomeDecorHolder(name, description, productTags)
+  ) {
+    out = "Accessories";
+  }
+  return out;
 }
 
 /** Home tabletop holders (incense, candles, etc.) — Furniture Accessories, not Luxury Jewelry. */
@@ -3139,7 +3188,10 @@ function furnitureAccessoryCategoryOverrideTitle(title) {
     /\bnative\s+american\s+carved\b/.test(t) ||
     /\bbrass\s+swans?\b/.test(t) ||
     /\bswan\s+(figurines?|statues?)\b/.test(t) ||
-    (/\bswans?\b/.test(t) && /\b(brass|bronze|pair|pairs|figurines?|statues?)\b/.test(t))
+    (/\bswans?\b/.test(t) && /\b(brass|bronze|pair|pairs|figurines?|statues?)\b/.test(t)) ||
+    /\b(hummel|goebel)\b/.test(t) ||
+    /\bporcelain\s+figurines?\b/.test(t) ||
+    /\bcollectible\s+figurines?\b/.test(t)
   ) {
     return "Accessories";
   }
@@ -3150,6 +3202,7 @@ function furnitureAccessoryCategoryOverrideTitle(title) {
     return "Accessories";
   }
   if (
+    !/\bfigurines?\b/.test(t) &&
     !titleIndicatesLightingFurniture(title) &&
     (/\bglass\s+sculptures?\b/.test(t) ||
     /\bsculptures?\b/.test(t) ||
@@ -3269,6 +3322,9 @@ function furnitureBedroomIndicatesBedroom(title, descriptionHtml, tags) {
   if (/\b(on|for|beside|atop)\s+(a\s+|the\s+|your\s+)?nightstands?\b/i.test(hay)) return false;
   if (/\bbedroom\s+nightstand\s+(accent|accents|decor)\b/i.test(hay)) return false;
   if (/\bnightstands?\b/i.test(hay)) return true;
+  if (/\bbedroom\b/i.test(hay) && !/\b(bed|beds|headboards?|dressers?|nightstands?|armoires?|wardrobes?)\b/i.test(hay)) {
+    return false;
+  }
   if (/\bdressers?\b/i.test(hay)) return true;
   return false;
 }
@@ -6458,17 +6514,13 @@ async function syncSingleProductCore(product, cache, options = {}) {
       } else {
         const forcedCat = furnitureAccessoryCategoryOverrideTitle(name);
         let resolved = forcedCat ?? detectCategoryFurniture(name, description, productTags, dimensions);
-        if (!listingLooksLikeDecorFigurineOrCarving(name, description, productTags) &&
-          !listingLooksLikeFurnitureHomeDecorHolder(name, description, productTags) &&
-          furnitureSleepSurfaceIndicatesBedroom(name, description, productTags)) {
-          resolved = "Bedroom";
-        }
-        if (productLooksLikeFurnitureHomeTrunk(product)) resolved = "Accessories";
-        if (productLooksLikeBookFilmOrMedia(product)) resolved = "Accessories";
-        if (listingLooksLikeDecorFigurineOrCarving(name, description, productTags)) resolved = "Accessories";
-        if (listingLooksLikeFurnitureHomeDecorHolder(name, description, productTags)) resolved = "Accessories";
-        if (forcedCat) resolved = forcedCat;
-        if (titleIndicatesLightingFurniture(name)) resolved = "Lighting";
+        resolved = applyFurnitureSubcategoryPostOverrides({
+          name,
+          description,
+          productTags,
+          product,
+          resolved,
+        });
         categoryForMetafield = mapFurnitureCategoryForShopify(resolved);
       }
     } else {
@@ -6547,18 +6599,13 @@ async function syncSingleProductCore(product, cache, options = {}) {
           resolved,
         });
       }
-      if (!listingLooksLikeDecorFigurineOrCarving(name, description, productTags) &&
-        !listingLooksLikeFurnitureHomeDecorHolder(name, description, productTags) &&
-        furnitureSleepSurfaceIndicatesBedroom(name, description, productTags)) {
-        resolved = "Bedroom";
-      }
-      if (productLooksLikeFurnitureHomeTrunk(product)) resolved = "Accessories";
-      if (productLooksLikeBookFilmOrMedia(product)) resolved = "Accessories";
-      if (listingLooksLikeDecorFigurineOrCarving(name, description, productTags)) resolved = "Accessories";
-      if (listingLooksLikeFurnitureHomeDecorHolder(name, description, productTags)) resolved = "Accessories";
-      const forcedCat = furnitureAccessoryCategoryOverrideTitle(name);
-      if (forcedCat) resolved = forcedCat;
-      if (titleIndicatesLightingFurniture(name)) resolved = "Lighting";
+      resolved = applyFurnitureSubcategoryPostOverrides({
+        name,
+        description,
+        productTags,
+        product,
+        resolved,
+      });
       categoryForMetafield = mapFurnitureCategoryForShopify(resolved);
     }
   } else {

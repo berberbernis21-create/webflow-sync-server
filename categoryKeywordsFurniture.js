@@ -71,7 +71,7 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
     "pier mirror", "convex mirror", "sunburst mirror", "gilt mirror",
     "floor mirror", "full length mirror", "cheval mirror", "trumeau",
     "poster", "lithograph", "etching", "gallery wall",
-    "sculpture", "sculptures", "glass sculpture", "glass sculptures", "statue", "statues", "figurine", "figurines",
+    "sculpture", "sculptures", "glass sculpture", "glass sculptures", "statue", "statues",
     "original art", "local artist",
     "photograph", "photographs", "photo", "photos", "framed photograph", "framed photo", "artwork", "art work",
     "trumeau mirror", "mantel mirror"
@@ -120,6 +120,8 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
     "trinket", "objet", "ornament", "decorative", "accent piece",
     "figurine", "figurines", "statuette", "statuettes", "carved animal", "carved animals",
     "swan", "swans", "brass swan", "brass swans", "statue", "statues", "paperweight", "paperweights",
+    "hummel", "goebel", "porcelain figurine", "porcelain figurines", "collectible figurine", "collectible figurines",
+    "shelf decor", "mantel decor",
     "encyclopedia", "encyclopedias", "coffee table book", "coffee table books",
     "hardcover book", "hardcover books", "art book", "art books", "illustrated book", "tome",
     "book", "books",
