@@ -456,6 +456,60 @@ function getWebflowConfig(vertical) {
   };
 }
 
+/** Default: Furniture Products CMS collection + SKUs collection. Ecommerce /sites/.../products only when FURNITURE_USE_ECOMMERCE_API=1. */
+function furnitureUsesEcommerceApi(config) {
+  return process.env.FURNITURE_USE_ECOMMERCE_API === "1" && !!(config?.siteId && config?.token);
+}
+
+function furnitureUsesCmsProducts(config) {
+  return !!(config?.collectionId && config?.token) && !furnitureUsesEcommerceApi(config);
+}
+
+function cmsItemIndexForConfig(config) {
+  const lux = getWebflowConfig("luxury");
+  const furn = getWebflowConfig("furniture");
+  if (config?.collectionId && lux?.collectionId && String(config.collectionId) === String(lux.collectionId)) {
+    return luxuryItemIndex;
+  }
+  if (config?.collectionId && furn?.collectionId && String(config.collectionId) === String(furn.collectionId)) {
+    return furnitureProductIndex;
+  }
+  return null;
+}
+
+function registerCmsItemInRunIndex(config, item) {
+  const idx = cmsItemIndexForConfig(config);
+  if (!item?.id || !idx) return;
+  const fd = item.fieldData || {};
+  const wfId = fd["shopify-product-id"] ? String(fd["shopify-product-id"]) : null;
+  const wfUrl = fd["shopify-url"] ? String(fd["shopify-url"]).trim() : null;
+  const wfSlug = (fd.slug || fd["shopify-slug-2"]) ? String(fd.slug || fd["shopify-slug-2"]).trim() : null;
+  if (wfId) idx.byShopifyId.set(wfId, item);
+  if (wfUrl && idx.byUrl) idx.byUrl.set(wfUrl, item);
+  if (wfSlug) idx.bySlug.set(wfSlug, item);
+  const nameKey = normalizeProductNameForIndex(fd.name);
+  if (nameKey && idx.byName) idx.byName.set(nameKey, item);
+}
+
+async function findExistingFurnitureItem(shopifyProductId, shopifyUrl, slug, config, productNameForFallback = null) {
+  if (furnitureUsesEcommerceApi(config)) {
+    return findExistingWebflowEcommerceProduct(shopifyProductId, slug, config, productNameForFallback);
+  }
+  if (!furnitureUsesCmsProducts(config)) return null;
+  return findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, config);
+}
+
+async function removeFurnitureWebflowItem(config, itemId) {
+  if (!config?.token || !itemId) return;
+  if (furnitureUsesEcommerceApi(config)) {
+    await deleteWebflowEcommerceProduct(config.siteId, itemId, config.token);
+    return;
+  }
+  if (config.collectionId) {
+    await deleteWebflowCollectionItem(config.collectionId, itemId, config.token);
+  }
+}
+
 const app = express();
 
 app.use(createConsignmentCorsMiddleware());
@@ -4252,40 +4306,83 @@ function normalizeProductNameForIndex(name) {
   return (name ?? "").trim().toLowerCase().replace(/\s+/g, " ");
 }
 
-/** Pre-load Furniture ecommerce products once per sync → O(1) lookup. */
+/** Pre-load Furniture products once per sync → O(1) lookup (CMS collection by default; ecommerce when opted in). */
 async function loadFurnitureProductIndex() {
   const config = getWebflowConfig("furniture");
-  if (!config?.siteId || !config?.token) return;
+  if (!config?.token) return;
   const byShopifyId = new Map();
   const bySlug = new Map();
   const byName = new Map();
+  const byUrl = new Map();
   let offset = 0;
   const limit = 100;
-  while (true) {
-    const url = `https://api.webflow.com/v2/sites/${config.siteId}/products?limit=${limit}&offset=${offset}`;
-    const resp = await axios.get(url, {
-      headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
-    });
-    const raw = resp.data?.products ?? resp.data?.items ?? [];
-    const list = Array.isArray(raw) ? raw : [];
-    for (const listItem of list) {
-      const product = listItem.product ?? listItem;
-      const skus = listItem.skus ?? product.skus ?? [];
-      const fd = product.fieldData || {};
-      const wfId = fd["shopify-product-id"] ? String(fd["shopify-product-id"]) : null;
-      const wfSlug = (fd["slug"] || fd["shopify-slug-2"]) ? String(fd["slug"] || fd["shopify-slug-2"]).trim() : null;
-      const wfName = fd.name ?? product.name;
-      const entry = { ...product, skus };
-      if (wfId) byShopifyId.set(wfId, entry);
-      if (wfSlug) bySlug.set(wfSlug, entry);
-      const nameKey = normalizeProductNameForIndex(wfName);
-      if (nameKey && !byName.has(nameKey)) byName.set(nameKey, entry);
+
+  if (furnitureUsesEcommerceApi(config)) {
+    while (true) {
+      const url = `https://api.webflow.com/v2/sites/${config.siteId}/products?limit=${limit}&offset=${offset}`;
+      const resp = await axios.get(url, {
+        headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
+      });
+      const raw = resp.data?.products ?? resp.data?.items ?? [];
+      const list = Array.isArray(raw) ? raw : [];
+      for (const listItem of list) {
+        const product = listItem.product ?? listItem;
+        const skus = listItem.skus ?? product.skus ?? [];
+        const fd = product.fieldData || {};
+        const wfId = fd["shopify-product-id"] ? String(fd["shopify-product-id"]) : null;
+        const wfSlug = (fd["slug"] || fd["shopify-slug-2"]) ? String(fd["slug"] || fd["shopify-slug-2"]).trim() : null;
+        const wfName = fd.name ?? product.name;
+        const entry = { ...product, skus };
+        if (wfId) byShopifyId.set(wfId, entry);
+        if (wfSlug) bySlug.set(wfSlug, entry);
+        const nameKey = normalizeProductNameForIndex(wfName);
+        if (nameKey && !byName.has(nameKey)) byName.set(nameKey, entry);
+      }
+      if (list.length < limit) break;
+      offset += limit;
     }
-    if (list.length < limit) break;
+    furnitureProductIndex = { byShopifyId, bySlug, byName };
+    webflowLog("info", { event: "furniture_product_index.loaded", mode: "ecommerce", count: byShopifyId.size, byName: byName.size });
+    return;
+  }
+
+  if (!config.collectionId) return;
+  while (true) {
+    const url = `https://api.webflow.com/v2/collections/${config.collectionId}/items?limit=${limit}&offset=${offset}`;
+    let resp;
+    try {
+      resp = await axios.get(url, {
+        headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
+      });
+    } catch (err) {
+      furnitureProductIndex = null;
+      webflowLog("error", {
+        event: "furniture_product_index.load_failed",
+        collectionId: config.collectionId,
+        offset,
+        status: err.response?.status ?? null,
+        message: err.message,
+        responseData: err.response?.data,
+      });
+      return;
+    }
+    const items = resp.data?.items ?? [];
+    for (const item of items) {
+      const fd = item.fieldData || {};
+      const wfId = fd["shopify-product-id"] ? String(fd["shopify-product-id"]) : null;
+      const wfUrl = fd["shopify-url"] ? String(fd["shopify-url"]).trim() : null;
+      const wfSlug = (fd["slug"] || fd["shopify-slug-2"]) ? String(fd["slug"] || fd["shopify-slug-2"]).trim() : null;
+      if (wfId) byShopifyId.set(wfId, item);
+      if (wfUrl) byUrl.set(wfUrl, item);
+      if (wfSlug) bySlug.set(wfSlug, item);
+      const nameKey = normalizeProductNameForIndex(fd.name);
+      if (nameKey && !byName.has(nameKey)) byName.set(nameKey, item);
+    }
+    if (items.length < limit) break;
     offset += limit;
   }
-  furnitureProductIndex = { byShopifyId, bySlug, byName };
-  webflowLog("info", { event: "furniture_product_index.loaded", count: byShopifyId.size, byName: byName.size });
+  furnitureProductIndex = { byShopifyId, bySlug, byName, byUrl };
+  webflowLog("info", { event: "furniture_product_index.loaded", mode: "cms", count: byShopifyId.size, byName: byName.size });
 }
 
 /** Pre-load Furniture SKUs by product ID once per sync → O(1) lookup. */
@@ -4684,35 +4781,112 @@ async function findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, confi
   if (!config?.collectionId || !config?.token) return null;
   const shopifyUrlNorm = shopifyUrl ? String(shopifyUrl).trim() : null;
   const slugNorm = slug ? String(slug).trim() : null;
+  const itemIndex = cmsItemIndexForConfig(config);
 
   webflowLog("info", { event: "match_scan.start", shopifyProductId, shopifyUrl: shopifyUrlNorm, slug: slugNorm });
 
-  // Use pre-loaded index when available; if no hit, still paginate CMS (index can be stale — avoids duplicate creates).
-  if (luxuryItemIndex) {
-    const byId = luxuryItemIndex.byShopifyId?.get(String(shopifyProductId));
-    if (byId) {
-      webflowLog("info", { event: "match_scan.found", shopifyProductId, webflowItemId: byId.id, source: "index" });
-      return byId;
+  // 1) Shopify Product ID (index, then live CMS scan)
+  if (shopifyProductId) {
+    const fromIndex = itemIndex?.byShopifyId?.get(String(shopifyProductId));
+    if (fromIndex) {
+      webflowLog("info", {
+        event: "match_scan.found",
+        shopifyProductId,
+        webflowItemId: fromIndex.id,
+        source: "index_shopify_id",
+      });
+      return fromIndex;
     }
-    if (shopifyUrlNorm) {
-      const byUrl = luxuryItemIndex.byUrl?.get(shopifyUrlNorm);
-      if (byUrl) {
-        webflowLog("info", { event: "match_scan.found", shopifyProductId, webflowItemId: byUrl.id, source: "index" });
-        return byUrl;
+    const fromLiveId = await scanCmsCollectionForShopifyProductId(config, shopifyProductId);
+    if (fromLiveId) return fromLiveId;
+  }
+
+  // 2) Slug (index + live slug scan)
+  if (slugNorm) {
+    const fromSlug = await findExistingWebflowItemBySlug(config, slugNorm);
+    if (fromSlug) return fromSlug;
+  }
+
+  // 3) Shopify URL (index, then live CMS scan)
+  if (shopifyUrlNorm) {
+    const fromIndexUrl = itemIndex?.byUrl?.get(shopifyUrlNorm);
+    if (fromIndexUrl) {
+      webflowLog("info", {
+        event: "match_scan.found",
+        shopifyProductId,
+        webflowItemId: fromIndexUrl.id,
+        source: "index_shopify_url",
+      });
+      return fromIndexUrl;
+    }
+    const fromLiveUrl = await findExistingWebflowItemByShopifyUrl(config, shopifyUrlNorm);
+    if (fromLiveUrl) return fromLiveUrl;
+  }
+
+  webflowLog("info", { event: "match_scan.not_found", shopifyProductId });
+  return null;
+}
+
+/** Paginate CMS collection until a row matches shopify-product-id (step 1 of ordered match). */
+async function scanCmsCollectionForShopifyProductId(config, shopifyProductId) {
+  if (!config?.collectionId || !config?.token || !shopifyProductId) return null;
+  let offset = 0;
+  const limit = 100;
+  while (true) {
+    const url = `https://api.webflow.com/v2/collections/${config.collectionId}/items?limit=${limit}&offset=${offset}`;
+    let response;
+    try {
+      response = await axios.get(url, {
+        headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
+      });
+    } catch (err) {
+      webflowLog("error", {
+        event: "match_scan.shopify_id_error",
+        shopifyProductId,
+        offset,
+        status: err.response?.status ?? null,
+        message: err.message,
+        responseData: err.response?.data,
+      });
+      return null;
+    }
+    const items = response.data?.items || [];
+    webflowLog("info", { event: "match_scan.shopify_id_page", shopifyProductId, offset, itemCount: items.length });
+    for (const item of items) {
+      const wfId = item.fieldData?.["shopify-product-id"];
+      if (wfId && String(wfId) === String(shopifyProductId)) {
+        registerCmsItemInRunIndex(config, item);
+        webflowLog("info", {
+          event: "match_scan.found",
+          shopifyProductId,
+          webflowItemId: item.id,
+          source: "live_shopify_id",
+        });
+        return item;
       }
     }
-    if (slugNorm) {
-      const bySlug = luxuryItemIndex.bySlug?.get(slugNorm);
-      if (bySlug) {
-        webflowLog("info", { event: "match_scan.found", shopifyProductId, webflowItemId: bySlug.id, source: "index" });
-        return bySlug;
-      }
-    }
+    if (items.length < limit) break;
+    offset += limit;
+  }
+  return null;
+}
+
+/** Shopify URL CMS lookup (index + live pagination). Step 3 of ordered match. */
+async function findExistingWebflowItemByShopifyUrl(config, shopifyUrl) {
+  if (!config?.collectionId || !config?.token) return null;
+  const shopifyUrlNorm = shopifyUrl ? String(shopifyUrl).trim() : null;
+  if (!shopifyUrlNorm) return null;
+
+  const itemIndex = cmsItemIndexForConfig(config);
+  if (itemIndex?.byUrl?.get(shopifyUrlNorm)) {
+    const hit = itemIndex.byUrl.get(shopifyUrlNorm);
     webflowLog("info", {
-      event: "match_scan.index_miss_live_scan",
-      shopifyProductId,
-      message: "No match in run index; paginating CMS collection",
+      event: "match_scan.found_by_url",
+      shopifyUrl: shopifyUrlNorm,
+      webflowItemId: hit.id,
+      source: "index",
     });
+    return hit;
   }
 
   let offset = 0;
@@ -4725,45 +4899,33 @@ async function findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, confi
         headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
       });
     } catch (err) {
-      const status = err.response?.status;
       webflowLog("error", {
-        event: "match_scan.error",
-        shopifyProductId,
+        event: "match_scan.url_only_error",
+        shopifyUrl: shopifyUrlNorm,
         offset,
-        status: status ?? null,
+        status: err.response?.status ?? null,
         message: err.message,
         responseData: err.response?.data,
       });
-      if (status === 400 && offset > 0) break;
-      if (slugNorm) {
-        const bySlug = await findExistingWebflowItemBySlug(config, slugNorm);
-        if (bySlug) return bySlug;
-      }
       return null;
     }
-    const items = response.data.items || [];
-    webflowLog("info", { event: "match_scan.page", shopifyProductId, offset, itemCount: items.length });
+    const items = response.data?.items || [];
     for (const item of items) {
-      const fd = item.fieldData || {};
-      const wfIdRaw = fd["shopify-product-id"] || null;
-      const wfUrlRaw = fd["shopify-url"] || null;
-      const wfSlugRaw = fd["slug"] || null;
-      const wfSlug2Raw = fd["shopify-slug-2"] || null;
-      const wfId = wfIdRaw ? String(wfIdRaw) : null;
-      const wfUrl = wfUrlRaw ? String(wfUrlRaw).trim() : null;
-      const wfSlug = (wfSlugRaw ? String(wfSlugRaw).trim() : null) || (wfSlug2Raw ? String(wfSlug2Raw).trim() : null);
-      const idMatch = wfId && String(wfId) === String(shopifyProductId);
-      const urlMatch = wfUrl && shopifyUrlNorm && wfUrl === shopifyUrlNorm;
-      const slugMatch = wfSlug && slugNorm && wfSlug === slugNorm;
-      if (idMatch || urlMatch || slugMatch) {
-        webflowLog("info", { event: "match_scan.found", shopifyProductId, webflowItemId: item.id });
+      const wfUrl = item.fieldData?.["shopify-url"];
+      if (wfUrl && String(wfUrl).trim() === shopifyUrlNorm) {
+        registerCmsItemInRunIndex(config, item);
+        webflowLog("info", {
+          event: "match_scan.found_by_url",
+          shopifyUrl: shopifyUrlNorm,
+          webflowItemId: item.id,
+          source: "live_scan",
+        });
         return item;
       }
     }
     if (items.length < limit) break;
     offset += limit;
   }
-  webflowLog("info", { event: "match_scan.not_found", shopifyProductId });
   return null;
 }
 
@@ -4773,8 +4935,9 @@ async function findExistingWebflowItemBySlug(config, slug) {
   const slugNorm = slug ? String(slug).trim() : null;
   if (!slugNorm) return null;
 
-  if (luxuryItemIndex?.bySlug?.get(slugNorm)) {
-    const hit = luxuryItemIndex.bySlug.get(slugNorm);
+  const itemIndex = cmsItemIndexForConfig(config);
+  if (itemIndex?.bySlug?.get(slugNorm)) {
+    const hit = itemIndex.bySlug.get(slugNorm);
     webflowLog("info", {
       event: "match_scan.found_by_slug",
       slug: slugNorm,
@@ -4811,7 +4974,7 @@ async function findExistingWebflowItemBySlug(config, slug) {
       const fd = item.fieldData || {};
       const wfSlug = (fd.slug ? String(fd.slug).trim() : null) || (fd["shopify-slug-2"] ? String(fd["shopify-slug-2"]).trim() : null);
       if (wfSlug && wfSlug === slugNorm) {
-        registerLuxuryItemInRunIndex(item);
+        registerCmsItemInRunIndex(config, item);
         webflowLog("info", {
           event: "match_scan.found_by_slug",
           slug: slugNorm,
@@ -4828,14 +4991,7 @@ async function findExistingWebflowItemBySlug(config, slug) {
 }
 
 function registerLuxuryItemInRunIndex(item) {
-  if (!item?.id || !luxuryItemIndex) return;
-  const fd = item.fieldData || {};
-  const wfId = fd["shopify-product-id"] ? String(fd["shopify-product-id"]) : null;
-  const wfUrl = fd["shopify-url"] ? String(fd["shopify-url"]).trim() : null;
-  const wfSlug = (fd.slug || fd["shopify-slug-2"]) ? String(fd.slug || fd["shopify-slug-2"]).trim() : null;
-  if (wfId) luxuryItemIndex.byShopifyId.set(wfId, item);
-  if (wfUrl) luxuryItemIndex.byUrl.set(wfUrl, item);
-  if (wfSlug) luxuryItemIndex.bySlug.set(wfSlug, item);
+  registerCmsItemInRunIndex(getWebflowConfig("luxury"), item);
 }
 
 /* ======================================================
@@ -5040,11 +5196,11 @@ function titleMissingNoLongerAvailableSuffix(existing) {
 
 /* ======================================================
    MARK AS SOLD — per vertical
-   Luxury: CMS PATCH. Furniture: ecommerce PATCH (siteId).
+   Luxury + Furniture: CMS PATCH on Products collection. Furniture ecommerce only when FURNITURE_USE_ECOMMERCE_API=1.
 ====================================================== */
 async function markAsSold(existing, vertical, config) {
   if (!existing || !config?.token) return;
-  if (vertical === "furniture" && config?.siteId) {
+  if (vertical === "furniture" && furnitureUsesEcommerceApi(config)) {
     if (existing.isArchived === true) {
       webflowLog("info", {
         event: "markAsSold.skip_archived_furniture",
@@ -5093,7 +5249,7 @@ async function markAsSold(existing, vertical, config) {
     if (withSuffix != null) fieldData.name = withSuffix;
   }
 
-  if (vertical === "furniture" && config.siteId) {
+  if (vertical === "furniture" && furnitureUsesEcommerceApi(config)) {
     // Ecommerce PATCH requires { product: { fieldData }, sku: { fieldData } }; reuse shared updater
     await updateWebflowEcommerceProduct(config.siteId, existing.id, fieldData, config.token, existing);
     await syncGoogleMerchantFurnitureOutOfStockFromWebflow(existing, "mark_sold");
@@ -5109,6 +5265,9 @@ async function markAsSold(existing, vertical, config) {
       },
     }
   );
+  if (vertical === "furniture") {
+    await syncGoogleMerchantFurnitureOutOfStockFromWebflow(existing, "mark_sold");
+  }
 }
 
 /**
@@ -5157,22 +5316,22 @@ async function processDisappearedShopifyProduct(goneId, cache, options = {}) {
   let existing = null;
 
   if (entry?.webflowId && config) {
-    if (vertical === "furniture" && config.siteId) {
+    if (vertical === "furniture" && furnitureUsesEcommerceApi(config)) {
       existing = await getWebflowEcommerceProductById(config.siteId, entry.webflowId, config.token);
-    } else if (vertical === "luxury" && config.collectionId) {
+    } else if (config.collectionId) {
       existing = await getWebflowItemById(entry.webflowId, config);
     }
   }
-  if (!existing && vertical === "furniture" && config?.siteId) {
-    existing = await findExistingWebflowEcommerceProduct(goneId, null, config);
+  if (!existing && vertical === "furniture" && config?.token) {
+    existing = await findExistingFurnitureItem(goneId, null, null, config);
   }
   if (!existing && vertical === "luxury" && config?.collectionId) {
     existing = await findExistingWebflowItem(goneId, null, null, config);
   }
   if (!existing) {
     const furn = getWebflowConfig("furniture");
-    if (furn?.siteId && furn?.token && vertical !== "furniture") {
-      const e = await findExistingWebflowEcommerceProduct(goneId, null, furn);
+    if (furn?.token && vertical !== "furniture") {
+      const e = await findExistingFurnitureItem(goneId, null, null, furn);
       if (e) {
         existing = e;
         vertical = "furniture";
@@ -5968,13 +6127,13 @@ async function syncSingleProductCore(product, cache, options = {}) {
     const vertical = cacheEntry.vertical ?? "luxury";
     const config = getWebflowConfig(vertical);
     let existing = null;
-    if (vertical === "furniture" && config?.siteId && config?.token) {
+    if (vertical === "furniture" && furnitureUsesEcommerceApi(config)) {
       existing = await getWebflowEcommerceProductById(config.siteId, cacheEntry.webflowId, config.token);
-    } else if (vertical === "luxury" && config?.collectionId && config?.token) {
+    } else if (config?.collectionId && config?.token) {
       existing = await getWebflowItemById(cacheEntry.webflowId, config);
     }
     if (existing) {
-      if (vertical === "furniture" && existing.isArchived === true) {
+      if (vertical === "furniture" && furnitureUsesEcommerceApi(config) && existing.isArchived === true) {
         const { existing: reactivated, reactivated: didUnarchive } = await reactivateArchivedFurnitureIfNeeded({
           config,
           existing,
@@ -6046,7 +6205,6 @@ async function syncSingleProductCore(product, cache, options = {}) {
       // Already sold in Webflow + Shopify qty 0, but we never PATCH date-sold (e.g. manual SOLD toggle or pre–date-sold deploy) → retention sees no clock; fix without full LLM/write.
       if (
         vertical === "furniture" &&
-        config?.siteId &&
         webflowListingLooksSold(existing, "furniture") &&
         shopifyQtySaysSold(qty)
       ) {
@@ -6071,7 +6229,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
           return { operation: "update", id: existing.id };
         }
       }
-      if (vertical === "furniture" && config?.siteId && furnitureEcommerceNeedsImageRepairFromShopify(product, existing)) {
+      if (vertical === "furniture" && furnitureUsesEcommerceApi(config) && furnitureEcommerceNeedsImageRepairFromShopify(product, existing)) {
         webflowLog("info", {
           event: "sync_product.skip_unchanged.repair_missing_images",
           shopifyProductId,
@@ -6081,6 +6239,40 @@ async function syncSingleProductCore(product, cache, options = {}) {
         });
         try {
           await syncFurnitureEcommerceSku(product, existing.id, config);
+        } catch (err) {
+          webflowLog("error", {
+            event: "sync_product.skip_unchanged.repair_missing_images_failed",
+            shopifyProductId,
+            webflowId: existing.id,
+            message: err?.message ?? String(err),
+          });
+          throw err;
+        }
+        cache[shopifyProductId] = {
+          hash: currentHash,
+          contentHash: currentContentHash,
+          webflowId: existing.id,
+          lastQty: qty,
+          vertical,
+          ...soldMarkedAtPayload(cacheEntry, qty),
+        };
+        webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "repair_images", webflowId: existing.id, vertical });
+        return { operation: "update", id: existing.id };
+      }
+      if (
+        vertical === "furniture" &&
+        furnitureUsesCmsProducts(config) &&
+        (await furnitureCmsNeedsSkuImageRepairFromShopify(product, existing, config))
+      ) {
+        webflowLog("info", {
+          event: "sync_product.skip_unchanged.repair_missing_images",
+          shopifyProductId,
+          productTitle: product.title,
+          webflowId: existing.id,
+          message: "Shopify has images but Furniture CMS SKU has none; forcing SKU sync",
+        });
+        try {
+          await syncFurnitureSku(product, existing.id, config);
         } catch (err) {
           webflowLog("error", {
             event: "sync_product.skip_unchanged.repair_missing_images_failed",
@@ -7064,9 +7256,12 @@ async function syncSingleProductCore(product, cache, options = {}) {
     let cachedExists = false;
     let cachedFurnitureProduct = null;
     let cachedLuxuryItem = null;
-    if (vertical === "furniture" && config?.siteId) {
+    if (vertical === "furniture" && furnitureUsesEcommerceApi(config)) {
       cachedFurnitureProduct = await getWebflowEcommerceProductById(config.siteId, cacheEntry.webflowId, config.token);
       cachedExists = cachedFurnitureProduct != null && !cachedFurnitureProduct.isArchived;
+    } else if (vertical === "furniture" && furnitureUsesCmsProducts(config)) {
+      cachedFurnitureProduct = await getWebflowItemById(cacheEntry.webflowId, config);
+      cachedExists = cachedFurnitureProduct != null;
     } else if (vertical === "luxury" && config?.collectionId) {
       cachedLuxuryItem = await getWebflowItemById(cacheEntry.webflowId, config);
       cachedExists = cachedLuxuryItem != null;
@@ -7086,6 +7281,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
       if (
         vertical === "furniture" &&
         cachedFurnitureProduct &&
+        furnitureUsesEcommerceApi(config) &&
         furnitureEcommerceNeedsImageRepairFromShopify(product, cachedFurnitureProduct)
       ) {
         webflowLog("info", {
@@ -7096,6 +7292,31 @@ async function syncSingleProductCore(product, cache, options = {}) {
           message: "Shopify has images but Webflow SKU has none; forcing SKU sync",
         });
         await syncFurnitureEcommerceSku(product, cachedFurnitureProduct.id, config);
+        cache[shopifyProductId] = {
+          hash: currentHash,
+          contentHash: currentContentHash,
+          webflowId: cacheEntry.webflowId,
+          lastQty: qty,
+          vertical,
+          ...soldMarkedAtPayload(cacheEntry, qty),
+        };
+        webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "repair_images", webflowId: cacheEntry.webflowId, vertical });
+        return { operation: "update", id: cacheEntry.webflowId };
+      }
+      if (
+        vertical === "furniture" &&
+        cachedFurnitureProduct &&
+        furnitureUsesCmsProducts(config) &&
+        (await furnitureCmsNeedsSkuImageRepairFromShopify(product, cachedFurnitureProduct, config))
+      ) {
+        webflowLog("info", {
+          event: "sync_product.skip_early.repair_missing_images",
+          shopifyProductId,
+          productTitle: name,
+          webflowId: cacheEntry.webflowId,
+          message: "Shopify has images but Furniture CMS SKU has none; forcing SKU sync",
+        });
+        await syncFurnitureSku(product, cachedFurnitureProduct.id, config);
         cache[shopifyProductId] = {
           hash: currentHash,
           contentHash: currentContentHash,
@@ -7160,7 +7381,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
 
   // Retrieve from Webflow only when we might need to update (hash changed or no cache). Then compare; only PATCH if different.
   let existing = null;
-  if (vertical === "furniture" && config.siteId) {
+  if (vertical === "furniture" && furnitureUsesEcommerceApi(config)) {
     if (cacheEntry?.webflowId) {
       webflowLog("info", { event: "sync_product.try_cache", shopifyProductId, cacheWebflowId: cacheEntry.webflowId, target: "ecommerce" });
       existing = await getWebflowEcommerceProductById(config.siteId, cacheEntry.webflowId, config.token);
@@ -7197,7 +7418,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
   if (existing) {
     webflowLog("info", { event: "sync_product.linked", shopifyProductId, productTitle: name, webflowId: existing.id });
 
-    if (vertical === "furniture" && config?.siteId) {
+    if (vertical === "furniture" && furnitureUsesEcommerceApi(config)) {
       if (!Object.prototype.hasOwnProperty.call(existing, "isArchived")) {
         const live = await getWebflowEcommerceProductById(config.siteId, existing.id, config.token);
         if (live) existing = live;
@@ -7316,7 +7537,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
       });
       const existingFD = existing.fieldData || {};
       if (fieldDataEffectivelyEqual(fieldData, existingFD)) {
-        if (vertical === "furniture" && config?.siteId && furnitureEcommerceNeedsImageRepairFromShopify(product, existing)) {
+        if (vertical === "furniture" && furnitureUsesEcommerceApi(config) && furnitureEcommerceNeedsImageRepairFromShopify(product, existing)) {
           webflowLog("info", {
             event: "sync_product.skip_webflow_unchanged.repair_missing_images",
             shopifyProductId,
@@ -7325,6 +7546,30 @@ async function syncSingleProductCore(product, cache, options = {}) {
             message: "Product fieldData matches but Webflow SKU has no images; forcing SKU sync",
           });
           await syncFurnitureEcommerceSku(product, existing.id, config);
+          cache[shopifyProductId] = {
+            hash: currentHash,
+            contentHash: currentContentHash,
+            webflowId: existing.id,
+            lastQty: qty,
+            vertical,
+            ...soldMarkedAtPayload(cacheEntry, qty),
+          };
+          webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "repair_images", webflowId: existing.id, vertical });
+          return { operation: "update", id: existing.id };
+        }
+        if (
+          vertical === "furniture" &&
+          furnitureUsesCmsProducts(config) &&
+          (await furnitureCmsNeedsSkuImageRepairFromShopify(product, existing, config))
+        ) {
+          webflowLog("info", {
+            event: "sync_product.skip_webflow_unchanged.repair_missing_images",
+            shopifyProductId,
+            productTitle: name,
+            webflowId: existing.id,
+            message: "Product fieldData matches but Furniture CMS SKU has no images; forcing SKU sync",
+          });
+          await syncFurnitureSku(product, existing.id, config);
           cache[shopifyProductId] = {
             hash: currentHash,
             contentHash: currentContentHash,
@@ -7369,7 +7614,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
         return { operation: "skip", id: existing.id };
       }
       webflowLog("info", { event: "sync_product.updating", shopifyProductId, productTitle: name, webflowId: existing.id, reason: "shopify_changed_and_webflow_differs" });
-      if (vertical === "furniture" && config.siteId) {
+      if (vertical === "furniture" && furnitureUsesEcommerceApi(config)) {
         await updateWebflowEcommerceProduct(config.siteId, existing.id, fieldData, config.token, existing);
         await syncFurnitureEcommerceSku(product, existing.id, config);
         await syncGoogleMerchantFurnitureFromShopifyProduct(product, "in stock", "furniture_update", cache);
@@ -7384,6 +7629,15 @@ async function syncSingleProductCore(product, cache, options = {}) {
             },
           }
         );
+        if (vertical === "furniture" && furnitureUsesCmsProducts(config)) {
+          await syncFurnitureSku(product, existing.id, config);
+          await syncGoogleMerchantFurnitureFromShopifyProduct(
+            product,
+            soldNow ? "out of stock" : "in stock",
+            "furniture_update",
+            cache
+          );
+        }
       }
       cache[shopifyProductId] = {
         hash: currentHash,
@@ -7418,7 +7672,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
       return { operation: "skip", id: existing.id };
     }
 
-    if (!changed && vertical === "furniture" && config?.siteId && furnitureEcommerceNeedsImageRepairFromShopify(product, existing)) {
+    if (!changed && vertical === "furniture" && furnitureUsesEcommerceApi(config) && furnitureEcommerceNeedsImageRepairFromShopify(product, existing)) {
       webflowLog("info", {
         event: "sync_product.skip_no_changes.repair_missing_images",
         shopifyProductId,
@@ -7427,6 +7681,31 @@ async function syncSingleProductCore(product, cache, options = {}) {
         message: "Shopify snapshot unchanged but Webflow SKU has no images; forcing SKU sync",
       });
       await syncFurnitureEcommerceSku(product, existing.id, config);
+      cache[shopifyProductId] = {
+        hash: currentHash,
+        contentHash: currentContentHash,
+        webflowId: existing.id,
+        lastQty: qty,
+        vertical,
+        ...soldMarkedAtPayload(cacheEntry, qty),
+      };
+      webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "repair_images", webflowId: existing.id, vertical });
+      return { operation: "update", id: existing.id };
+    }
+    if (
+      !changed &&
+      vertical === "furniture" &&
+      furnitureUsesCmsProducts(config) &&
+      (await furnitureCmsNeedsSkuImageRepairFromShopify(product, existing, config))
+    ) {
+      webflowLog("info", {
+        event: "sync_product.skip_no_changes.repair_missing_images",
+        shopifyProductId,
+        productTitle: name,
+        webflowId: existing.id,
+        message: "Shopify snapshot unchanged but Furniture CMS SKU has no images; forcing SKU sync",
+      });
+      await syncFurnitureSku(product, existing.id, config);
       cache[shopifyProductId] = {
         hash: currentHash,
         contentHash: currentContentHash,
@@ -7520,20 +7799,17 @@ async function syncSingleProductCore(product, cache, options = {}) {
     const guardLuxuryCfg = getWebflowConfig("luxury");
     let alreadyInFurniture = furnitureProductIndex?.byShopifyId?.get(String(shopifyProductId)) ?? null;
     let alreadyInLuxury = luxuryItemIndex?.byShopifyId?.get(String(shopifyProductId)) ?? null;
-    if (!alreadyInFurniture && guardFurnitureCfg?.siteId && guardFurnitureCfg?.token) {
-      alreadyInFurniture = await findExistingWebflowEcommerceProduct(
+    if (!alreadyInFurniture && guardFurnitureCfg?.token) {
+      alreadyInFurniture = await findExistingFurnitureItem(
         shopifyProductId,
+        shopifyUrl,
         slug,
         guardFurnitureCfg,
         name
       );
     }
     if (!alreadyInLuxury && guardLuxuryCfg?.collectionId && guardLuxuryCfg?.token) {
-      const slugHit = slug ? luxuryItemIndex?.bySlug?.get(String(slug).trim()) : null;
-      alreadyInLuxury =
-        slugHit ||
-        (await findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, guardLuxuryCfg)) ||
-        (await findExistingWebflowItemBySlug(guardLuxuryCfg, slug));
+      alreadyInLuxury = await findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, guardLuxuryCfg);
     }
     const existingFromGuard = (detectedVertical === "furniture" && alreadyInFurniture) ? alreadyInFurniture : (detectedVertical === "luxury" && alreadyInLuxury) ? alreadyInLuxury : null;
     if (existingFromGuard) {
@@ -7547,7 +7823,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
       });
       const guardConfig = getWebflowConfig(detectedVertical);
       let guardExisting = existingFromGuard;
-      if (detectedVertical === "furniture" && guardConfig?.siteId) {
+      if (detectedVertical === "furniture" && furnitureUsesEcommerceApi(guardConfig)) {
         if (!Object.prototype.hasOwnProperty.call(guardExisting, "isArchived")) {
           const live = await getWebflowEcommerceProductById(guardConfig.siteId, guardExisting.id, guardConfig.token);
           if (live) guardExisting = live;
@@ -7640,7 +7916,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
         return { operation: "skip", id: guardExisting.id };
       }
       webflowLog("info", { event: "sync_product.updating", shopifyProductId, productTitle: name, webflowId: guardExisting.id, reason: "shopify_changed_and_webflow_differs" });
-      if (detectedVertical === "furniture" && guardConfig.siteId) {
+      if (detectedVertical === "furniture" && furnitureUsesEcommerceApi(guardConfig)) {
         await updateWebflowEcommerceProduct(guardConfig.siteId, guardExisting.id, fieldData, guardConfig.token, guardExisting);
         await syncFurnitureEcommerceSku(product, guardExisting.id, guardConfig);
       } else {
@@ -7654,6 +7930,9 @@ async function syncSingleProductCore(product, cache, options = {}) {
             },
           }
         );
+        if (detectedVertical === "furniture" && furnitureUsesCmsProducts(guardConfig)) {
+          await syncFurnitureSku(product, guardExisting.id, guardConfig);
+        }
       }
       cache[shopifyProductId] = {
         hash: currentHash,
@@ -7687,11 +7966,14 @@ async function syncSingleProductCore(product, cache, options = {}) {
     if (detectedVertical === "luxury") {
       const furnitureConfig = getWebflowConfig("furniture");
       const manualLock = getManualEcommerceVerticalLock(product);
-      if (furnitureConfig?.siteId && furnitureConfig?.token) {
-        const existingInFurniture = await findExistingWebflowEcommerceProduct(shopifyProductId, slug, furnitureConfig, name);
+      if (furnitureConfig?.token) {
+        const existingInFurniture = await findExistingFurnitureItem(shopifyProductId, shopifyUrl, slug, furnitureConfig, name);
         if (existingInFurniture) {
-          const full = await getWebflowEcommerceProductById(furnitureConfig.siteId, existingInFurniture.id, furnitureConfig.token);
-          const alreadyArchived = full?.isArchived === true;
+          let alreadyArchived = false;
+          if (furnitureUsesEcommerceApi(furnitureConfig)) {
+            const full = await getWebflowEcommerceProductById(furnitureConfig.siteId, existingInFurniture.id, furnitureConfig.token);
+            alreadyArchived = full?.isArchived === true;
+          }
           if (alreadyArchived) {
             webflowLog("info", { event: "sweep.skipped_already_archived", shopifyProductId, webflowId: existingInFurniture.id });
             if (!manualLock) saveDuplicatePlacementSentId(shopifyProductId);
@@ -7705,7 +7987,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
               manualTag: manualLock?.tag ?? null,
             });
             try {
-              await deleteWebflowEcommerceProduct(furnitureConfig.siteId, existingInFurniture.id, furnitureConfig.token);
+              await removeFurnitureWebflowItem(furnitureConfig, existingInFurniture.id);
               webflowLog("info", { event: "sweep.removed_from_furniture", shopifyProductId, webflowId: existingInFurniture.id });
               if (!manualLock) {
                 await sendDuplicatePlacementEmail(
@@ -7753,7 +8035,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
 
     let newId;
 
-    if (detectedVertical === "furniture" && createConfig.siteId) {
+    if (detectedVertical === "furniture" && furnitureUsesEcommerceApi(createConfig)) {
       const priceCents = price != null && price !== "" ? Math.round(parseFloat(price) * 100) : null;
       const dims = dimensions || getDimensionsFromProduct(product);
       const skuFieldData = {
@@ -7839,6 +8121,9 @@ async function syncSingleProductCore(product, cache, options = {}) {
         });
         throw createErr;
       }
+    }
+    if (detectedVertical === "furniture" && furnitureUsesCmsProducts(createConfig)) {
+      await syncFurnitureSku(product, newId, createConfig);
     }
     cache[shopifyProductId] = {
       hash: currentHash,
@@ -8145,7 +8430,7 @@ async function createOrLinkLuxuryCmsItem({
   const linkExisting = async (existing, source) => {
     const live = (await getWebflowItemById(existing.id, config)) || existing;
     await patchLuxuryCmsItemFieldData(config, live.id, postFieldData, { existing: live });
-    registerLuxuryItemInRunIndex(live);
+    registerCmsItemInRunIndex(config, live);
     webflowLog("warn", {
       event: "create.cms.linked_existing",
       shopifyProductId,
@@ -8158,9 +8443,9 @@ async function createOrLinkLuxuryCmsItem({
     return { id: live.id, linked: true };
   };
 
-  const existingBySlug = await findExistingWebflowItemBySlug(config, slug);
-  if (existingBySlug?.id) {
-    return linkExisting(existingBySlug, "slug_precheck");
+  const existingBeforeCreate = await findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, config);
+  if (existingBeforeCreate?.id) {
+    return linkExisting(existingBeforeCreate, "precheck_ordered_match");
   }
 
   let lastErr = null;
@@ -8171,7 +8456,7 @@ async function createOrLinkLuxuryCmsItem({
       const resp = await axios.post(postUrl, { fieldData: bodyFieldData }, { headers });
       const id = resp?.data?.id;
       if (!id) throw new Error("No item id in CMS create response");
-      registerLuxuryItemInRunIndex({ id, fieldData: bodyFieldData });
+      registerCmsItemInRunIndex(config, { id, fieldData: bodyFieldData });
       return { id, linked: false };
     } catch (err) {
       lastErr = err;
@@ -8275,6 +8560,7 @@ function buildWebflowFieldData(opts) {
       "ec-product-type": productType ?? null,
       shippable: true,
     };
+    if (shopifyUrl) out["shopify-url"] = shopifyUrl;
     if (categoryRef != null && WEBFLOW_ITEM_REF_REGEX.test(String(categoryRef))) out.category = categoryRef;
     const soldDateSlug = getFurnitureSoldSinceFieldSlug();
     const ex = existingFieldData && typeof existingFieldData === "object" ? existingFieldData : null;
@@ -9502,6 +9788,18 @@ function shopifyProductHasDisplayImages(product) {
   const imgs = product?.images;
   if (!Array.isArray(imgs) || imgs.length === 0) return false;
   return imgs.some((i) => i?.src && String(i.src).trim());
+}
+
+/** Shopify has images but Furniture CMS default SKU has no image URLs Webflow can use. */
+async function furnitureCmsNeedsSkuImageRepairFromShopify(product, cmsProductItem, config) {
+  if (isFurnitureSoldOrMarkingSold({ webflowProduct: cmsProductItem, shopifyProduct: product })) return false;
+  if (!shopifyProductHasDisplayImages(product)) return false;
+  if (!cmsProductItem?.id || !config?.skuCollectionId || !config?.token) return false;
+  const sku =
+    furnitureSkuIndex?.byProductId?.get(String(cmsProductItem.id)) ||
+    (await findExistingSkuByProductId(config.skuCollectionId, cmsProductItem.id, config.token));
+  if (!sku) return true;
+  return furnitureSkuFieldDataImageUrls(sku.fieldData || {}).length === 0;
 }
 
 /** Shopify has images but Furniture ecommerce default SKU has no image URLs Webflow can use. */
