@@ -9972,9 +9972,33 @@ function itemFitsBoxDims(itemSorted, boxSorted, { skipLongEdgePadding = false, d
   return true;
 }
 
+const PARCEL_SMALL_ITEM_MAX_EDGE_IN = 42;
+const PARCEL_SMALL_ITEM_MAX_WEIGHT_LB = 25;
+
+function isParcelShippableBySize(itemSorted, weightLb) {
+  if (!itemSorted || itemSorted.length !== 3) return false;
+  const maxDim = itemSorted[0];
+  if (weightLb != null && weightLb > PACKAGE_MAX_PARCEL_WEIGHT_LB) return false;
+  if (maxDim <= 24) return true;
+  if (maxDim <= PARCEL_SMALL_ITEM_MAX_EDGE_IN && (weightLb == null || weightLb <= PARCEL_SMALL_ITEM_MAX_WEIGHT_LB)) {
+    return true;
+  }
+  return false;
+}
+
+function productLooksLikeShippableHomeDecor(body) {
+  const text = `${body.title || ""} ${body.productType || ""} ${(body.tags || []).join(" ")} ${body.description || ""}`.toLowerCase();
+  return /\b(figurine|statuette|hummel|goebel|tureen|canister|berry\s+dish|trinket\s+dish|catch[\s-]?all|pressed\s+glass|ironstone|glass\s+jar|cookie\s+jar|decanter|carafe|vase|bowl|compote|ornament|trinket|incense\s+holder|candle\s+holder)\b/i.test(text);
+}
+
 function productIsBulkyFurnitureForShipping(body, itemSorted, weightLb) {
   if (weightLb != null && weightLb > PACKAGE_MAX_PARCEL_WEIGHT_LB) return true;
   const text = `${body.title || ""} ${body.productType || ""} ${(body.tags || []).join(" ")}`.toLowerCase();
+  if (titleIndicatesLightingFurniture(body?.title || "")) return false;
+  if (productLooksLikeShippableHomeDecor(body)) return false;
+  if (itemSorted && isParcelShippableBySize(itemSorted, weightLb) && !/\b(sofa|sectional|loveseat|sleeper|recliner|dresser|armoire|dining\s+table|coffee\s+table|console\s+table|desk|bed\b|headboard|bookcase|bookshelf|buffet|sideboard|hutch|credenza|china\s+cabinet|entertainment\s+center|file\s+cabinet|mattress|box\s+spring)\b/.test(text)) {
+    return false;
+  }
   const bulky =
     /\b(sofa|sectional|loveseat|sleeper|recliner|dresser|armoire|dining\s+table|coffee\s+table|console\s+table|desk|bed\b|headboard|nightstand|bookcase|bookshelf|buffet|sideboard|hutch|credenza|china\s+cabinet|entertainment\s+center|file\s+cabinet|chaise|sectional|mattress|box\s+spring)\b/;
   if (bulky.test(text)) return true;
@@ -10141,13 +10165,14 @@ async function selectPackageWithAi(body) {
     "- Compare EVERY package (artwork boxes, flat mailers, standard parcel boxes). Pick lowest priceMin among those that fit.",
     "- Use practical slack (~2 in total): item + ~2 in padding may still fit if within ~2 in of box interior on any edge (warehouse pro judgment).",
     "- Flat art in artwork boxes: longest edge may EQUAL box longest interior (72 in art → Artwork Box Large 72 in); padding only on width/depth.",
-    "- 3D decor (vases, lamps, bowls): standard parcel boxes with ~1 in padding per side on all sorted dimensions.",
+    "- 3D decor (vases, lamps, bowls, figurines, tureens, canisters): standard parcel boxes with ~1 in padding per side on all sorted dimensions.",
     "- Items may be rotated: compare sorted L×W×H to sorted box dimensions.",
     "- Weight: item may be up to 2× box maxWeightLb when dimensions fit; otherwise step up one size.",
+    "- Small items (longest edge ≤ 42 in and ≤ 25 lb, or ≤ 24 in any weight under 50 lb) always get a parcel box — never Store Default just because product type says Living Room or Furniture.",
     "",
     "Always Store Default (action leave_store_default, packageLabel \"Store Default\"):",
     "- Bulky furniture: sofas, sectionals, beds, dressers, armoires, dining tables, large desks, etc.",
-    "- Items over 50 lb or exceeding all parcel/art boxes even with practical slack.",
+    "- Items over 50 lb or longest edge over 42 in (unless thin flat art in artwork mailer).",
     "",
     "Never invent package names. packageLabel must exactly match one shopifyLabel from the list.",
     "When several boxes fit, always choose the lowest priceMin — never a pricier box if a cheaper one fits.",
