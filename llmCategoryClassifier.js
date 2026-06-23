@@ -86,6 +86,7 @@ RULES (mandatory):
 - **Bookcase**, **bookshelf**, **bookcases**, **bookshelves** (including wood & metal bookcases) → **"OfficeDen"**, never "LivingRoom".
 - Trays alone (butler tray, butlers tray, serving tray, decorative tray, ottoman tray — removable tray or tray-with-stand sold as a tray) → "Accessories". Tray **table** (explicit tray+table furniture, TV tray table, folding tray table meant as a small table) → "LivingRoom".
 - Dining table, dining chairs, buffet, sideboard, bar cart, hutch → "DiningRoom".
+- **Counter stool**, **bar stool**, **kitchen stool**, island stool, breakfast-bar seating, counter-height chair → **"DiningRoom"** (kitchen island / breakfast bar seating), not "LivingRoom" even if a Living Room tag is present.
 - Desk, office chair, filing cabinet → "OfficeDen".
 - Game tables (shuffleboard, pool table, ping pong, foosball), exercise/workout/fitness equipment (dumbbells, treadmill, home gym), play equipment, game room furniture → "OfficeDen".
 - Rug, runner, area rug → "Rugs".

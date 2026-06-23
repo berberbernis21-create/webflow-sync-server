@@ -2461,7 +2461,7 @@ async function removeConditionOptionIfFurniture(product) {
    HASH FOR CHANGE DETECTION
    Includes dimensions (variant + metafields + tag lines) so dimension changes still invalidate the fast path.
    body_html is normalized (collapse whitespace) so Shopify formatting drift doesn't cause false "changed".
-   taxonomyVersion: bump this when category/vertical logic changes so all items resync once (21 = berry/trinket glass dishes → Furniture Accessories not Living Room).
+   taxonomyVersion: bump this when category/vertical logic changes so all items resync once (22 = counter/bar/kitchen stools → Dining Room not Living Room).
    Image URLs strip query strings (CDN signature / width params often rotate without a real asset change).
    Price and dimensions are normalized so "199.0" vs "199.00" or float noise doesn't churn the cache.
 ====================================================== */
@@ -2541,7 +2541,7 @@ function shopifyHash(product) {
     images: imagesStable,
     slug: product.handle,
     dimensions,
-    taxonomyVersion: 21,
+    taxonomyVersion: 22,
     jewelryReclassVersion,
   };
 }
@@ -2554,7 +2554,7 @@ function contentHashForLLM(product) {
     product_type: (product.product_type || "").trim(),
     tagsKey: tagsFingerprintForHash(product),
     body_html: normalizeHtmlForHash(product.body_html),
-    taxonomyVersion: 21,
+    taxonomyVersion: 22,
     jewelryReclassVersion,
   };
 }
@@ -2857,6 +2857,10 @@ function detectCategoryFurnitureEvidence(title, descriptionHtml, tags, dimension
     return { category: "Accessories", confidence: 1, reason: "home_decor_serveware_guard" };
   }
 
+  if (listingLooksLikeDiningRoomSeating(title, descriptionHtml, tags)) {
+    return { category: "DiningRoom", confidence: 1, reason: "dining_room_seating_guard" };
+  }
+
   const forcedFromTitle = furnitureAccessoryCategoryOverrideTitle(title);
   if (forcedFromTitle) {
     return { category: forcedFromTitle, confidence: 1, reason: "title_keyword_override" };
@@ -3009,6 +3013,16 @@ function detectCategoryFurnitureEvidence(title, descriptionHtml, tags, dimension
       category: "Accessories",
       confidence: 1,
       reason: "home_decor_serveware_keyword_override",
+      bestScore,
+      secondBest,
+    };
+  }
+
+  if (listingLooksLikeDiningRoomSeating(title, descriptionHtml, tags)) {
+    return {
+      category: "DiningRoom",
+      confidence: 1,
+      reason: "dining_room_seating_keyword_override",
       bestScore,
       secondBest,
     };
@@ -3203,6 +3217,7 @@ function applyFurnitureSubcategoryPostOverrides({
     out = "Accessories";
   }
   if (furnitureTitleIndicatesLivingRoomTable(name)) out = "LivingRoom";
+  if (listingLooksLikeDiningRoomSeating(name, description, productTags)) out = "DiningRoom";
   return out;
 }
 
@@ -3255,6 +3270,37 @@ function listingLooksLikeFurnitureHomeDecorServeware(title, descriptionHtml, tag
   );
 }
 
+/** Counter/bar/kitchen stools — Dining Room seating, not Living Room accent stools. */
+function furnitureTitleIndicatesDiningRoomSeating(title) {
+  const t = normalizeTitleForFurnitureAccessoryMatch(title);
+  if (!t) return false;
+  return (
+    /\bcounter[\s-]+stools?\b/.test(t) ||
+    /\bbar[\s-]+stools?\b/.test(t) ||
+    /\bbarstools?\b/.test(t) ||
+    /\bkitchen[\s-]+stools?\b/.test(t) ||
+    /\bisland[\s-]+stools?\b/.test(t) ||
+    /\bbreakfast[\s-]+bar[\s-]+stools?\b/.test(t) ||
+    /\bcounter[\s-]+height\s+(chairs?|stools?)\b/.test(t) ||
+    /\bdining[\s-]+stools?\b/.test(t)
+  );
+}
+
+function listingLooksLikeDiningRoomSeating(title, descriptionHtml, tags) {
+  if (furnitureTitleIndicatesDiningRoomSeating(title)) return true;
+  const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const tagsStr = Array.isArray(tags) ? tags.join(" ") : typeof tags === "string" ? tags : "";
+  const hay = `${title || ""} ${stripHtml(descriptionHtml || "")} ${tagsStr}`.toLowerCase().replace(/-/g, " ");
+  if (!hay.trim()) return false;
+  if (/\bdining[\s-]+room[\s-]+seating\b/.test(hay)) return true;
+  if (/\bcounter[\s-]+stools?\b/.test(hay) || /\bbar[\s-]+stools?\b/.test(hay) || /\bbarstools?\b/.test(hay)) {
+    return true;
+  }
+  if (/\bkitchen[\s-]+island\b/.test(hay) && /\bstools?\b/.test(hay)) return true;
+  if (/\bbreakfast[\s-]+bar\b/.test(hay) && /\bstools?\b/.test(hay)) return true;
+  return false;
+}
+
 /**
  * Furniture subcategory: LLM often returns LivingRoom when copy mentions dining/coffee tables or “living space”.
  * When title is unambiguous, override LLM so keyword truth wins (we still call LLM for audit; cost already paid).
@@ -3263,6 +3309,7 @@ function furnitureAccessoryCategoryOverrideTitle(title) {
   const t = normalizeTitleForFurnitureAccessoryMatch(title);
   if (!t) return null;
   if (titleIndicatesLightingFurniture(title)) return "Lighting";
+  if (furnitureTitleIndicatesDiningRoomSeating(title)) return "DiningRoom";
   if (furnitureTitleIndicatesLivingRoomTable(title)) return "LivingRoom";
   if (
     /\b(coat|hat|magazine|wine|towel|luggage)\s+racks?\b/.test(t) ||
@@ -3341,6 +3388,16 @@ function furnitureAccessoryCategoryOverrideTitle(title) {
     return "OutdoorPatio";
   }
   if (/\bdining\s+benches?\b/i.test(t)) return "DiningRoom";
+  if (
+    /\bcounter[\s-]+stools?\b/.test(t) ||
+    /\bbar[\s-]+stools?\b/.test(t) ||
+    /\bbarstools?\b/.test(t) ||
+    /\bkitchen[\s-]+stools?\b/.test(t) ||
+    /\bisland[\s-]+stools?\b/.test(t) ||
+    /\bdining[\s-]+stools?\b/.test(t)
+  ) {
+    return "DiningRoom";
+  }
   if (/\bbenches?\b/i.test(t)) return "LivingRoom";
   if (
     /\b(mirrored\s+chest|mirror\s+chest|door\s+chest|\d[\s-]*door\s+chest|chest\s+of\s+drawers|mirrored\s+dresser)\b/i.test(t)

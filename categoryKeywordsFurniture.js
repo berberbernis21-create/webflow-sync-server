@@ -11,8 +11,6 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
     "sofa", "sofas", "loveseat", "loveseats", "sectional", "sectionals",
     "couch", "couches", "chair", "chairs", "armchair", "armchairs", "accent chair",
     "slipper chair", "bergere", "chaise", "chaises", "recliner", "recliners",
-    "bar stool", "bar stools", "barstool", "barstools",
-    "counter stool", "counter stools", "kitchen stool", "kitchen stools",
     "table", "tables", "coffee table", "coffee tables", "side table", "side tables",
     "end table", "end tables", "console", "consoles", "console table", "console tables",
     "media console", "media consoles", "tv stand", "tv stands",
@@ -39,7 +37,11 @@ export const CATEGORY_KEYWORDS_FURNITURE = {
     "breakfast table", "kitchen table", "kitchen island",
     "dining set", "table and chairs", "extension table",
     "pedestal table", "drop leaf", "harvest table", "trestle table",
-    "banquette", "dining bench", "hutch", "wardrobe"
+    "banquette", "dining bench", "hutch", "wardrobe",
+    "bar stool", "bar stools", "barstool", "barstools",
+    "counter stool", "counter stools", "kitchen stool", "kitchen stools",
+    "island stool", "island stools", "breakfast bar stool", "breakfast bar stools",
+    "dining stool", "dining stools", "dining room seating", "counter height chair", "counter height chairs"
   ],
 
   OfficeDen: [
