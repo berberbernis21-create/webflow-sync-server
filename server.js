@@ -666,6 +666,29 @@ const WEBHOOK_PRODUCT_DEBOUNCE_MS = Math.max(
   parseInt(process.env.WEBHOOK_PRODUCT_DEBOUNCE_MS || "3500", 10) || 3500
 );
 const productWebhookDebounceTimers = new Map();
+/** Skip full webhook sync briefly after /set-categories (metafield write would otherwise re-trigger heavy sync). */
+const categoryOnlyWebhookSuppress = new Map();
+const CATEGORY_ONLY_WEBHOOK_SUPPRESS_MS = Math.max(
+  30_000,
+  parseInt(process.env.CATEGORY_ONLY_WEBHOOK_SUPPRESS_MS || "120000", 10) || 120_000
+);
+
+function suppressWebhookSyncForProduct(shopifyProductId, ms = CATEGORY_ONLY_WEBHOOK_SUPPRESS_MS) {
+  const id = String(shopifyProductId ?? "").trim();
+  if (!id) return;
+  categoryOnlyWebhookSuppress.set(id, Date.now() + ms);
+}
+
+function isWebhookSyncSuppressed(shopifyProductId) {
+  const id = String(shopifyProductId ?? "").trim();
+  const exp = categoryOnlyWebhookSuppress.get(id);
+  if (!exp) return false;
+  if (Date.now() > exp) {
+    categoryOnlyWebhookSuppress.delete(id);
+    return false;
+  }
+  return true;
+}
 
 function scheduleDebouncedProductWebhookSync(shopifyProductId, triggerPath) {
   const id = String(shopifyProductId ?? "").trim();
@@ -4275,6 +4298,7 @@ function detectLuxuryCategoryEvidence(title, descriptionHtml, product = null) {
     productLooksLikeLightingFixture(pseudoForMedia);
 
   if (
+    !isBagOrAgendaProduct(title, descriptionHtml) &&
     !blockedMedia &&
     (JEWELRY_KEYWORDS.some((kw) => matchWordBoundary(combined, kw)) || isLikelyJewelryBandRing(combined))
   ) {
@@ -7275,7 +7299,11 @@ async function syncSingleProductCore(product, cache, options = {}) {
         }
 
         categoryForMetafield = mapCategoryForShopify(resolvedLux);
-        if (isJewelryProduct(name, description, product) && !isBagOrAgendaProduct(name, description)) {
+        if (
+          !options.categoryOverride &&
+          isJewelryProduct(name, description, product) &&
+          !isBagOrAgendaProduct(name, description)
+        ) {
           categoryForMetafield = detectLuxuryJewelrySubcategory(name, description, product) ?? "Other Jewelry";
         }
         else if (isAccessoryProduct(name, description) && !isBagOrAgendaProduct(name, description)) categoryForMetafield = "Accessories";
@@ -8438,6 +8466,15 @@ async function syncSingleProduct(product, cache, options = {}) {
 async function runWebhookSingleProductSync(shopifyProductId, triggerPath) {
   const id = String(shopifyProductId ?? "").trim();
   if (!id) return;
+  if (isWebhookSyncSuppressed(id)) {
+    webflowLog("info", {
+      event: "shopify.webhook.sync_suppressed",
+      path: triggerPath,
+      shopifyProductId: id,
+      reason: "category_only_batch",
+    });
+    return;
+  }
   syncRequestId = crypto.randomUUID().slice(0, 8);
   syncStartTime = Date.now();
   try {
@@ -11699,6 +11736,162 @@ function normalizeCategoryByTitleMap(raw) {
   return out;
 }
 
+function mapLuxuryCategoryToWebflowField(category) {
+  const mapped = mapCategoryForShopify(category);
+  const isLuxuryCategory = mapped && LUXURY_TAXONOMY.includes(mapped);
+  const luxuryCategory = isLuxuryCategory ? mapped : "Other ";
+  return luxuryCategory && luxuryCategory.trimEnd() === "Other" ? "Other" : luxuryCategory ?? "";
+}
+
+/**
+ * Fast path: Shopify category metafields + Luxury CMS category field only (no tags, images, furniture indexes).
+ */
+async function setLuxuryCategoryOnly(product, categoryRaw, cache) {
+  const shopifyProductId = String(product?.id ?? "").trim();
+  if (!shopifyProductId) return { operation: "failed", error: "missing_shopify_id" };
+  const categoryMapped = mapCategoryForShopify(String(categoryRaw || "").trim());
+  const config = getWebflowConfig("luxury");
+  if (!config?.collectionId || !config?.token) {
+    return { operation: "failed", error: "luxury_webflow_not_configured" };
+  }
+
+  await updateShopifyMetafields(shopifyProductId, {
+    department: "Luxury Goods",
+    category: categoryMapped,
+    vertical: "luxury",
+  });
+
+  const slug = product.handle || "";
+  const shopifyUrl = `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${slug}`;
+  let webflowId =
+    cache[shopifyProductId]?.webflowId ??
+    luxuryItemIndex?.byShopifyId?.get(shopifyProductId)?.id ??
+    null;
+  if (!webflowId) {
+    const existing = await findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, config);
+    webflowId = existing?.id ?? null;
+  }
+  if (!webflowId) return { operation: "failed", error: "webflow_item_not_found" };
+
+  const webflowCategory = mapLuxuryCategoryToWebflowField(categoryRaw);
+  const existing = await getWebflowItemById(webflowId, config);
+  const currentCategory = existing?.fieldData?.category ?? "";
+  if (String(currentCategory) !== String(webflowCategory)) {
+    await patchLuxuryCmsItemFieldData(config, webflowId, { category: webflowCategory }, { existing });
+  }
+
+  cache[shopifyProductId] = {
+    ...(cache[shopifyProductId] || {}),
+    webflowId,
+    vertical: "luxury",
+  };
+  suppressWebhookSyncForProduct(shopifyProductId);
+  webflowLog("info", {
+    event: "set_category.done",
+    shopifyProductId,
+    productTitle: product.title,
+    category: categoryMapped,
+    webflowCategory,
+    webflowId,
+  });
+  return { operation: "update", id: webflowId };
+}
+
+app.post("/set-categories", async (req, res) => {
+  syncRequestId = crypto.randomUUID().slice(0, 8);
+  syncStartTime = Date.now();
+  const rawIds = req.body?.shopifyProductIds ?? req.body?.ids ?? [];
+  const ids = Array.isArray(rawIds) ? rawIds.map((id) => String(id).trim()).filter(Boolean) : [];
+  if (!ids.length) {
+    return res.status(400).json({ error: "shopifyProductIds (array) is required" });
+  }
+  const categoryByTitle = normalizeCategoryByTitleMap(req.body?.categoryByTitle);
+  if (!Object.keys(categoryByTitle).length) {
+    return res.status(400).json({ error: "categoryByTitle map is required" });
+  }
+  webflowLog("info", {
+    event: "set-categories.entry",
+    count: ids.length,
+    categoryOverrides: Object.keys(categoryByTitle).length,
+  });
+  try {
+    luxuryItemIndex = null;
+    await loadLuxuryItemIndex();
+    const cache = loadCache();
+    let updated = 0,
+      failed = 0,
+      skipped = 0;
+    const results = [];
+
+    for (const shopifyProductId of ids) {
+      try {
+        const product = await fetchShopifyProductById(shopifyProductId);
+        if (!product) {
+          failed++;
+          results.push({ shopifyProductId, error: "shopify_product_not_found" });
+          continue;
+        }
+        const titleKey = String(product.title || "").trim().toLowerCase();
+        const category = categoryByTitle[titleKey];
+        if (!category) {
+          skipped++;
+          results.push({ shopifyProductId, title: product.title, operation: "skip", error: "no_category_override" });
+          continue;
+        }
+        const result = await setLuxuryCategoryOnly(product, category, cache);
+        if (result.operation === "failed") {
+          failed++;
+          results.push({ shopifyProductId, title: product.title, error: result.error });
+        } else {
+          updated++;
+          results.push({
+            shopifyProductId,
+            title: product.title,
+            operation: "update",
+            webflowId: result.id,
+            category,
+          });
+        }
+      } catch (err) {
+        failed++;
+        results.push({ shopifyProductId, error: err.message || String(err) });
+        webflowLog("error", {
+          event: "set-categories.product_failed",
+          shopifyProductId,
+          message: err.message,
+        });
+      }
+    }
+
+    saveCache(cache);
+    const durationMs = syncStartTime != null ? Date.now() - syncStartTime : null;
+    webflowLog("info", {
+      event: "set-categories.exit",
+      count: ids.length,
+      updated,
+      skipped,
+      failed,
+      durationMs,
+    });
+    res.json({
+      status: "ok",
+      requested: ids.length,
+      updated,
+      skipped,
+      failed,
+      durationMs,
+      results,
+    });
+  } catch (err) {
+    webflowLog("error", { event: "set-categories.error", message: err.message });
+    res.status(500).json({ error: err.message });
+  } finally {
+    syncRequestId = null;
+    luxuryItemIndex = null;
+    syncStartTime = null;
+  }
+});
+
 app.post("/sync-by-ids", async (req, res) => {
   syncRequestId = crypto.randomUUID().slice(0, 8);
   syncStartTime = Date.now();
@@ -11711,7 +11904,14 @@ app.post("/sync-by-ids", async (req, res) => {
   const createOnly = req.body?.createOnly === true;
   const categoryByTitle = normalizeCategoryByTitleMap(req.body?.categoryByTitle);
   const skipTagWrites = req.body?.skipTagWrites === true || Object.keys(categoryByTitle).length > 0;
-  webflowLog("info", { event: "sync-by-ids.entry", count: ids.length, forceReclassify, createOnly, categoryOverrides: Object.keys(categoryByTitle).length, skipTagWrites });
+  webflowLog("info", {
+    event: "sync-by-ids.entry",
+    count: ids.length,
+    forceReclassify,
+    createOnly,
+    categoryOverrides: Object.keys(categoryByTitle).length,
+    skipTagWrites,
+  });
   try {
     await loadFurnitureCategoryMap();
     furnitureEcProductTypeAllowlist = null;
