@@ -1,7 +1,7 @@
 /**
  * LLM-based category classifier: picks the exact category within a vertical.
- * - Luxury: Handbags, Totes, Crossbody, Backpacks, Small Bags, Wallets, Luggage, Scarves, Belts, Jewelry, Accessories, Other
- *   Rules: jewelry → Jewelry; shoes → Other; miscellaneous luxury items (straps, pouches, charms, etc.) → Accessories; Other only for footwear or truly uncategorizable.
+ * - Luxury: Handbags, Totes, Crossbody, Backpacks, Small Bags, Wallets, Luggage, Scarves, Belts, Necklaces, Rings, Bracelets, Earrings, Other Jewelry, Accessories, Other
+ *   Rules: jewelry subcategories; watches → Accessories; shoes → Other; miscellaneous luxury items (straps, pouches, charms, etc.) → Accessories; Other only for footwear or truly uncategorizable.
  * - Furniture: LivingRoom, DiningRoom, OfficeDen, Rugs, ArtMirrors, Bedroom, Accessories, OutdoorPatio, Lighting
  *   Rules: art/paintings/photographs/framed → ArtMirrors; umbrellas/patio → OutdoorPatio.
  * Uses same OPENAI_API_KEY as vertical classifier. Falls back to null on failure so caller can use keyword logic.
@@ -35,7 +35,9 @@ function getProductText(product) {
 
 const LUXURY_CATEGORIES = [
   "Handbags", "Totes", "Crossbody", "Backpacks", "Small Bags",
-  "Wallets", "Luggage", "Scarves", "Belts", "Jewelry", "Accessories", "Other"
+  "Wallets", "Luggage", "Scarves", "Belts",
+  "Necklaces", "Rings", "Bracelets", "Earrings", "Other Jewelry",
+  "Accessories", "Other",
 ];
 
 const FURNITURE_CATEGORIES = [
@@ -49,8 +51,12 @@ Use ONLY the product title and description to choose exactly ONE category. Do no
 Allowed categories: ${LUXURY_CATEGORIES.join(", ")}.
 
 RULES (mandatory):
-- Jewelry, earrings, bracelets, necklaces, rings, pendants, brooches, clip-on earrings → always "Jewelry".
-- Wedding/stacking/eternity bands and other ring-style **bands** that include sizing (e.g. “size 8”), hammered metal, or gold/silver-tone wording → "Jewelry" (not Accessories). Opera-length / multi-strand statement necklaces, including titles that say “multi-media” as a style descriptor → "Jewelry" (not books/media).
+- Earrings, clip-on earrings, studs, hoops → "Earrings".
+- Necklaces, pendants, chokers, opera-length / multi-strand statement necklaces (including titles that say “multi-media” as a style descriptor) → "Necklaces" (not books/media).
+- Bracelets, bangles, cuffs, tennis bracelets → "Bracelets".
+- Rings, wedding/stacking/eternity bands and other ring-style **bands** that include sizing (e.g. “size 8”), hammered metal, or gold/silver-tone wording → "Rings" (not Accessories).
+- Brooches, generic jewelry/jewellery, or unclear jewelry type → "Other Jewelry".
+- Wristwatches, watches, timepieces → "Accessories" (not any jewelry category).
 - Barrettes, hair accessories, keychains, key rings, bag charms, purse hooks, straps, gloves and similar wearable add-ons → always "Accessories".
 - Shoes, sneakers, boots, heels, sandals, loafers, mules, flats, pumps, footwear → always "Other".
 - Handbags, shoulder bags, satchels, day bags → "Handbags".

@@ -71,12 +71,29 @@ export const CATEGORY_KEYWORDS = {
     "belt accessory", "belt accessories"
   ],
 
-  Jewelry: [
-    "jewelry", "jewellery", "jewel", "earring", "earrings", "bracelet", "bracelets",
-    "necklace", "necklaces", "ring", "rings", "pendant", "pendants", "brooch", "brooches",
-    "clip-on earring", "clip-on earrings",
+  Earrings: [
+    "earring", "earrings", "clip-on earring", "clip-on earrings",
+    "stud earring", "stud earrings", "hoop earring", "hoop earrings",
+    "drop earring", "drop earrings", "chandelier earring", "chandelier earrings",
+  ],
+
+  Necklaces: [
+    "necklace", "necklaces", "pendant", "pendants", "opera necklace",
+    "choker", "lariat", "chain necklace", "strand necklace",
+  ],
+
+  Bracelets: [
+    "bracelet", "bracelets", "bangle", "bangles", "cuff bracelet", "tennis bracelet",
+  ],
+
+  Rings: [
+    "ring", "rings", "wedding band", "stacking band", "eternity band",
+    "signet ring", "cocktail ring", "band ring",
+  ],
+
+  "Other Jewelry": [
+    "jewelry", "jewellery", "jewel", "brooch", "brooches",
     "statement jewelry", "costume jewelry",
-    "wedding band", "stacking band", "eternity band", "opera necklace",
   ],
 
   Accessories: [
@@ -89,5 +106,3 @@ export const CATEGORY_KEYWORDS = {
     "designer accessories"
   ]
 };
-
-

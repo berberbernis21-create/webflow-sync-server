@@ -439,13 +439,23 @@ axios.interceptors.response.use(
    DUAL-PIPELINE: WEBFLOW ENV CONFIG
    Luxury = existing. Furniture = new env vars.
 ====================================================== */
+function resaleEnv(primary, legacy) {
+  const v = process.env[primary];
+  if (v != null && String(v).trim() !== "") return String(v).trim();
+  if (legacy) {
+    const alt = process.env[legacy];
+    if (alt != null && String(alt).trim() !== "") return String(alt).trim();
+  }
+  return undefined;
+}
+
 function getWebflowConfig(vertical) {
   if (vertical === "furniture") {
     return {
-      collectionId: process.env.RESALE_Products_Collection_ID,
-      skuCollectionId: process.env.RESALE_SKUs_Collection_ID,
-      token: process.env.RESALE_TOKEN,
-      siteId: process.env.RESALE_WEBFLOW_SITE_ID,
+      collectionId: resaleEnv("RESALE_Products_Collection_ID", "WEBFLOW_RESALE_COLLECTION_ID"),
+      skuCollectionId: resaleEnv("RESALE_SKUs_Collection_ID", "WEBFLOW_RESALE_SKUS_COLLECTION_ID"),
+      token: resaleEnv("RESALE_TOKEN", "WEBFLOW_RESALE_TOKEN"),
+      siteId: resaleEnv("RESALE_WEBFLOW_SITE_ID", "WEBFLOW_RESALE_SITE_ID"),
     };
   }
   return {
@@ -456,9 +466,10 @@ function getWebflowConfig(vertical) {
   };
 }
 
-/** Default: Furniture Products CMS collection + SKUs collection. Ecommerce /sites/.../products only when FURNITURE_USE_ECOMMERCE_API=1. */
+/** Webflow Ecommerce [Products] rejects POST /collections/.../items (403). Use /sites/.../products when resale siteId is set. */
 function furnitureUsesEcommerceApi(config) {
-  return process.env.FURNITURE_USE_ECOMMERCE_API === "1" && !!(config?.siteId && config?.token);
+  if (process.env.FURNITURE_USE_ECOMMERCE_API === "0") return false;
+  return !!(config?.siteId && config?.token);
 }
 
 function furnitureUsesCmsProducts(config) {
@@ -2261,7 +2272,9 @@ const SYNC_DEPARTMENT_TAGS = ["Furniture & Home", "Luxury Goods"];
 const LEGACY_VERTICAL_SHORTHAND_TAGS = ["Luxury", "Furniture"];
 const SYNC_CATEGORY_TAGS = [
   "Living Room", "Dining Room", "Office Den", "Rugs", "Art / Mirrors", "Bedroom", "Accessories", "Outdoor / Patio", "Lighting",
-  "Handbags", "Totes", "Crossbody", "Wallets", "Backpacks", "Luggage", "Scarves", "Belts", "Jewelry", "Small Bags", "Other ", "Other",
+  "Handbags", "Totes", "Crossbody", "Wallets", "Backpacks", "Luggage", "Scarves", "Belts",
+  "Necklaces", "Rings", "Bracelets", "Earrings", "Other Jewelry", "Jewelry",
+  "Small Bags", "Other ", "Other",
   "Recently Sold",
 ];
 function mergeProductTagsForSync(existingTags, department, category) {
@@ -2515,7 +2528,7 @@ async function removeConditionOptionIfFurniture(product) {
    HASH FOR CHANGE DETECTION
    Includes dimensions (variant + metafields + tag lines) so dimension changes still invalidate the fast path.
    body_html is normalized (collapse whitespace) so Shopify formatting drift doesn't cause false "changed".
-   taxonomyVersion: bump this when category/vertical logic changes so all items resync once (22 = counter/bar/kitchen stools → Dining Room not Living Room).
+   taxonomyVersion: bump this when category/vertical logic changes so all items resync once (23 = luxury jewelry split into Necklaces/Rings/Bracelets/Earrings/Other Jewelry + NK/RG/BR/ER/OJ tags).
    Image URLs strip query strings (CDN signature / width params often rotate without a real asset change).
    Price and dimensions are normalized so "199.0" vs "199.00" or float noise doesn't churn the cache.
 ====================================================== */
@@ -2578,7 +2591,7 @@ function tagsFingerprintForHash(product) {
 
 function shopifyHash(product) {
   const dimensions = normalizeDimsForHash(getDimensionsFromProduct(product));
-  const jewelryReclassVersion = isJewelryProduct(product?.title || "", product?.body_html || "", product) ? 1 : 0;
+  const jewelryReclassVersion = isJewelryProduct(product?.title || "", product?.body_html || "", product) ? 2 : 0;
   // Sort image URLs so Shopify API order changes do not invalidate the hash every sync (was causing full Webflow passes).
   const imagesStable = (product.images || [])
     .map((i) => normalizeShopifyImageSrcForHash(i?.src))
@@ -2595,20 +2608,20 @@ function shopifyHash(product) {
     images: imagesStable,
     slug: product.handle,
     dimensions,
-    taxonomyVersion: 22,
+    taxonomyVersion: 23,
     jewelryReclassVersion,
   };
 }
 
 /** Inputs that drive vertical + category LLMs; any change must rerun classification (not only Webflow display fields). */
 function contentHashForLLM(product) {
-  const jewelryReclassVersion = isJewelryProduct(product?.title || "", product?.body_html || "", product) ? 1 : 0;
+  const jewelryReclassVersion = isJewelryProduct(product?.title || "", product?.body_html || "", product) ? 2 : 0;
   return {
     title: (product.title || "").trim(),
     product_type: (product.product_type || "").trim(),
     tagsKey: tagsFingerprintForHash(product),
     body_html: normalizeHtmlForHash(product.body_html),
-    taxonomyVersion: 22,
+    taxonomyVersion: 23,
     jewelryReclassVersion,
   };
 }
@@ -2632,6 +2645,9 @@ function detectCategory(title) {
    (Shopify dropdown requires exact matches)
 ====================================================== */
 function mapCategoryForShopify(category) {
+  const jewelryNorm = normalizeLuxuryJewelryCategory(category);
+  if (jewelryNorm) return jewelryNorm;
+
   const map = {
     Handbags: "Handbags",
     Totes: "Totes",
@@ -2641,7 +2657,12 @@ function mapCategoryForShopify(category) {
     Luggage: "Luggage",
     Scarves: "Scarves",
     Belts: "Belts",
-    Jewelry: "Jewelry",
+    Necklaces: "Necklaces",
+    Rings: "Rings",
+    Bracelets: "Bracelets",
+    Earrings: "Earrings",
+    "Other Jewelry": "Other Jewelry",
+    Jewelry: "Other Jewelry",
     Accessories: "Accessories",
     "Small Bags": "Small Bags",
 
@@ -2673,11 +2694,36 @@ const LUXURY_ECOMMERCE_LETTER_TO_CATEGORY = {
   O: "Other ",
   S: "Small Bags",
   T: "Totes",
-  J: "Jewelry",
+  J: "Other Jewelry",
   R: "Scarves",
   E: "Belts",
   W: "Wallets",
 };
+
+/** Two-letter luxury jewelry tags (NK, RG, BR, ER, OJ). Checked before single-letter tags. */
+const LUXURY_JEWELRY_ECOMMERCE_TAG_TO_CATEGORY = {
+  NK: "Necklaces",
+  RG: "Rings",
+  BR: "Bracelets",
+  ER: "Earrings",
+  OJ: "Other Jewelry",
+};
+
+const LUXURY_JEWELRY_CATEGORIES = ["Necklaces", "Rings", "Bracelets", "Earrings", "Other Jewelry"];
+
+function isLuxuryJewelryCategory(category) {
+  const c = String(category || "").trim();
+  if (/^jewelry$/i.test(c)) return true;
+  return LUXURY_JEWELRY_CATEGORIES.includes(c);
+}
+
+function normalizeLuxuryJewelryCategory(category) {
+  const c = String(category || "").trim();
+  if (!c) return null;
+  if (/^jewelry$/i.test(c)) return "Other Jewelry";
+  if (LUXURY_JEWELRY_CATEGORIES.includes(c)) return c;
+  return null;
+}
 
 /** Merchant vertical override tags (2 letters). Category still comes from single-letter tags below. */
 const ECOMMERCE_VERTICAL_TAG_FURNITURE = "FH";
@@ -2785,6 +2831,26 @@ function getEcommerceCategoryLetterFromTags(tags, letterToCategoryMap) {
   return matched.length ? matched[matched.length - 1] : null;
 }
 
+/** Two-letter luxury jewelry tags (NK, RG, BR, ER, OJ) from one normalized tag string. */
+function extractLuxuryJewelryEcommerceTagFromTag(normalized) {
+  if (!normalized) return null;
+
+  const jewelryCombined = normalized.match(
+    /(?:^|(?:E[\s_-]?COMMERCE|ECOMMERCE)[^A-Z0-9]*)(?:FH|LG)?[\s,./:-]+(NK|RG|BR|ER|OJ)\b/
+  );
+  if (jewelryCombined) return jewelryCombined[1];
+
+  const direct = normalized.match(/^(NK|RG|BR|ER|OJ)$/);
+  if (direct) return direct[1];
+
+  if (ECOMMERCE_TAG_PREFIX.test(normalized)) {
+    const prefixed = normalized.match(/\b(?:E[\s_-]?COMMERCE|ECOMMERCE)\b[^A-Z0-9]*(NK|RG|BR|ER|OJ)\b/);
+    if (prefixed) return prefixed[1];
+  }
+
+  return null;
+}
+
 function getFurnitureCategoryOverrideFromEcommerceTags(tags) {
   const letter = getEcommerceCategoryLetterFromTags(tags, FURNITURE_ECOMMERCE_LETTER_TO_CATEGORY);
   if (!letter) return null;
@@ -2793,10 +2859,35 @@ function getFurnitureCategoryOverrideFromEcommerceTags(tags) {
 }
 
 function getLuxuryCategoryOverrideFromEcommerceTags(tags) {
-  const letter = getEcommerceCategoryLetterFromTags(tags, LUXURY_ECOMMERCE_LETTER_TO_CATEGORY);
-  if (!letter) return null;
-  const category = LUXURY_ECOMMERCE_LETTER_TO_CATEGORY[letter];
-  return category ? { letter, category } : null;
+  if (!Array.isArray(tags) || !tags.length) return null;
+
+  const jewelryMatched = [];
+  const letterMatched = [];
+
+  for (const rawTag of tags) {
+    const tag = String(rawTag || "").trim();
+    if (!tag) continue;
+    const normalized = tag.toUpperCase();
+
+    const jewelryTag = extractLuxuryJewelryEcommerceTagFromTag(normalized);
+    if (jewelryTag && LUXURY_JEWELRY_ECOMMERCE_TAG_TO_CATEGORY[jewelryTag]) {
+      jewelryMatched.push(jewelryTag);
+    }
+
+    for (const letter of extractEcommerceCategoryLettersFromTag(normalized)) {
+      if (LUXURY_ECOMMERCE_LETTER_TO_CATEGORY[letter]) letterMatched.push(letter);
+    }
+  }
+
+  if (jewelryMatched.length) {
+    const tag = jewelryMatched[jewelryMatched.length - 1];
+    return { letter: tag, category: LUXURY_JEWELRY_ECOMMERCE_TAG_TO_CATEGORY[tag] };
+  }
+  if (letterMatched.length) {
+    const letter = letterMatched[letterMatched.length - 1];
+    return { letter, category: LUXURY_ECOMMERCE_LETTER_TO_CATEGORY[letter] };
+  }
+  return null;
 }
 
 /**
@@ -3831,16 +3922,24 @@ const TYPE_TO_FURNITURE_CATEGORY = {
 };
 
 // Existing taxonomy: Luxury Goods metafield values (exact)
-const LUXURY_TAXONOMY = ["Handbags", "Totes", "Crossbody", "Small Bags", "Backpacks", "Wallets", "Luggage", "Scarves", "Belts", "Jewelry", "Accessories", "Other ", "Recently Sold"];
+const LUXURY_TAXONOMY = [
+  "Handbags", "Totes", "Crossbody", "Small Bags", "Backpacks", "Wallets", "Luggage",
+  "Scarves", "Belts", "Necklaces", "Rings", "Bracelets", "Earrings", "Other Jewelry",
+  "Accessories", "Other ", "Recently Sold",
+];
 const TYPE_TO_LUXURY_CATEGORY = {
   "handbag": "Handbags", "handbags": "Handbags", "tote": "Totes", "totes": "Totes", "crossbody": "Crossbody",
   "small bag": "Small Bags", "backpack": "Backpacks", "backpacks": "Backpacks", "wallet": "Wallets", "wallets": "Wallets",
   "luggage": "Luggage", "scarf": "Scarves", "scarves": "Scarves", "belt": "Belts", "belts": "Belts",
   "clutch": "Small Bags", "bag": "Handbags", "bags": "Handbags", "fashion accessories": "Accessories", "wearable": "Accessories", "accessories": "Accessories",
-  "jewelry": "Jewelry", "jewellery": "Jewelry", "earring": "Jewelry", "earrings": "Jewelry",
-  "bracelet": "Jewelry", "bracelets": "Jewelry", "necklace": "Jewelry", "necklaces": "Jewelry",
-  "ring": "Jewelry", "rings": "Jewelry", "pendant": "Jewelry", "pendants": "Jewelry",
-  "brooch": "Jewelry", "brooches": "Jewelry", "barrette": "Jewelry", "barrettes": "Jewelry",
+  "jewelry": "Other Jewelry", "jewellery": "Other Jewelry",
+  "earring": "Earrings", "earrings": "Earrings",
+  "bracelet": "Bracelets", "bracelets": "Bracelets",
+  "necklace": "Necklaces", "necklaces": "Necklaces",
+  "ring": "Rings", "rings": "Rings",
+  "pendant": "Necklaces", "pendants": "Necklaces",
+  "brooch": "Other Jewelry", "brooches": "Other Jewelry",
+  "barrette": "Other Jewelry", "barrettes": "Other Jewelry",
 };
 
 function getFurnitureCategoryFromType(productType) {
@@ -4103,6 +4202,38 @@ function isAccessoryProduct(title, descriptionHtml) {
   return ACCESSORY_KEYWORDS.some((kw) => matchWordBoundary(text, kw));
 }
 
+/** Pick the best luxury jewelry subcategory from title/description keywords. */
+function detectLuxuryJewelrySubcategory(title, descriptionHtml, product = null) {
+  if (isWristwatchProduct(title, descriptionHtml, product)) return null;
+  if (!isJewelryProduct(title, descriptionHtml, product)) return null;
+
+  const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const titleText = (title || "").trim().toLowerCase();
+  const descText = stripHtml(descriptionHtml || "").trim().toLowerCase();
+
+  const tryMatch = (text) => {
+    if (!text) return null;
+    for (const cat of LUXURY_JEWELRY_CATEGORIES) {
+      const keywords = CATEGORY_KEYWORDS[cat];
+      if (!Array.isArray(keywords)) continue;
+      for (const kw of keywords) {
+        if (matchWordBoundary(text, kw)) return cat;
+      }
+    }
+    return null;
+  };
+
+  const titleHit = tryMatch(titleText);
+  if (titleHit) return titleHit;
+  if (isLikelyJewelryBandRing(titleText)) return "Rings";
+  if (/\bbrooch(es)?\b/i.test(title || "")) return "Other Jewelry";
+
+  const descHit = tryMatch(descText);
+  if (descHit) return descHit;
+  if (isLikelyJewelryBandRing([titleText, descText].filter(Boolean).join(" "))) return "Rings";
+  return "Other Jewelry";
+}
+
 /** Luxury keyword evidence + confidence for LLM_CATEGORY_CONFIDENCE_THRESHOLD gating. */
 function detectLuxuryCategoryEvidence(title, descriptionHtml, product = null) {
   const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
@@ -4147,9 +4278,10 @@ function detectLuxuryCategoryEvidence(title, descriptionHtml, product = null) {
     !blockedMedia &&
     (JEWELRY_KEYWORDS.some((kw) => matchWordBoundary(combined, kw)) || isLikelyJewelryBandRing(combined))
   ) {
+    const subcategory = detectLuxuryJewelrySubcategory(title, descriptionHtml, product) ?? "Other Jewelry";
     const jewelryTitle =
       JEWELRY_KEYWORDS.some((kw) => matchWordBoundary(titleText, kw)) || isLikelyJewelryBandRing(titleText);
-    return { category: "Jewelry", confidence: jewelryTitle ? 0.9 : 0.82, reason: "jewelry_keywords" };
+    return { category: subcategory, confidence: jewelryTitle ? 0.9 : 0.82, reason: "jewelry_keywords" };
   }
 
   if (ACCESSORY_KEYWORDS.some((kw) => matchWordBoundary(combined, kw))) {
@@ -4273,8 +4405,8 @@ function cacheEntryAfterCreateOnlySkip(cacheEntry, currentHash, currentContentHa
 /** Fetch Categories collection from Webflow and build name/slug -> item ID map so we don't need env vars. */
 async function loadFurnitureCategoryMap() {
   if (furnitureCategoryMapCache) return furnitureCategoryMapCache;
-  const siteId = process.env.RESALE_WEBFLOW_SITE_ID;
-  const token = process.env.RESALE_TOKEN;
+  const siteId = resaleEnv("RESALE_WEBFLOW_SITE_ID", "WEBFLOW_RESALE_SITE_ID");
+  const token = resaleEnv("RESALE_TOKEN", "WEBFLOW_RESALE_TOKEN");
   if (!siteId || !token) {
     webflowLog("info", { event: "furniture_categories.skip", reason: "missing RESALE_WEBFLOW_SITE_ID or RESALE_TOKEN" });
     return {};
@@ -4539,7 +4671,9 @@ function getTraxiaCategoryFromTags(tags) {
 
 function productHasJewelryCategoryTag(product) {
   const cat = getTraxiaCategoryFromTags(getProductTagsArray(product));
-  return Boolean(cat && /\bjewel/i.test(cat));
+  if (!cat) return false;
+  if (/\bjewel/i.test(cat)) return true;
+  return /\b(necklace|ring|bracelet|earring)\b/i.test(cat);
 }
 
 /** Traxia "Category: ACCESSORIES" — Furniture & Home decor (not Luxury), unless LG or JEWELRY. */
@@ -6162,6 +6296,10 @@ async function syncSingleProductCore(product, cache, options = {}) {
 
   let recoveredFromWebflow = null;
 
+  // Never no-touch skip when Shopify says sold out — stale cache (lastQty/hash already 0) used to skip Webflow sold repair.
+  const shopifySoldBlocksNoTouch =
+    shopifyQtySaysSold(qty) || shouldMarkSoldTransition(previousQty, qty);
+
   if (
     WEBFLOW_STRICT_NOOP_UPDATES &&
     !recoveredFromWebflow &&
@@ -6169,7 +6307,8 @@ async function syncSingleProductCore(product, cache, options = {}) {
     shopifyDataUnchangedForCache &&
     cacheEntry?.webflowId &&
     !verticalNeedsCorrection &&
-    !forceReclassify
+    !forceReclassify &&
+    !shopifySoldBlocksNoTouch
   ) {
     const vertical = cachedVerticalForSkip;
     cache[shopifyProductId] = {
@@ -7014,7 +7153,9 @@ async function syncSingleProductCore(product, cache, options = {}) {
         } else {
           if (isShoeProduct(name, description)) categoryForMetafield = "Other ";
           else categoryForMetafield = detectLuxuryCategoryFromTitle(name, description, product) ?? "Other ";
-          if (isJewelryProduct(name, description, product) && !isBagOrAgendaProduct(name, description)) categoryForMetafield = "Jewelry";
+          if (isJewelryProduct(name, description, product) && !isBagOrAgendaProduct(name, description)) {
+            categoryForMetafield = detectLuxuryJewelrySubcategory(name, description, product) ?? "Other Jewelry";
+          }
           else if (isAccessoryProduct(name, description) && !isBagOrAgendaProduct(name, description)) categoryForMetafield = "Accessories";
           if (isBeltProduct(name, description)) categoryForMetafield = "Belts";
           if (categoryForMetafield === "Accessories" && isBagOrAgendaProduct(name, description)) categoryForMetafield = detectLuxuryCategoryFromTitle(name, description, product) ?? "Other ";
@@ -7134,7 +7275,9 @@ async function syncSingleProductCore(product, cache, options = {}) {
         }
 
         categoryForMetafield = mapCategoryForShopify(resolvedLux);
-        if (isJewelryProduct(name, description, product) && !isBagOrAgendaProduct(name, description)) categoryForMetafield = "Jewelry";
+        if (isJewelryProduct(name, description, product) && !isBagOrAgendaProduct(name, description)) {
+          categoryForMetafield = detectLuxuryJewelrySubcategory(name, description, product) ?? "Other Jewelry";
+        }
         else if (isAccessoryProduct(name, description) && !isBagOrAgendaProduct(name, description)) categoryForMetafield = "Accessories";
         if (isBeltProduct(name, description)) categoryForMetafield = "Belts";
         if (categoryForMetafield === "Accessories" && isBagOrAgendaProduct(name, description)) {
@@ -7146,6 +7289,14 @@ async function syncSingleProductCore(product, cache, options = {}) {
   }
   if (isWristwatchProduct(name, description, product)) {
     categoryForMetafield = "Accessories";
+  }
+  if (options.categoryOverride) {
+    categoryForMetafield = mapCategoryForShopify(String(options.categoryOverride).trim());
+    webflowLog("info", {
+      event: "luxury_category.override_explicit",
+      shopifyProductId,
+      resolved: categoryForMetafield,
+    });
   }
   const shopifyDepartment = department;
   const shopifyCategoryValue = categoryForMetafield;
@@ -7275,8 +7426,8 @@ async function syncSingleProductCore(product, cache, options = {}) {
         brand,
         shopifyCategoryValue,
         getProductTagsArray(product),
-        shopifyDepartment,
-        shopifyCategoryValue,
+        options.skipTagWrites ? null : shopifyDepartment,
+        options.skipTagWrites ? null : shopifyCategoryValue,
         descriptionChanged ? description : null
       );
     }
@@ -10751,7 +10902,7 @@ app.post("/api/listing-blurb", async (req, res) => {
   const contactEmail = String(body.contactEmail || "info@lostandfoundresale.com").trim();
   const isLuxury = body.isLuxury === true || vertical === "luxury";
   const luxuryGoodsCategoryRaw = String(body.luxuryGoodsCategory || "").trim();
-  const isLuxuryJewelry = isLuxury && /^jewelry\b/i.test(luxuryGoodsCategoryRaw);
+  const isLuxuryJewelry = isLuxury && isLuxuryJewelryCategory(luxuryGoodsCategoryRaw);
   const listingListPriceNum = Number(String(tierPriceRaw || "").replace(/[^0-9.]/g, ""));
   const luxuryListPriceParsed = Number.isFinite(listingListPriceNum) ? listingListPriceNum : NaN;
   /** No authentication / COA copy for Jewelry or any luxury listing at $175 or below (matches extension guarantee tier). */
@@ -11537,6 +11688,17 @@ app.post("/sync-all", async (req, res) => {
     });
 });
 
+function normalizeCategoryByTitleMap(raw) {
+  if (!raw || typeof raw !== "object") return {};
+  const out = {};
+  for (const [k, v] of Object.entries(raw)) {
+    const title = String(k || "").trim().toLowerCase();
+    const cat = String(v || "").trim();
+    if (title && cat) out[title] = cat;
+  }
+  return out;
+}
+
 app.post("/sync-by-ids", async (req, res) => {
   syncRequestId = crypto.randomUUID().slice(0, 8);
   syncStartTime = Date.now();
@@ -11547,7 +11709,9 @@ app.post("/sync-by-ids", async (req, res) => {
   }
   const forceReclassify = req.body?.forceReclassify !== false;
   const createOnly = req.body?.createOnly === true;
-  webflowLog("info", { event: "sync-by-ids.entry", count: ids.length, forceReclassify, createOnly });
+  const categoryByTitle = normalizeCategoryByTitleMap(req.body?.categoryByTitle);
+  const skipTagWrites = req.body?.skipTagWrites === true || Object.keys(categoryByTitle).length > 0;
+  webflowLog("info", { event: "sync-by-ids.entry", count: ids.length, forceReclassify, createOnly, categoryOverrides: Object.keys(categoryByTitle).length, skipTagWrites });
   try {
     await loadFurnitureCategoryMap();
     furnitureEcProductTypeAllowlist = null;
@@ -11577,12 +11741,16 @@ app.post("/sync-by-ids", async (req, res) => {
           results.push({ shopifyProductId, error: "shopify_product_not_found" });
           continue;
         }
+        const titleKey = String(product.title || "").trim().toLowerCase();
+        const categoryOverride = categoryByTitle[titleKey] || null;
         const result = await syncSingleProduct(product, cache, {
           duplicateEmailSentFor,
           shopifyWriteEmailSentFor,
           forceReclassify,
           createOnly,
           skipMissingFieldsAlert: true,
+          categoryOverride,
+          skipTagWrites,
         });
         if (result?.duplicateCorrected && result?.duplicateLog) {
           await sendDuplicatePlacementEmail(result.duplicateLog, duplicateEmailSentFor);
