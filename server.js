@@ -6825,7 +6825,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
     if (!manualEcommerceLock && productMustBeLuxuryVertical(product) && !hasExplicitFurnitureVerticalTag(product)) {
       detectedVertical = "luxury";
     }
-    if (!manualEcommerceLock && productIsFineArtFurnitureVertical(product)) {
+    if (!manualEcommerceLock && productIsFineArtFurnitureVertical(product) && !productIsLuxuryScarf(product)) {
       detectedVertical = "furniture";
     }
     // Hard guard: jewelry cues must always live under Luxury Goods in Shopify/Webflow (never overrides books/media, boxes, or lamps).
@@ -10734,6 +10734,53 @@ function productLooksLikeFlatArtForShipping(body) {
   return false;
 }
 
+/** Tapestries, throws, thin textiles — ship folded/rolled; display dimensions are not rigid parcel limits. */
+function productLooksLikeFoldableTextileForShipping(body) {
+  const text = `${body.title || ""} ${body.productType || ""} ${(body.tags || []).join(" ")} ${body.description || ""}`.toLowerCase();
+  if (/\b(tapestry|tapestries)\b/.test(text)) return true;
+  if (/\bwall\s+(hanging|tapestry|tapestries|textile|textiles|macrame|woven)\b/.test(text)) return true;
+  if (/\b(throw|blanket|quilt|bedspread|coverlet|tablecloth|table\s+runner|fabric\s+panel)\b/.test(text)) return true;
+  return false;
+}
+
+/** Packed footprint after fold/roll — not the flat wall-display width×height from the title. */
+function foldableTextileShippingSorted(displaySorted) {
+  if (!displaySorted || displaySorted.length !== 3) {
+    return [22, 18, 5];
+  }
+  const [long, mid, thin] = displaySorted;
+  if (thin > 8) return null;
+  const packed = [
+    Math.min(26, Math.max(14, Math.ceil(long / 4))),
+    Math.min(22, Math.max(12, Math.ceil(mid / 3))),
+    Math.min(8, Math.max(3, thin + 4)),
+  ].sort((a, b) => b - a);
+  return packed;
+}
+
+function productLooksLikeRollableLuxuryAccessory(body) {
+  const text = `${body.title || ""} ${body.productType || ""} ${(body.tags || []).join(" ")}`.toLowerCase();
+  if (/\b(belt|belts|chain belt|waist belt|leather belt)\b/.test(text)) return true;
+  if (/\b(scarf|scarves|shawl|wrap|stole)\b/.test(text)) return true;
+  if (/\b(tie|ties|necktie|bow tie)\b/.test(text)) return true;
+  if (/\b(wallet|wallets|cardholder|card holder|key pouch)\b/.test(text)) return true;
+  return false;
+}
+
+function defaultRollableAccessoryShippingSorted(body) {
+  const text = `${body.title || ""} ${body.productType || ""} ${(body.tags || []).join(" ")}`.toLowerCase();
+  if (/\b(belt|belts|chain belt|waist belt|leather belt)\b/.test(text)) {
+    return [12, 5, 5];
+  }
+  if (/\b(scarf|scarves|shawl|wrap|stole)\b/.test(text)) {
+    return [12, 8, 3];
+  }
+  if (/\b(tie|ties|necktie|bow tie)\b/.test(text)) {
+    return [10, 4, 3];
+  }
+  return [10, 6, 4];
+}
+
 function isArtworkShippingPackage(pkg) {
   const label = String(pkg?.shopifyLabel || "").toLowerCase();
   return /\b(artwork|art work|flat mailer|flat art|art box)\b/.test(label);
@@ -10811,9 +10858,21 @@ function storeDefaultPackageResult(packages, reason) {
 /** Cheapest box that fits (with slack); store default only for bulky furniture or heavy items. */
 function selectDeterministicShippingPackage(body, packages) {
   const facts = buildPackageShippingFacts(body);
-  const itemSorted = facts.sorted;
+  let itemSorted = facts.sorted;
   const weightLb = facts.weightLb;
   const dimNote = facts.source ? ` (from ${facts.source})` : "";
+  let packedNote = "";
+
+  if (itemSorted && productLooksLikeFoldableTextileForShipping(body)) {
+    const packed = foldableTextileShippingSorted(itemSorted);
+    if (packed) {
+      packedNote = ` Textile ships folded/rolled — packed ~${packed.join("×")} in, not flat display ${itemSorted.join("×")} in.`;
+      itemSorted = packed;
+    }
+  } else if (productLooksLikeRollableLuxuryAccessory(body) && (!itemSorted || itemSorted[0] > 18)) {
+    itemSorted = defaultRollableAccessoryShippingSorted(body);
+    packedNote = ` Rolled accessory — using packed footprint ${itemSorted.join("×")} in.`;
+  }
 
   if (productIsBulkyFurnitureForShipping(body, itemSorted, weightLb)) {
     return storeDefaultPackageResult(
@@ -10859,7 +10918,7 @@ function selectDeterministicShippingPackage(body, packages) {
     packageLabel: label,
     confidence: "high",
     action: "apply",
-    reason: `Cheapest closest fit: ${itemSorted.join("×")} in${dimNote} → ${label} (${boxSorted.join("×")} in) with ~${PACKAGE_FIT_DEVIATION_IN} in practical slack.${fitNote}`,
+    reason: `Cheapest closest fit: ${itemSorted.join("×")} in${dimNote} → ${label} (${boxSorted.join("×")} in) with ~${PACKAGE_FIT_DEVIATION_IN} in practical slack.${fitNote}${packedNote}`,
   };
 }
 
@@ -10951,10 +11010,12 @@ async function selectPackageWithAi(body) {
     "- Items may be rotated: compare sorted L×W×H to sorted box dimensions.",
     "- Weight: item may be up to 2× box maxWeightLb when dimensions fit; otherwise step up one size.",
     "- Small items (longest edge ≤ 42 in and ≤ 25 lb, or ≤ 24 in any weight under 50 lb) always get a parcel box — never Store Default just because product type says Living Room or Furniture.",
+    "- Tapestries, throws, blankets, and thin textiles ship folded or rolled — use packed dimensions (~20–26 in longest edge), NOT flat wall-display width×height from the title.",
+    "- Belts, scarves, and ties ship rolled/coiled in small parcel boxes — never Store Default under 50 lb.",
     "",
     "Always Store Default (action leave_store_default, packageLabel \"Store Default\"):",
     "- Bulky furniture: sofas, sectionals, beds, dressers, armoires, dining tables, large desks, etc.",
-    "- Items over 50 lb or longest edge over 42 in (unless thin flat art in artwork mailer).",
+    "- Items over 50 lb or rigid longest edge over 42 in with no foldable-textile exception.",
     "",
     "Never invent package names. packageLabel must exactly match one shopifyLabel from the list.",
     "When several boxes fit, always choose the lowest priceMin — never a pricier box if a cheaper one fits.",
