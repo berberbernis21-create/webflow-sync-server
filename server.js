@@ -2285,6 +2285,45 @@ async function updateShopifyMetafields(productId, { department, category, vertic
     });
     throw new Error(`Shopify metafieldsSet failed: ${msg}`);
   }
+  if (!isFurniture) {
+    await deleteShopifyMetafields(productId, [
+      { namespace: FURNITURE_AND_HOME_NAMESPACE, key: FURNITURE_AND_HOME_KEY },
+      { namespace: "custom", key: "dimensions_status" },
+    ]);
+  }
+}
+
+async function deleteShopifyMetafields(productId, keys) {
+  const ownerId = `gid://shopify/Product/${productId}`;
+  const metafields = (keys || [])
+    .map(({ namespace, key }) => ({
+      ownerId,
+      namespace: String(namespace || "").trim(),
+      key: String(key || "").trim(),
+    }))
+    .filter((m) => m.namespace && m.key);
+  if (!metafields.length) return;
+  const mutation = `
+    mutation MetafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
+      metafieldsDelete(metafields: $metafields) {
+        deletedMetafields { key namespace }
+        userErrors { field message }
+      }
+    }
+  `;
+  const res = await postShopifyGraphqlWithRetry(
+    { query: mutation, variables: { metafields } },
+    "metafieldsDelete",
+    { productId }
+  );
+  const errors = res.data?.data?.metafieldsDelete?.userErrors ?? [];
+  if (errors.length > 0) {
+    webflowLog("warn", {
+      event: "metafields_delete.user_errors",
+      productId,
+      userErrors: errors,
+    });
+  }
 }
 /* ======================================================
    SHOPIFY — WRITE our logic TO Shopify (vendor, productType, tags)
@@ -2551,7 +2590,7 @@ async function removeConditionOptionIfFurniture(product) {
    HASH FOR CHANGE DETECTION
    Includes dimensions (variant + metafields + tag lines) so dimension changes still invalidate the fast path.
    body_html is normalized (collapse whitespace) so Shopify formatting drift doesn't cause false "changed".
-   taxonomyVersion: bump this when category/vertical logic changes so all items resync once (24 = silk scarves/shawls always Luxury / Scarves — never Furniture from vintage LLM misroutes).
+   taxonomyVersion: bump this when category/vertical logic changes so all items resync once (25 = scarves beat fine-art artwork copy; clear stale furniture metafields on luxury).
    Image URLs strip query strings (CDN signature / width params often rotate without a real asset change).
    Price and dimensions are normalized so "199.0" vs "199.00" or float noise doesn't churn the cache.
 ====================================================== */
@@ -2631,7 +2670,7 @@ function shopifyHash(product) {
     images: imagesStable,
     slug: product.handle,
     dimensions,
-    taxonomyVersion: 24,
+    taxonomyVersion: 25,
     jewelryReclassVersion,
   };
 }
@@ -2644,7 +2683,7 @@ function contentHashForLLM(product) {
     product_type: (product.product_type || "").trim(),
     tagsKey: tagsFingerprintForHash(product),
     body_html: normalizeHtmlForHash(product.body_html),
-    taxonomyVersion: 24,
+    taxonomyVersion: 25,
     jewelryReclassVersion,
   };
 }
@@ -3840,6 +3879,7 @@ function productIsLuxuryScarf(product) {
 /** Signed art, canvas, prints, etc. — always Furniture & Home (Art/Mirrors), never Luxury wearables. */
 function productIsFineArtFurnitureVertical(product) {
   if (!product) return false;
+  if (productIsLuxuryScarf(product)) return false;
   if (productLooksLikeFineArtWallDecor(product)) return true;
   const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
   const title = (product.title || "").trim();
@@ -3860,11 +3900,11 @@ function productIsFineArtFurnitureVertical(product) {
  */
 function resolveVerticalFromEvidence(product, llmDetectedVertical) {
   const tags = getProductTagsArray(product);
-  if (productIsFineArtFurnitureVertical(product)) {
-    return { vertical: "furniture", reason: "fine_art_always_furniture" };
-  }
   if (productIsLuxuryScarf(product)) {
     return { vertical: "luxury", reason: "luxury_scarf_always" };
+  }
+  if (productIsFineArtFurnitureVertical(product)) {
+    return { vertical: "furniture", reason: "fine_art_always_furniture" };
   }
   const verticalTag = getEcommerceVerticalOverrideFromTags(tags);
   if (verticalTag?.vertical === "furniture" && productMustBeLuxuryVertical(product)) {
@@ -4215,8 +4255,8 @@ const BAG_AGENDA_KEYWORDS = [
 
 /** Wearables (bags, backpacks, gloves, etc.) are Luxury — never Furniture unless merchant tagged FH. */
 function productMustBeLuxuryVertical(product) {
-  if (productIsFineArtFurnitureVertical(product)) return false;
   if (productIsLuxuryScarf(product)) return true;
+  if (productIsFineArtFurnitureVertical(product)) return false;
   const title = product?.title || "";
   const description = product?.body_html || "";
   if (isBagOrAgendaProduct(title, description)) return true;
