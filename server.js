@@ -3796,8 +3796,9 @@ const LUXURY_WEARABLE_CUES = [
   "watch", "watches", "wristwatch", "wristwatches", "timepiece", "timepieces",
 ];
 const ART_CUES_STRONG = [
-  "signed art", "wall art", "framed art", "painting", "paintings", "lithograph", "giclee",
-  "serigraph", "sculpture", "acrylic on canvas", "oil on canvas", "mixed media", "original art",
+  "signed art", "signed artwork", "wall art", "framed art", "fine art", "original art", "art on canvas",
+  "painting", "paintings", "lithograph", "giclee", "serigraph", "artwork", "art print",
+  "acrylic on canvas", "oil on canvas", "watercolor on canvas", "mixed media",
 ];
 const FURNITURE_HOME_CUES = [
   "lamp", "lamps", "chandelier", "sconce", "mirror", "mirrors", "mirrored", "rug", "rugs", "dining table",
@@ -3818,12 +3819,32 @@ function textHasAnyWordCue(text, cues) {
   return false;
 }
 
+/** Signed art, canvas, prints, etc. — always Furniture & Home (Art/Mirrors), never Luxury wearables. */
+function productIsFineArtFurnitureVertical(product) {
+  if (!product) return false;
+  if (productLooksLikeFineArtWallDecor(product)) return true;
+  const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const title = (product.title || "").trim();
+  const desc = stripHtml(product.body_html || "");
+  const text = [title, desc].filter(Boolean).join(" ").toLowerCase();
+  if (!text) return false;
+  if (textHasAnyWordCue(text, ART_CUES_STRONG)) return true;
+  if (/\bsigned\s+art(work)?\b/i.test(text)) return true;
+  if (/\bart\s+on\s+canvas\b/i.test(text)) return true;
+  if (/\bon\s+canvas\b/i.test(text)) return true;
+  if (/\b(watercolor|gouache|acrylic|oil)\s+on\s+(canvas|paper|board)\b/i.test(text)) return true;
+  return false;
+}
+
 /**
  * Resolve final vertical from combined evidence (name + description + dimensions + weight).
  * This runs as a guard over LLM output to prevent one-word misroutes.
  */
 function resolveVerticalFromEvidence(product, llmDetectedVertical) {
   const tags = getProductTagsArray(product);
+  if (productIsFineArtFurnitureVertical(product)) {
+    return { vertical: "furniture", reason: "fine_art_always_furniture" };
+  }
   const verticalTag = getEcommerceVerticalOverrideFromTags(tags);
   if (verticalTag?.vertical === "furniture" && productMustBeLuxuryVertical(product)) {
     webflowLog("warn", {
@@ -3909,11 +3930,11 @@ function resolveVerticalFromEvidence(product, llmDetectedVertical) {
   }
 
   // Wearables stay Luxury unless copy deliberately mixes incompatible cues (art vs bag, mirrored chest vs handbag, etc.).
-  if (hasWearableCue && !verticalHardSignalAmbiguity(product)) {
+  if (hasWearableCue && !verticalHardSignalAmbiguity(product) && !productIsFineArtFurnitureVertical(product)) {
     return { vertical: "luxury", reason: "evidence_wearable_cue" };
   }
   // Art/furniture only wins when supported by meaningful context, not one isolated token.
-  if (hasStrongArtCue || (hasGenericArtWord && hasFurnitureCue)) {
+  if (hasStrongArtCue || (hasGenericArtWord && hasFurnitureCue) || productIsFineArtFurnitureVertical(product)) {
     return { vertical: "furniture", reason: "evidence_art_home_cues" };
   }
   if (hasFurnitureCue && hasDimsOrWeight && !hasWearableCue && !isJewelryProduct(title, desc, product)) {
@@ -4173,10 +4194,11 @@ const BAG_AGENDA_KEYWORDS = [
 
 /** Wearables (bags, backpacks, gloves, etc.) are Luxury — never Furniture unless merchant tagged FH. */
 function productMustBeLuxuryVertical(product) {
+  if (productIsFineArtFurnitureVertical(product)) return false;
   const title = product?.title || "";
   const description = product?.body_html || "";
   if (isBagOrAgendaProduct(title, description)) return true;
-  if (productLooksLikeFootwearLuxury(product)) return true;
+  if (productLooksLikeFootwearLuxury(product) && !productLooksLikeFineArtWallDecor(product)) return true;
   const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
   const text = [title, stripHtml(description)].filter(Boolean).join(" ").toLowerCase();
   if (textHasAnyWordCue(text, LUXURY_WEARABLE_CUES)) return true;
@@ -6736,6 +6758,9 @@ async function syncSingleProductCore(product, cache, options = {}) {
     if (!manualEcommerceLock && productMustBeLuxuryVertical(product) && !hasExplicitFurnitureVerticalTag(product)) {
       detectedVertical = "luxury";
     }
+    if (!manualEcommerceLock && productIsFineArtFurnitureVertical(product)) {
+      detectedVertical = "furniture";
+    }
     // Hard guard: jewelry cues must always live under Luxury Goods in Shopify/Webflow (never overrides books/media, boxes, or lamps).
     if (
       !manualEcommerceLock &&
@@ -6752,7 +6777,8 @@ async function syncSingleProductCore(product, cache, options = {}) {
       !manualEcommerceLock &&
       cacheEntry?.vertical === "furniture" &&
       detectedVertical === "luxury" &&
-      !productLooksLikeFurnitureTrap(product);
+      !productLooksLikeFurnitureTrap(product) &&
+      !productIsFineArtFurnitureVertical(product);
     const correctedToFurniture =
       !manualEcommerceLock &&
       !isLockedLuxuryProduct(product) &&
@@ -6792,6 +6818,20 @@ async function syncSingleProductCore(product, cache, options = {}) {
       }
       vertical = "luxury";
       detectedVertical = "luxury";
+    }
+    if (!manualEcommerceLock && productIsFineArtFurnitureVertical(product)) {
+      if (vertical !== "furniture") {
+        verticalCorrected = cacheEntry?.vertical === "luxury";
+        webflowLog("info", {
+          event: "vertical.override_fine_art_cache",
+          shopifyProductId,
+          productTitle: product.title || "",
+          cacheVertical: cacheEntry?.vertical ?? null,
+          previousVertical: vertical,
+        });
+      }
+      vertical = "furniture";
+      detectedVertical = "furniture";
     }
     webflowLog("info", {
     event: "vertical.resolved",
