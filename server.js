@@ -2551,7 +2551,7 @@ async function removeConditionOptionIfFurniture(product) {
    HASH FOR CHANGE DETECTION
    Includes dimensions (variant + metafields + tag lines) so dimension changes still invalidate the fast path.
    body_html is normalized (collapse whitespace) so Shopify formatting drift doesn't cause false "changed".
-   taxonomyVersion: bump this when category/vertical logic changes so all items resync once (23 = luxury jewelry split into Necklaces/Rings/Bracelets/Earrings/Other Jewelry + NK/RG/BR/ER/OJ tags).
+   taxonomyVersion: bump this when category/vertical logic changes so all items resync once (24 = silk scarves/shawls always Luxury / Scarves — never Furniture from vintage LLM misroutes).
    Image URLs strip query strings (CDN signature / width params often rotate without a real asset change).
    Price and dimensions are normalized so "199.0" vs "199.00" or float noise doesn't churn the cache.
 ====================================================== */
@@ -2631,7 +2631,7 @@ function shopifyHash(product) {
     images: imagesStable,
     slug: product.handle,
     dimensions,
-    taxonomyVersion: 23,
+    taxonomyVersion: 24,
     jewelryReclassVersion,
   };
 }
@@ -2644,7 +2644,7 @@ function contentHashForLLM(product) {
     product_type: (product.product_type || "").trim(),
     tagsKey: tagsFingerprintForHash(product),
     body_html: normalizeHtmlForHash(product.body_html),
-    taxonomyVersion: 23,
+    taxonomyVersion: 24,
     jewelryReclassVersion,
   };
 }
@@ -3791,9 +3791,14 @@ const LUXURY_WEARABLE_CUES = [
   "handbag", "handbags", "bag", "bags", "crossbody", "clutch", "purse", "tote", "wristlet",
   "shoulder bag", "satchel", "luggage", "duffle", "duffel", "briefcase", "bucket bag",
   "keychain", "key chain", "key ring", "gloves", "glove", "ipad case", "tablet case", "folio",
+  "scarf", "scarves", "silk scarf", "wool scarf", "cashmere scarf", "shawl", "stole", "foulard",
   "bangle", "bangles", "bracelet", "bracelets",
   "necklace", "necklaces", "earring", "earrings", "brooch", "brooches",
   "watch", "watches", "wristwatch", "wristwatches", "timepiece", "timepieces",
+];
+const LUXURY_SCARF_CUES = [
+  "scarf", "scarves", "silk scarf", "wool scarf", "cashmere scarf",
+  "shawl", "stole", "foulard", "bandana", "kerchief", "muffler", "handkerchief", "carre",
 ];
 const ART_CUES_STRONG = [
   "signed art", "signed artwork", "wall art", "framed art", "fine art", "original art", "art on canvas",
@@ -3816,6 +3821,19 @@ function textHasAnyWordCue(text, cues) {
   for (const cue of cues) {
     if (matchWordBoundary(text, cue)) return true;
   }
+  return false;
+}
+
+/** Silk/wool scarves, shawls, foulards — always Luxury / Scarves (never Furniture from "vintage" LLM noise). */
+function productIsLuxuryScarf(product) {
+  if (!product) return false;
+  const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const title = (product.title || "").trim();
+  const desc = stripHtml(product.body_html || "");
+  const text = [title, desc].filter(Boolean).join(" ").toLowerCase();
+  if (!text) return false;
+  if (textHasAnyWordCue(text, LUXURY_SCARF_CUES)) return true;
+  if (/\b90\s*cm\b/i.test(text) && /\b(silk|hermes|foulard|carre)\b/i.test(text)) return true;
   return false;
 }
 
@@ -3844,6 +3862,9 @@ function resolveVerticalFromEvidence(product, llmDetectedVertical) {
   const tags = getProductTagsArray(product);
   if (productIsFineArtFurnitureVertical(product)) {
     return { vertical: "furniture", reason: "fine_art_always_furniture" };
+  }
+  if (productIsLuxuryScarf(product)) {
+    return { vertical: "luxury", reason: "luxury_scarf_always" };
   }
   const verticalTag = getEcommerceVerticalOverrideFromTags(tags);
   if (verticalTag?.vertical === "furniture" && productMustBeLuxuryVertical(product)) {
@@ -4195,6 +4216,7 @@ const BAG_AGENDA_KEYWORDS = [
 /** Wearables (bags, backpacks, gloves, etc.) are Luxury — never Furniture unless merchant tagged FH. */
 function productMustBeLuxuryVertical(product) {
   if (productIsFineArtFurnitureVertical(product)) return false;
+  if (productIsLuxuryScarf(product)) return true;
   const title = product?.title || "";
   const description = product?.body_html || "";
   if (isBagOrAgendaProduct(title, description)) return true;
@@ -4319,6 +4341,11 @@ function detectLuxuryCategoryEvidence(title, descriptionHtml, product = null) {
 
   if (isWristwatchProduct(title, descriptionHtml, product)) {
     return { category: "Accessories", confidence: 1, reason: "wristwatch" };
+  }
+
+  const scarfProduct = product || { title: title || "", body_html: descriptionHtml || "" };
+  if (productIsLuxuryScarf(scarfProduct)) {
+    return { category: "Scarves", confidence: 1, reason: "luxury_scarf" };
   }
 
   if (product && productLooksLikeFurnitureTrap(product)) {
@@ -6782,6 +6809,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
     const correctedToFurniture =
       !manualEcommerceLock &&
       !isLockedLuxuryProduct(product) &&
+      !productIsLuxuryScarf(product) &&
       cacheEntry?.vertical === "luxury" &&
       detectedVertical === "furniture";
     vertical = correctedToLuxury
