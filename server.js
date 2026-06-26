@@ -2754,10 +2754,11 @@ const ECOMMERCE_VERTICAL_TAG_LUXURY = "LG";
 
 /**
  * Optional Shopify tags for manual vertical routing (add in Traxia / Shopify tags):
- *   FH → Furniture & Home
- *   LG → Luxury Goods
- * Single-letter tags set subcategory within that vertical (furniture: A→Art/Mirrors, X→Accessories, etc.).
- * Vertical (FH/LG) and category (X, B, …) can be separate tags or combined: "FH", "X" or "FH X".
+ *   FH → Furniture & Home (vertical)
+ *   LG → Luxury Goods (vertical)
+ * Single-letter tags are category only — never vertical. Applied after vertical is detected:
+ *   LG + A → Luxury Accessories | FH + A → Furniture Art/Mirrors
+ *   Lone A on a keychain → vertical from product copy; A maps to category for that vertical.
  */
 const ECOMMERCE_TAG_PREFIX = /\b(?:E[\s_-]?COMMERCE|ECOMMERCE)\b/;
 
@@ -2915,7 +2916,8 @@ function getLuxuryCategoryOverrideFromEcommerceTags(tags) {
 
 /**
  * Manual Shopify ecommerce placement — when present, vertical/classifier must not move the item.
- * FH/LG vertical tags, or a furniture category letter (X, L, B, …) without LG.
+ * Only FH / LG lock vertical. Single-letter tags (A, H, X, …) are category hints only — applied
+ * after vertical is detected from the product (title, type, LLM), using the map for that vertical.
  */
 function getManualEcommerceVerticalLock(product) {
   const tags = getProductTagsArray(product);
@@ -2925,14 +2927,6 @@ function getManualEcommerceVerticalLock(product) {
   }
   if (verticalTag?.vertical === "luxury") {
     return { vertical: "luxury", tag: verticalTag.tag, source: "ecommerce_vertical_tag" };
-  }
-  const furnitureCategory = getFurnitureCategoryOverrideFromEcommerceTags(tags);
-  if (furnitureCategory) {
-    return {
-      vertical: "furniture",
-      tag: furnitureCategory.letter,
-      source: "ecommerce_furniture_category_letter",
-    };
   }
   if (productHasFurnitureAccessoriesCategoryTag(product)) {
     const verticalTag = getEcommerceVerticalOverrideFromTags(tags);
@@ -3792,7 +3786,8 @@ function hasFurnitureOrArtSignals(product) {
 const LUXURY_WEARABLE_CUES = [
   "backpack", "backpacks", "belt", "belts", "wallet", "wallets", "card holder", "cardholder",
   "handbag", "handbags", "bag", "bags", "crossbody", "clutch", "purse", "tote", "wristlet",
-  "shoulder bag", "satchel", "luggage", "duffle", "duffel", "briefcase",
+  "shoulder bag", "satchel", "luggage", "duffle", "duffel", "briefcase", "bucket bag",
+  "keychain", "key chain", "key ring", "gloves", "glove", "ipad case", "tablet case", "folio",
   "bangle", "bangles", "bracelet", "bracelets",
   "necklace", "necklaces", "earring", "earrings", "brooch", "brooches",
   "watch", "watches", "wristwatch", "wristwatches", "timepiece", "timepieces",
@@ -4728,7 +4723,6 @@ function isLockedLuxuryProduct(product) {
   const verticalTag = getEcommerceVerticalOverrideFromTags(tags);
   if (verticalTag?.vertical === "furniture") return false;
   if (verticalTag?.vertical === "luxury") return true;
-  if (getFurnitureCategoryOverrideFromEcommerceTags(tags)) return false;
   if (productHasJewelryCategoryTag(product)) return true;
   const title = String(product?.title || "");
   if (/\bbrooch(es)?\b/i.test(title)) return true;
