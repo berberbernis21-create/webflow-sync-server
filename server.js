@@ -2929,6 +2929,9 @@ function getManualEcommerceVerticalLock(product) {
     return { vertical: "luxury", tag: verticalTag.tag, source: "ecommerce_vertical_tag" };
   }
   if (productHasFurnitureAccessoriesCategoryTag(product)) {
+    if (productMustBeLuxuryVertical(product) && !hasExplicitFurnitureVerticalTag(product)) {
+      return null;
+    }
     const verticalTag = getEcommerceVerticalOverrideFromTags(tags);
     if (verticalTag?.vertical !== "luxury" && !productHasJewelryCategoryTag(product)) {
       return {
@@ -3822,6 +3825,20 @@ function textHasAnyWordCue(text, cues) {
 function resolveVerticalFromEvidence(product, llmDetectedVertical) {
   const tags = getProductTagsArray(product);
   const verticalTag = getEcommerceVerticalOverrideFromTags(tags);
+  if (verticalTag?.vertical === "furniture" && productMustBeLuxuryVertical(product)) {
+    webflowLog("warn", {
+      event: "vertical.wearable_ignores_fh",
+      shopifyProductId: product?.id,
+      productTitle: product?.title,
+      message: "FH tag on a bag/backpack/wearable — treating as Luxury (product identity wins)",
+    });
+    return { vertical: "luxury", reason: "wearable_product_identity_over_fh" };
+  }
+  if (!verticalTag || verticalTag.vertical !== "furniture") {
+    if (productMustBeLuxuryVertical(product)) {
+      return { vertical: "luxury", reason: "wearable_product_identity" };
+    }
+  }
   if (verticalTag) {
     return {
       vertical: verticalTag.vertical,
@@ -3832,9 +3849,11 @@ function resolveVerticalFromEvidence(product, llmDetectedVertical) {
     return { vertical: "luxury", reason: "traxia_category_jewelry" };
   }
   if (productHasFurnitureAccessoriesCategoryTag(product)) {
-    const verticalTag = getEcommerceVerticalOverrideFromTags(tags);
-    if (!verticalTag || verticalTag.vertical === "furniture") {
-      return { vertical: "furniture", reason: "traxia_category_accessories" };
+    if (!productMustBeLuxuryVertical(product) || hasExplicitFurnitureVerticalTag(product)) {
+      const verticalTag = getEcommerceVerticalOverrideFromTags(tags);
+      if (!verticalTag || verticalTag.vertical === "furniture") {
+        return { vertical: "furniture", reason: "traxia_category_accessories" };
+      }
     }
   }
   if (isLockedLuxuryProduct(product)) {
@@ -4149,8 +4168,24 @@ const BELT_KEYWORDS = [
 const BAG_AGENDA_KEYWORDS = [
   "crossbody", "handbag", "handbags", "tote", "totes", "wallet", "wallets", "clutch", "backpack", "backpacks",
   "luggage", "satchel", "shoulder bag", "small bag", "pochette", "agenda", "agenda cover", "notepad", "notebook",
-  "document holder", "folio", "business card case",
+  "document holder", "folio", "business card case", "ipad case", "tablet case",
 ];
+
+/** Wearables (bags, backpacks, gloves, etc.) are Luxury — never Furniture unless merchant tagged FH. */
+function productMustBeLuxuryVertical(product) {
+  const title = product?.title || "";
+  const description = product?.body_html || "";
+  if (isBagOrAgendaProduct(title, description)) return true;
+  if (productLooksLikeFootwearLuxury(product)) return true;
+  const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const text = [title, stripHtml(description)].filter(Boolean).join(" ").toLowerCase();
+  if (textHasAnyWordCue(text, LUXURY_WEARABLE_CUES)) return true;
+  return false;
+}
+
+function hasExplicitFurnitureVerticalTag(product) {
+  return getEcommerceVerticalOverrideFromTags(getProductTagsArray(product))?.vertical === "furniture";
+}
 
 /** True if title or description indicate a bag or agenda — do NOT categorize as Accessories. */
 function isBagOrAgendaProduct(title, descriptionHtml) {
@@ -6652,7 +6687,22 @@ async function syncSingleProductCore(product, cache, options = {}) {
 
   let vertical, detectedVertical, verticalCorrected;
   const ecommerceVerticalTag = getEcommerceVerticalOverrideFromTags(getProductTagsArray(product));
-  const manualEcommerceLock = getManualEcommerceVerticalLock(product);
+  let manualEcommerceLock = getManualEcommerceVerticalLock(product);
+  if (
+    manualEcommerceLock?.vertical === "furniture" &&
+    productMustBeLuxuryVertical(product) &&
+    !hasExplicitFurnitureVerticalTag(product)
+  ) {
+    webflowLog("warn", {
+      event: "vertical.wearable_overrides_furniture_tag_lock",
+      shopifyProductId,
+      productTitle: product.title || "",
+      lockSource: manualEcommerceLock.source,
+      lockTag: manualEcommerceLock.tag,
+      message: "Bag/backpack/wearable — ignoring furniture tag lock; classifying as Luxury",
+    });
+    manualEcommerceLock = null;
+  }
 
   if (manualEcommerceLock && !forceReclassify) {
     vertical = manualEcommerceLock.vertical;
@@ -6681,6 +6731,9 @@ async function syncSingleProductCore(product, cache, options = {}) {
     }
     // Hard guard: wristwatches/timepieces are always Luxury (never furniture bedroom/other).
     if (!manualEcommerceLock && productLooksLikeWristwatchLuxury(product)) {
+      detectedVertical = "luxury";
+    }
+    if (!manualEcommerceLock && productMustBeLuxuryVertical(product) && !hasExplicitFurnitureVerticalTag(product)) {
       detectedVertical = "luxury";
     }
     // Hard guard: jewelry cues must always live under Luxury Goods in Shopify/Webflow (never overrides books/media, boxes, or lamps).
@@ -6719,6 +6772,20 @@ async function syncSingleProductCore(product, cache, options = {}) {
         webflowLog("info", {
           event: "vertical.override_wristwatch_cache",
           shopifyProductId,
+          cacheVertical: cacheEntry?.vertical ?? null,
+          previousVertical: vertical,
+        });
+      }
+      vertical = "luxury";
+      detectedVertical = "luxury";
+    }
+    if (!manualEcommerceLock && productMustBeLuxuryVertical(product) && !hasExplicitFurnitureVerticalTag(product)) {
+      if (vertical !== "luxury") {
+        verticalCorrected = cacheEntry?.vertical === "furniture";
+        webflowLog("info", {
+          event: "vertical.override_wearable_cache",
+          shopifyProductId,
+          productTitle: product.title || "",
           cacheVertical: cacheEntry?.vertical ?? null,
           previousVertical: vertical,
         });
