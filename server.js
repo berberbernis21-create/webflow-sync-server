@@ -9153,6 +9153,8 @@ async function searchShopifyProducts(name) {
       products(first: 15, query: $q) {
         edges {
           node {
+            id
+            legacyResourceId
             title
             handle
             vendor
@@ -9268,6 +9270,12 @@ async function searchShopifyProducts(name) {
   }
 
   const handle = (node.handle || "").trim();
+  const shopifyProductId =
+    node.legacyResourceId != null && String(node.legacyResourceId).trim() !== ""
+      ? String(node.legacyResourceId).trim()
+      : typeof node.id === "string" && node.id.includes("/Product/")
+        ? node.id.split("/").pop()
+        : null;
   const prefix = (process.env.LISTING_PRODUCT_URL_PREFIX || "https://www.lostandfoundresale.com/product")
     .trim()
     .replace(/\/$/, "");
@@ -9331,6 +9339,7 @@ async function searchShopifyProducts(name) {
   }
   return {
     title: node.title || "",
+    shopifyProductId,
     price,
     description,
     images,
@@ -10521,6 +10530,7 @@ app.get("/api/listing", async (req, res) => {
     }
     return res.json({
       title: listing.title,
+      shopifyProductId: listing.shopifyProductId ?? null,
       price: listing.price,
       description: listing.description,
       images: listing.images,
