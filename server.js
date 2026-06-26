@@ -5120,6 +5120,188 @@ async function fetchShopifyProductById(productId) {
   }
 }
 
+/** REST metafields for package-assign (width/height/length on custom namespace). */
+async function fetchShopifyProductMetafields(productId) {
+  const store = process.env.SHOPIFY_STORE;
+  const token = process.env.SHOPIFY_ACCESS_TOKEN;
+  const id = String(productId ?? "").trim();
+  if (!store || !token || !id) return [];
+  const url = `https://${store}.myshopify.com/admin/api/2024-01/products/${id}/metafields.json`;
+  try {
+    const response = await axios.get(url, {
+      headers: {
+        "X-Shopify-Access-Token": token,
+        "Content-Type": "application/json",
+      },
+    });
+    return Array.isArray(response.data?.metafields) ? response.data.metafields : [];
+  } catch (err) {
+    webflowLog("info", {
+      event: "shopify.fetch_product_metafields.failed",
+      shopifyProductId: id,
+      status: err.response?.status,
+      message: err.message,
+    });
+    return [];
+  }
+}
+
+async function fetchShopifyProductForPackageAssign(productId) {
+  const product = await fetchShopifyProductById(productId);
+  if (!product) return null;
+  const metafields = await fetchShopifyProductMetafields(productId);
+  return { ...product, metafields };
+}
+
+/** REST exact-title lookup when bulk editor sends title only (no tags / product id). */
+async function fetchShopifyProductByTitle(title) {
+  const store = process.env.SHOPIFY_STORE;
+  const token = process.env.SHOPIFY_ACCESS_TOKEN;
+  const t = String(title || "").trim();
+  if (!store || !token || !t) return null;
+  const url = `https://${store}.myshopify.com/admin/api/2024-01/products.json?title=${encodeURIComponent(t)}&limit=5`;
+  try {
+    const response = await axios.get(url, {
+      headers: {
+        "X-Shopify-Access-Token": token,
+        "Content-Type": "application/json",
+      },
+    });
+    const products = Array.isArray(response.data?.products) ? response.data.products : [];
+    const exact = products.find((p) => String(p?.title || "").trim() === t);
+    const hit = exact || products[0] || null;
+    if (!hit?.id) return null;
+    return fetchShopifyProductForPackageAssign(hit.id);
+  } catch (err) {
+    webflowLog("info", {
+      event: "shopify.fetch_product_by_title.failed",
+      title: t.slice(0, 120),
+      status: err.response?.status,
+      message: err.message,
+    });
+    return null;
+  }
+}
+
+function parsePackageAssignProductId(body) {
+  const raw = body?.shopifyProductId ?? body?.productId ?? body?.id ?? null;
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  const gid = s.match(/Product\/(\d+)/i);
+  if (gid) return gid[1];
+  if (/^\d+$/.test(s)) return s;
+  return null;
+}
+
+function normalizePackageAssignTags(tagsOrBody) {
+  const tags =
+    tagsOrBody && typeof tagsOrBody === "object" && !Array.isArray(tagsOrBody) && "tags" in tagsOrBody
+      ? tagsOrBody.tags
+      : tagsOrBody;
+  return getProductTagsArray({ tags }).slice(0, 80);
+}
+
+function variantWeightToLb(variant) {
+  if (!variant || variant.weight == null) return null;
+  let w = Number(variant.weight);
+  if (!Number.isFinite(w) || w <= 0) return null;
+  const unit = String(variant.weight_unit || "lb").toLowerCase();
+  if (unit === "kg") w *= 2.20462;
+  else if (unit === "g") w /= 453.592;
+  else if (unit === "oz") w /= 16;
+  return w;
+}
+
+function mergeShopifyProductIntoPackageBody(body, product) {
+  if (!product) return body;
+  const merged = { ...body };
+  if (!String(merged.title || "").trim()) merged.title = product.title || "";
+  if (!String(merged.description || "").trim() && product.body_html) merged.description = product.body_html;
+  if (!String(merged.productType || "").trim() && product.product_type) merged.productType = product.product_type;
+  if (!String(merged.vendor || "").trim() && product.vendor) merged.vendor = product.vendor;
+
+  const bodyTags = normalizePackageAssignTags(merged);
+  const bodyHasDimTags = bodyTags.some((t) => /^(Width|Height|Depth|Weight):/i.test(String(t)));
+  if (!bodyHasDimTags || bodyTags.length < 3) {
+    merged.tags = getProductTagsArray(product);
+  }
+
+  const dims = getDimensionsFromProduct(product);
+  const inboundFacts = buildPackageShippingFacts(body);
+  const mergedFacts = buildPackageShippingFacts(merged);
+  if (mergedFacts.sorted && (!inboundFacts.sorted || inboundFacts.source === "title")) {
+    merged.dimensions = {
+      width: mergedFacts.width,
+      height: mergedFacts.height,
+      length: mergedFacts.depth,
+    };
+  } else if (dims.width != null || dims.height != null || dims.length != null) {
+    merged.dimensions = {
+      width: dims.width ?? null,
+      height: dims.height ?? null,
+      length: dims.length ?? null,
+    };
+  }
+
+  if ((merged.weightLb == null || !Number.isFinite(Number(merged.weightLb))) && dims.weight != null && dims.weight > 0) {
+    merged.weightLb = dims.weight;
+  } else if (merged.weightLb == null) {
+    const w = variantWeightToLb(product.variants?.[0]);
+    if (w != null) merged.weightLb = w;
+  }
+
+  merged._hydratedFromShopify = true;
+  merged.shopifyProductId = String(product.id ?? parsePackageAssignProductId(merged) ?? "");
+  return merged;
+}
+
+/** Bulk editor often sends title-only; pull tags/description/dimensions/weight from Shopify Admin. */
+async function enrichPackageAssignBodyFromShopify(body) {
+  const out = { ...(body && typeof body === "object" ? body : {}) };
+  const productId = parsePackageAssignProductId(out);
+  const tagList = normalizePackageAssignTags(out);
+  const hasDimTags = tagList.some((t) => /^(Width|Height|Depth|Weight):/i.test(String(t)));
+  const hasDesc = String(out.description || out.body_html || "").trim().length > 20;
+  const preFacts = buildPackageShippingFacts(out);
+
+  const shouldFetch =
+    productId != null ||
+    (!preFacts.sorted && String(out.title || "").trim()) ||
+    (preFacts.weightLb == null && (productId || String(out.title || "").trim())) ||
+    ((!hasDimTags && !hasDesc) && String(out.title || "").trim());
+
+  if (!shouldFetch) return out;
+
+  let product = productId ? await fetchShopifyProductForPackageAssign(productId) : null;
+  if (!product && String(out.title || "").trim()) {
+    product = await fetchShopifyProductByTitle(out.title);
+  }
+  if (!product) return out;
+
+  const merged = mergeShopifyProductIntoPackageBody(out, product);
+  webflowLog("info", {
+    event: "package_assign.shopify_hydrated",
+    shopifyProductId: product.id,
+    productTitle: (product.title || "").slice(0, 120),
+    hadDimTags: hasDimTags,
+    hadDescription: hasDesc,
+    source: productId ? "product_id" : "title_lookup",
+  });
+  return merged;
+}
+
+function buildPackageAssignParsedShipping(shippingFacts, hydratedFromShopify) {
+  return {
+    dimensionSource: shippingFacts?.source ?? null,
+    sortedInchesLwh: shippingFacts?.sorted ?? null,
+    widthIn: shippingFacts?.width ?? null,
+    heightIn: shippingFacts?.height ?? null,
+    depthIn: shippingFacts?.depth ?? null,
+    weightLb: shippingFacts?.weightLb ?? null,
+    hydratedFromShopify: hydratedFromShopify === true,
+  };
+}
+
 /* ======================================================
    WEBFLOW — STRONG MATCHER (ID / URL / SLUG)
    Uses config (collectionId + token) for target collection.
@@ -10938,14 +11120,21 @@ async function selectPackageWithAi(body) {
     throw err;
   }
 
-  const title = String(body.title || "").trim();
-  const description = String(body.description || "").trim().slice(0, 2200);
-  const productType = String(body.productType || "").trim();
-  const vendor = String(body.vendor || "").trim();
-  const tags = Array.isArray(body.tags) ? body.tags.map((t) => String(t || "").trim()).filter(Boolean).slice(0, 30) : [];
-  const dimensions = body.dimensions && typeof body.dimensions === "object" ? body.dimensions : null;
-  const weightLb = body.weightLb != null && Number.isFinite(Number(body.weightLb)) ? Number(body.weightLb) : null;
-  const packages = Array.isArray(body.packages) ? body.packages : [];
+  const enrichedBody = await enrichPackageAssignBodyFromShopify(body && typeof body === "object" ? body : {});
+  const hydratedFromShopify = enrichedBody._hydratedFromShopify === true;
+
+  const title = String(enrichedBody.title || "").trim();
+  const description = String(enrichedBody.description || enrichedBody.body_html || "").trim().slice(0, 2200);
+  const productType = String(enrichedBody.productType || enrichedBody.product_type || "").trim();
+  const vendor = String(enrichedBody.vendor || "").trim();
+  const tags = normalizePackageAssignTags(enrichedBody).slice(0, 80);
+  const dimensions =
+    enrichedBody.dimensions && typeof enrichedBody.dimensions === "object" ? enrichedBody.dimensions : null;
+  const weightLb =
+    enrichedBody.weightLb != null && Number.isFinite(Number(enrichedBody.weightLb))
+      ? Number(enrichedBody.weightLb)
+      : null;
+  const packages = Array.isArray(enrichedBody.packages) ? enrichedBody.packages : Array.isArray(body?.packages) ? body.packages : [];
 
   if (!packages.length) {
     const err = new Error("Provide at least one package in packages[]");
@@ -10985,9 +11174,10 @@ async function selectPackageWithAi(body) {
         ? { width: shippingFacts.width, height: shippingFacts.height, length: shippingFacts.depth }
         : dimensions,
   };
+  const parsedShipping = buildPackageAssignParsedShipping(shippingFacts, hydratedFromShopify);
   const deterministic = selectDeterministicShippingPackage(shippingBodyResolved, packageCatalog);
   if (deterministic) {
-    return { ...deterministic, model: `deterministic:${model}` };
+    return { ...deterministic, model: `deterministic:${model}`, parsedShipping };
   }
 
   const systemPrompt = [
@@ -11098,6 +11288,7 @@ async function selectPackageWithAi(body) {
       action: "needs_review",
       reason: `GPT returned "${parsed?.packageLabel || ""}" which is not in the Shopify package list.`,
       model,
+      parsedShipping,
     };
   }
 
@@ -11123,11 +11314,12 @@ async function selectPackageWithAi(body) {
         action: "apply",
         reason: `${override.reason} (Overrode GPT store-default suggestion.)`,
         model: `deterministic+${model}`,
+        parsedShipping,
       };
     }
   }
 
-  return llmResult;
+  return { ...llmResult, parsedShipping };
 }
 
 app.post("/api/package-assign", async (req, res) => {
