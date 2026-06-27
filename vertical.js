@@ -13,7 +13,7 @@ import { CATEGORY_KEYWORDS_FURNITURE } from "./categoryKeywordsFurniture.js";
 /** Furniture items that contain words like "luggage" or "rack" — check these FIRST so they don't match luxury. */
 const FURNITURE_TRAP_PHRASES = [
   "luggage rack", "coat rack", "coat racks", "hat rack", "umbrella stand", "hall tree",
-  "coat stand", "coat tree", "tree coat rack",
+  "coat stand", "coat tree", "tree coat rack", "coat tree rack",
   "towel rack", "magazine rack", "wine rack", "plant stand", "lamp stand",
   "shoe rack", "shoe shelf", "shoe cabinet", "shoe organizer", "shoe storage",
   "jewelry box", "jewelry armoire", "jewelry cabinet", "jewelry display", "jewelry organizer",
@@ -37,6 +37,7 @@ const FURNITURE_TRAP_PHRASES = [
   "storage trunk", "storage trunks", "blanket trunk", "coffee table trunk", "lift-top trunk",
   "lift top trunk", "faux leather trunk", "decorative trunk", "accent trunk",
   "wood doll", "wooden doll", "vintage doll", "nesting doll", "matryoshka", "dollhouse",
+  "russian doll", "collectible doll", "collector doll",
 ];
 
 /** Title/type/tag cues that mean home furniture trunk, not designer travel luggage. */

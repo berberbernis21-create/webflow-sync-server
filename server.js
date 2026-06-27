@@ -40,6 +40,7 @@ import {
   productLooksLikeFurnitureHomeTrunk,
   productLooksLikeHomeDecorTray,
   productTitleLooksLikeWearableJewelry,
+  hasStrongLuxurySignalsInTitle,
 } from "./vertical.js";
 
 dotenv.config();
@@ -2590,7 +2591,7 @@ async function removeConditionOptionIfFurniture(product) {
    HASH FOR CHANGE DETECTION
    Includes dimensions (variant + metafields + tag lines) so dimension changes still invalidate the fast path.
    body_html is normalized (collapse whitespace) so Shopify formatting drift doesn't cause false "changed".
-   taxonomyVersion: bump this when category/vertical logic changes so all items resync once (25 = scarves beat fine-art artwork copy; clear stale furniture metafields on luxury).
+   taxonomyVersion: bump this when category/vertical logic changes so all items resync once (26 = furniture hard guard beats LG tag for coat racks, dolls, curios, oversize dims).
    Image URLs strip query strings (CDN signature / width params often rotate without a real asset change).
    Price and dimensions are normalized so "199.0" vs "199.00" or float noise doesn't churn the cache.
 ====================================================== */
@@ -2670,7 +2671,7 @@ function shopifyHash(product) {
     images: imagesStable,
     slug: product.handle,
     dimensions,
-    taxonomyVersion: 25,
+    taxonomyVersion: 26,
     jewelryReclassVersion,
   };
 }
@@ -2683,7 +2684,7 @@ function contentHashForLLM(product) {
     product_type: (product.product_type || "").trim(),
     tagsKey: tagsFingerprintForHash(product),
     body_html: normalizeHtmlForHash(product.body_html),
-    taxonomyVersion: 25,
+    taxonomyVersion: 26,
     jewelryReclassVersion,
   };
 }
@@ -3898,6 +3899,50 @@ function productIsFineArtFurnitureVertical(product) {
  * Resolve final vertical from combined evidence (name + description + dimensions + weight).
  * This runs as a guard over LLM output to prevent one-word misroutes.
  */
+function productDimensionsForceFurniture(product) {
+  const dims = getDimensionsFromProduct(product || {});
+  if (!hasAnyDimensions(dims)) return false;
+  const sorted = [dims.length, dims.width, dims.height]
+    .map((n) => Number(n))
+    .filter((n) => Number.isFinite(n) && n > 0)
+    .sort((a, b) => b - a);
+  if (!sorted.length) return false;
+  const maxDim = sorted[0];
+  if (maxDim > 42) return true;
+  if (
+    maxDim > 24 &&
+    !isBagOrAgendaProduct(product?.title || "", product?.body_html || "") &&
+    !hasStrongLuxurySignalsInTitle(product)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/** Obvious home/furniture items — always win over LG tags, wearables, and LLM luxury noise. */
+function productMustBeFurnitureVertical(product) {
+  if (!product) return false;
+  if (productLooksLikeFurnitureTrap(product)) return true;
+  if (productLooksLikeFurnitureCurio(product)) return true;
+  if (productLooksLikeFurnitureDoll(product)) return true;
+  if (productLooksLikeHomeClock(product)) return true;
+  if (productLooksLikeFurnitureHomeTrunk(product)) return true;
+  if (productLooksLikeHomeDecorTray(product)) return true;
+  if (productLooksLikeBookFilmOrMedia(product)) return true;
+  if (productLooksLikeFurnitureHomeBox(product)) return true;
+  if (productLooksLikeFurnitureHomeGlassware(product)) return true;
+  if (productLooksLikeLightingFixture(product) && !verticalHardSignalAmbiguity(product)) return true;
+  if (
+    productLooksLikeFurnitureCaseGoods(product) &&
+    !mirroredCaseGoodsVersusBagWearableConflict(product)
+  ) {
+    return true;
+  }
+  if (productIsFineArtFurnitureVertical(product) && !productIsLuxuryScarf(product)) return true;
+  if (productDimensionsForceFurniture(product)) return true;
+  return false;
+}
+
 function resolveVerticalFromEvidence(product, llmDetectedVertical) {
   const tags = getProductTagsArray(product);
   if (productIsLuxuryScarf(product)) {
@@ -3906,8 +3951,27 @@ function resolveVerticalFromEvidence(product, llmDetectedVertical) {
   if (productIsFineArtFurnitureVertical(product)) {
     return { vertical: "furniture", reason: "fine_art_always_furniture" };
   }
+  if (productMustBeFurnitureVertical(product)) {
+    if (productLooksLikeFurnitureTrap(product)) {
+      return { vertical: "furniture", reason: "evidence_entryway_rack_trap" };
+    }
+    if (productLooksLikeFurnitureCurio(product)) {
+      return { vertical: "furniture", reason: "evidence_curio_cabinet" };
+    }
+    if (productLooksLikeFurnitureDoll(product)) {
+      return { vertical: "furniture", reason: "evidence_doll" };
+    }
+    if (productDimensionsForceFurniture(product)) {
+      return { vertical: "furniture", reason: "evidence_oversize_not_handbag" };
+    }
+    return { vertical: "furniture", reason: "evidence_furniture_hard_guard" };
+  }
   const verticalTag = getEcommerceVerticalOverrideFromTags(tags);
-  if (verticalTag?.vertical === "furniture" && productMustBeLuxuryVertical(product)) {
+  if (
+    verticalTag?.vertical === "furniture" &&
+    productMustBeLuxuryVertical(product) &&
+    !productMustBeFurnitureVertical(product)
+  ) {
     webflowLog("warn", {
       event: "vertical.wearable_ignores_fh",
       shopifyProductId: product?.id,
@@ -3917,7 +3981,7 @@ function resolveVerticalFromEvidence(product, llmDetectedVertical) {
     return { vertical: "luxury", reason: "wearable_product_identity_over_fh" };
   }
   if (!verticalTag || verticalTag.vertical !== "furniture") {
-    if (productMustBeLuxuryVertical(product)) {
+    if (!productMustBeFurnitureVertical(product) && productMustBeLuxuryVertical(product)) {
       return { vertical: "luxury", reason: "wearable_product_identity" };
     }
   }
@@ -6976,6 +7040,23 @@ async function syncSingleProductCore(product, cache, options = {}) {
   }
 
   if (manualEcommerceLock && !forceReclassify) {
+    if (
+      manualEcommerceLock.vertical === "luxury" &&
+      productMustBeFurnitureVertical(product) &&
+      !productIsLuxuryScarf(product)
+    ) {
+      webflowLog("warn", {
+        event: "vertical.furniture_overrides_lg_lock",
+        shopifyProductId,
+        productTitle: product.title || "",
+        lockTag: manualEcommerceLock.tag,
+        message: "LG/manual luxury tag ignored — obvious furniture/home item",
+      });
+      manualEcommerceLock = null;
+    }
+  }
+
+  if (manualEcommerceLock && !forceReclassify) {
     vertical = manualEcommerceLock.vertical;
     detectedVertical = manualEcommerceLock.vertical;
     verticalCorrected = false;
@@ -6994,7 +7075,10 @@ async function syncSingleProductCore(product, cache, options = {}) {
     const llmDetectedVertical = llmResult.category === "LUXURY" ? "luxury" : "furniture";
     const evidenceVertical = resolveVerticalFromEvidence(product, llmDetectedVertical);
     detectedVertical = evidenceVertical.vertical;
-    if (ecommerceVerticalTag) {
+    if (
+      ecommerceVerticalTag &&
+      !(ecommerceVerticalTag.vertical === "luxury" && productMustBeFurnitureVertical(product))
+    ) {
       detectedVertical = ecommerceVerticalTag.vertical;
     }
     if (!manualEcommerceLock && isLockedLuxuryProduct(product)) {
@@ -7004,8 +7088,16 @@ async function syncSingleProductCore(product, cache, options = {}) {
     if (!manualEcommerceLock && productLooksLikeWristwatchLuxury(product)) {
       detectedVertical = "luxury";
     }
-    if (!manualEcommerceLock && productMustBeLuxuryVertical(product) && !hasExplicitFurnitureVerticalTag(product)) {
+    if (
+      !manualEcommerceLock &&
+      !productMustBeFurnitureVertical(product) &&
+      productMustBeLuxuryVertical(product) &&
+      !hasExplicitFurnitureVerticalTag(product)
+    ) {
       detectedVertical = "luxury";
+    }
+    if (!manualEcommerceLock && productMustBeFurnitureVertical(product) && !productIsLuxuryScarf(product)) {
+      detectedVertical = "furniture";
     }
     if (!manualEcommerceLock && productIsFineArtFurnitureVertical(product) && !productIsLuxuryScarf(product)) {
       detectedVertical = "furniture";
@@ -7024,6 +7116,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
     }
     const correctedToLuxury =
       !manualEcommerceLock &&
+      !productMustBeFurnitureVertical(product) &&
       cacheEntry?.vertical === "furniture" &&
       detectedVertical === "luxury" &&
       !productLooksLikeFurnitureTrap(product) &&
@@ -7038,7 +7131,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
       ? "luxury"
       : correctedToFurniture
         ? "furniture"
-        : productLooksLikeFurnitureTrap(product)
+        : productMustBeFurnitureVertical(product) || productLooksLikeFurnitureTrap(product)
           ? "furniture"
           : (cacheEntry?.vertical ?? detectedVertical);
     verticalCorrected = correctedToLuxury;
@@ -7055,7 +7148,12 @@ async function syncSingleProductCore(product, cache, options = {}) {
       vertical = "luxury";
       detectedVertical = "luxury";
     }
-    if (!manualEcommerceLock && productMustBeLuxuryVertical(product) && !hasExplicitFurnitureVerticalTag(product)) {
+    if (
+      !manualEcommerceLock &&
+      !productMustBeFurnitureVertical(product) &&
+      productMustBeLuxuryVertical(product) &&
+      !hasExplicitFurnitureVerticalTag(product)
+    ) {
       if (vertical !== "luxury") {
         verticalCorrected = cacheEntry?.vertical === "furniture";
         webflowLog("info", {
@@ -7068,6 +7166,20 @@ async function syncSingleProductCore(product, cache, options = {}) {
       }
       vertical = "luxury";
       detectedVertical = "luxury";
+    }
+    if (!manualEcommerceLock && productMustBeFurnitureVertical(product) && !productIsLuxuryScarf(product)) {
+      if (vertical !== "furniture") {
+        verticalCorrected = cacheEntry?.vertical === "luxury";
+        webflowLog("info", {
+          event: "vertical.override_furniture_hard_guard",
+          shopifyProductId,
+          productTitle: product.title || "",
+          cacheVertical: cacheEntry?.vertical ?? null,
+          previousVertical: vertical,
+        });
+      }
+      vertical = "furniture";
+      detectedVertical = "furniture";
     }
     if (!manualEcommerceLock && productIsFineArtFurnitureVertical(product)) {
       if (vertical !== "furniture") {
@@ -7276,10 +7388,29 @@ async function syncSingleProductCore(product, cache, options = {}) {
     detectedVertical = "luxury";
   }
 
+  if (
+    productMustBeFurnitureVertical(product) &&
+    !productIsLuxuryScarf(product) &&
+    vertical !== "furniture"
+  ) {
+    webflowLog("info", {
+      event: "vertical.override_furniture_hard_guard_final",
+      shopifyProductId,
+      productTitle: product.title || "",
+      previousVertical: vertical,
+      ecommerceTag: ecommerceVerticalTag?.tag ?? null,
+    });
+    vertical = "furniture";
+    detectedVertical = "furniture";
+    verticalCorrected = false;
+  }
+
   if (ecommerceVerticalTag) {
     const prevVertical = vertical;
-    vertical = ecommerceVerticalTag.vertical;
-    detectedVertical = ecommerceVerticalTag.vertical;
+    if (!(ecommerceVerticalTag.vertical === "luxury" && productMustBeFurnitureVertical(product))) {
+      vertical = ecommerceVerticalTag.vertical;
+      detectedVertical = ecommerceVerticalTag.vertical;
+    }
     webflowLog("info", {
       event: "vertical.override_ecommerce_vertical_tag",
       shopifyProductId,
@@ -7297,6 +7428,18 @@ async function syncSingleProductCore(product, cache, options = {}) {
   // Remove copy on the other vertical when tag or classifier places item here (incl. manual FH/LG changes).
   const slugForCleanup = product.handle || "";
   const shopifyUrlForCleanup = `https://${process.env.SHOPIFY_STORE || ""}.myshopify.com/products/${slugForCleanup}`;
+
+  if (vertical === "luxury" && productMustBeFurnitureVertical(product) && !productIsLuxuryScarf(product)) {
+    webflowLog("warn", {
+      event: "vertical.blocked_luxury_cleanup_for_furniture",
+      shopifyProductId,
+      productTitle: product.title || "",
+      message: "Refusing furniture→luxury cleanup for obvious home/furniture item",
+    });
+    vertical = "furniture";
+    detectedVertical = "furniture";
+    verticalCorrected = false;
+  }
 
   if (vertical === "luxury") {
     const furnitureConfig = getWebflowConfig("furniture");
