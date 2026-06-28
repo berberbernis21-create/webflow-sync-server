@@ -764,7 +764,7 @@ const SOLD_BACKFILL_DONE_FILE =
 
 /** Parsed furniture dimensions we alert on when any value is missing (variant, tags, metafields). */
 const FURNITURE_DIMENSION_ALERT_KEYS = ["width", "height", "length", "weight"];
-/** When true (default), missing-fields emails only on new listings — not sync-all backlog. Set false for a one-time sweep. */
+/** When true (default), missing-fields emails only on new listings — not sync-all backlog. Set false for a one-time sweep. Requires allowMissingFieldsAlert on the sync call. */
 const MISSING_FIELDS_EMAIL_NEW_ONLY = process.env.MISSING_FIELDS_EMAIL_NEW_ONLY !== "false";
 
 function ensureDataDir() {
@@ -837,9 +837,10 @@ function dimensionsAlertDedupeKey(shopifyProductId, missingKeys) {
   return `${String(shopifyProductId)}|${sorted}`;
 }
 
-/** New listing = not in sync cache and not already in the Webflow run index. Never during sync-all. */
+/** New listing = not in sync cache and not already in the Webflow run index. Automated sync paths pass skipMissingFieldsAlert. */
 function shouldEmailMissingFieldsForProduct(shopifyProductId, cacheEntry, vertical, options = {}) {
   if (options.skipMissingFieldsAlert === true) return false;
+  if (options.allowMissingFieldsAlert !== true) return false;
   if (!MISSING_FIELDS_EMAIL_NEW_ONLY) return true;
   if (cacheEntry?.webflowId) return false;
   const id = String(shopifyProductId || "").trim();
@@ -7858,7 +7859,10 @@ async function syncSingleProductCore(product, cache, options = {}) {
   const missingDimensionKeys = getMissingFurnitureDimensionKeys(dimensions);
   const dimensionsIncomplete = missingDimensionKeys.length > 0;
   const notSold = !soldNow && shopifyCategoryValue !== "Recently Sold";
-  const trackMissingDimensions = notSold && vertical === "furniture";
+  const trackMissingDimensions =
+    notSold &&
+    vertical === "furniture" &&
+    !isJewelryProduct(product?.title || "", product?.body_html || "", product);
 
   if (soldNow || shopifyCategoryValue === "Recently Sold") {
     const cleaned = stripWeightValidateNote(description || "").trimEnd();
@@ -7893,7 +7897,9 @@ async function syncSingleProductCore(product, cache, options = {}) {
           event: "dimensions_missing.email_skipped",
           reason: options.skipMissingFieldsAlert
             ? "sync_all_or_bulk"
-            : "existing_listing_not_new",
+            : options.allowMissingFieldsAlert !== true
+              ? "automated_sync_opt_in_required"
+              : "existing_listing_not_new",
           shopifyProductId,
           missing: missingDimensionKeys,
         });
@@ -8997,7 +9003,11 @@ async function runWebhookSingleProductSync(shopifyProductId, triggerPath) {
     }
     const duplicateEmailSentFor = new Set();
     const shopifyWriteEmailSentFor = new Set();
-    const result = await syncSingleProduct(product, cache, { duplicateEmailSentFor, shopifyWriteEmailSentFor });
+    const result = await syncSingleProduct(product, cache, {
+      duplicateEmailSentFor,
+      shopifyWriteEmailSentFor,
+      skipMissingFieldsAlert: true,
+    });
     saveCache(cache);
     if (result?.duplicateCorrected && result?.duplicateLog) {
       await sendDuplicatePlacementEmail(result.duplicateLog, duplicateEmailSentFor);
