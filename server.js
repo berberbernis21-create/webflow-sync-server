@@ -6097,7 +6097,7 @@ function shouldMarkSoldTransition(previousQty, qty) {
   return pq > 0;
 }
 
-/** Persist when listing is sold (qty <= 0) for SOLD_RETENTION_DAYS furniture removal sweep; omit when back in stock. */
+/** Persist when listing is sold (qty <= 0) for furniture removal sweep; omit when back in stock. */
 function soldMarkedAtPayload(cacheEntry, lastQty) {
   if (shopifyQtySaysSold(lastQty)) {
     return { soldMarkedAt: cacheEntry?.soldMarkedAt || new Date().toISOString() };
@@ -6105,9 +6105,17 @@ function soldMarkedAtPayload(cacheEntry, lastQty) {
   return {};
 }
 
+function getSoldRetentionDaysFromEnv() {
+  const raw =
+    process.env.FURNITURE_SOLD_RETENTION_DAYS?.trim() ||
+    process.env.SOLD_RETENTION_DAYS?.trim() ||
+    "3";
+  const n = parseInt(raw, 10);
+  return Math.max(1, Number.isFinite(n) ? n : 3);
+}
+
 function getSoldRetentionMs() {
-  const n = parseInt(process.env.SOLD_RETENTION_DAYS || "3", 10);
-  return Math.max(1, Number.isFinite(n) ? n : 3) * 86400000;
+  return getSoldRetentionDaysFromEnv() * 86400000;
 }
 
 /** Webflow DateTime fields may be ISO strings or nested objects (`date`, `value`, etc.). */

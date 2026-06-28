@@ -48,8 +48,8 @@ Dual-pipeline sync: **Luxury / Accessories** and **Furniture & Home**. Each vert
 `LLM_VERTICAL_VISION_FALLBACK` — (optional) Set to `0` or `false` to disable. **Default on:** when the text model returns HOME_INTERIOR but the title/tags/vendor/description suggest luxury footwear, bags, or a known luxury house brand **and** the product has images, the server calls **GPT‑4o vision** on up to 4 images and can override to **LUXURY**.  
 `OPENAI_VERTICAL_VISION_MODEL` — (optional) Vision model, default `gpt-4o`.
 
-**Sold retention (optional)** — **Furniture (ecommerce) only.** After listings have been sold for **`SOLD_RETENTION_DAYS`** (default **3**), each `/sync-all` run **deletes** the ecommerce product from Webflow; if DELETE is not supported, it **archives** as fallback (same helper as duplicate cleanup). **Luxury** is never part of retention: sold items stay in the **Recently Sold** category (and hidden from the main grid) via normal sync — no CMS sweep.  
-`SOLD_RETENTION_DAYS` — Default `3` (furniture only).  
+**Sold retention (optional)** — **Furniture (ecommerce) only.** After listings have been sold for **`FURNITURE_SOLD_RETENTION_DAYS`** (or legacy `SOLD_RETENTION_DAYS`; default **3**), each `/sync-all` run **deletes** the ecommerce product from Webflow; if DELETE is not supported, it **archives** as fallback (same helper as duplicate cleanup). **Luxury** is never part of retention: sold items stay in the **Recently Sold** category (and hidden from the main grid) via normal sync — no CMS sweep.  
+`FURNITURE_SOLD_RETENTION_DAYS` — Preferred env name; default `3` (furniture only). `SOLD_RETENTION_DAYS` still works.  
 `SOLD_RETENTION_DISABLE` — Set to `1` or `true` to turn off furniture retention (no delete/archive sweep).  
 `LUXURY_SOLD_SINCE_FIELD_SLUG` — (optional) DateTime field slug on **luxury CMS** products for “Date sold.” Default **`date-sold`** (same as Webflow’s auto-slug for a field named **Date Sold**). Written whenever an item is marked sold and the field is empty or not a valid date; use env if your slug differs.
 
