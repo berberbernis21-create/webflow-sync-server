@@ -2592,7 +2592,7 @@ async function removeConditionOptionIfFurniture(product) {
    HASH FOR CHANGE DETECTION
    Includes dimensions (variant + metafields + tag lines) so dimension changes still invalidate the fast path.
    body_html is normalized (collapse whitespace) so Shopify formatting drift doesn't cause false "changed".
-   taxonomyVersion: bump this when category/vertical logic changes so all items resync once (26 = furniture hard guard beats LG tag for coat racks, dolls, curios, oversize dims).
+   taxonomyVersion: bump this when category/vertical logic changes so all items resync once (27 = jewelry exempt from oversize-dimension furniture rule; opera/long necklaces stay Luxury).
    Image URLs strip query strings (CDN signature / width params often rotate without a real asset change).
    Price and dimensions are normalized so "199.0" vs "199.00" or float noise doesn't churn the cache.
 ====================================================== */
@@ -2672,7 +2672,7 @@ function shopifyHash(product) {
     images: imagesStable,
     slug: product.handle,
     dimensions,
-    taxonomyVersion: 26,
+    taxonomyVersion: 27,
     jewelryReclassVersion,
   };
 }
@@ -2685,7 +2685,7 @@ function contentHashForLLM(product) {
     product_type: (product.product_type || "").trim(),
     tagsKey: tagsFingerprintForHash(product),
     body_html: normalizeHtmlForHash(product.body_html),
-    taxonomyVersion: 26,
+    taxonomyVersion: 27,
     jewelryReclassVersion,
   };
 }
@@ -3901,6 +3901,13 @@ function productIsFineArtFurnitureVertical(product) {
  * This runs as a guard over LLM output to prevent one-word misroutes.
  */
 function productDimensionsForceFurniture(product) {
+  if (
+    isJewelryProduct(product?.title || "", product?.body_html || "", product) &&
+    !productLooksLikeFurnitureTrap(product) &&
+    !productLooksLikeHomeDecorTray(product)
+  ) {
+    return false;
+  }
   const dims = getDimensionsFromProduct(product || {});
   if (!hasAnyDimensions(dims)) return false;
   const sorted = [dims.length, dims.width, dims.height]
