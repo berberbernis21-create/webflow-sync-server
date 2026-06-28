@@ -6106,8 +6106,8 @@ function soldMarkedAtPayload(cacheEntry, lastQty) {
 }
 
 function getSoldRetentionMs() {
-  const n = parseInt(process.env.SOLD_RETENTION_DAYS || "4", 10);
-  return Math.max(1, Number.isFinite(n) ? n : 4) * 86400000;
+  const n = parseInt(process.env.SOLD_RETENTION_DAYS || "3", 10);
+  return Math.max(1, Number.isFinite(n) ? n : 3) * 86400000;
 }
 
 /** Webflow DateTime fields may be ISO strings or nested objects (`date`, `value`, etc.). */

@@ -48,8 +48,8 @@ Dual-pipeline sync: **Luxury / Accessories** and **Furniture & Home**. Each vert
 `LLM_VERTICAL_VISION_FALLBACK` — (optional) Set to `0` or `false` to disable. **Default on:** when the text model returns HOME_INTERIOR but the title/tags/vendor/description suggest luxury footwear, bags, or a known luxury house brand **and** the product has images, the server calls **GPT‑4o vision** on up to 4 images and can override to **LUXURY**.  
 `OPENAI_VERTICAL_VISION_MODEL` — (optional) Vision model, default `gpt-4o`.
 
-**Sold retention (optional)** — **Furniture (ecommerce) only.** After listings have been sold for **`SOLD_RETENTION_DAYS`** (default **4**), each `/sync-all` run **deletes** the ecommerce product from Webflow; if DELETE is not supported, it **archives** as fallback (same helper as duplicate cleanup). **Luxury** is never part of retention: sold items stay in the **Recently Sold** category (and hidden from the main grid) via normal sync — no CMS sweep.  
-`SOLD_RETENTION_DAYS` — Default `4` (furniture only).  
+**Sold retention (optional)** — **Furniture (ecommerce) only.** After listings have been sold for **`SOLD_RETENTION_DAYS`** (default **3**), each `/sync-all` run **deletes** the ecommerce product from Webflow; if DELETE is not supported, it **archives** as fallback (same helper as duplicate cleanup). **Luxury** is never part of retention: sold items stay in the **Recently Sold** category (and hidden from the main grid) via normal sync — no CMS sweep.  
+`SOLD_RETENTION_DAYS` — Default `3` (furniture only).  
 `SOLD_RETENTION_DISABLE` — Set to `1` or `true` to turn off furniture retention (no delete/archive sweep).  
 `LUXURY_SOLD_SINCE_FIELD_SLUG` — (optional) DateTime field slug on **luxury CMS** products for “Date sold.” Default **`date-sold`** (same as Webflow’s auto-slug for a field named **Date Sold**). Written whenever an item is marked sold and the field is empty or not a valid date; use env if your slug differs.
 
@@ -59,7 +59,7 @@ Dual-pipeline sync: **Luxury / Accessories** and **Furniture & Home**. Each vert
 `SOLD_BACKFILL_BEFORE_DATE` — Optional `YYYY-MM-DD` (default `2026-04-02`).  
 `SOLD_BACKFILL_DISABLE` — Set to `1` or `true` to skip the one-time backfill only.  
 `SOLD_BACKFILL_DONE_FILE` — Optional override path for the marker file.  
-After the marker exists, only the normal **`SOLD_RETENTION_DAYS`** (default 4) furniture rule runs.
+After the marker exists, only the normal **`SOLD_RETENTION_DAYS`** (default 3) furniture rule runs.
 
 **Webflow sold sweep (each `/sync-all`)** — For every Webflow item that has a **Shopify product id** and is not already sold/archived: if that product is in the Shopify crawl with **first variant inventory ≤ 0**, mark sold in Webflow. If the id is **missing** from the crawl, the server **GETs** `/products/{id}.json`: **404** → mark sold; **active** with **qty ≤ 0** → mark sold; **active** with stock → skip. This is in addition to the “disappeared from cache” path for ids that used to be synced.
 
@@ -92,7 +92,7 @@ Example: `FURNITURE_CATEGORY_LIVING_ROOM=507f1f77bcf86cd799439011` (use the real
 - **No duplicates:** Cache stores `webflowId` and `vertical` per Shopify product; lookup uses the correct collection. If the same item would appear in multiple places we archive the duplicate: (1) **Cache said Furniture, we now detect Luxury** → archive from Furniture, re-sync to Luxury, send email, **throw**. (2) **No cache but we're creating in Luxury** → we first check the Furniture collection for the same Shopify product ID; if found (e.g. item was added before or cache was lost), we archive it from Furniture, send email, then create in Luxury. So items like bags/clutches that were wrongly in Furniture get archived and removed when you run a full sync.
 - **Disappeared products:** Marked SOLD in the same collection (using cached vertical).
 - **Qty 0 vs Webflow:** If Shopify inventory is 0 but Webflow is not in sold state (e.g. cache had `lastQty: 0` so the server used to hit `skip_unchanged`), the sync now **repairs** sold state (`sync_product.repair_sold`) instead of skipping.
-- **Long-sold furniture removal:** One-time **April 2 (configurable) backfill** deletes old **sold furniture** (archive fallback); **luxury** is unchanged (Recently Sold). After the marker file exists, **furniture** sold listings older than `SOLD_RETENTION_DAYS` (default **4**) are removed the same way on each `/sync-all`.
+- **Long-sold furniture removal:** One-time **April 2 (configurable) backfill** deletes old **sold furniture** (archive fallback); **luxury** is unchanged (Recently Sold). After the marker file exists, **furniture** sold listings older than `SOLD_RETENTION_DAYS` (default **3**) are removed the same way on each `/sync-all`.
 - **Webflow sold sweep:** Any listing with a Shopify id is aligned to Shopify: **0 qty** or **product gone/archived/draft** → mark sold (see env section above).
 
 ---
