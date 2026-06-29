@@ -7,7 +7,12 @@
  */
 
 import axios from "axios";
-import { productLooksLikeFurnitureTrap } from "./vertical.js";
+import { productLooksLikeFurnitureTrap, productTitleLooksLikeWearableJewelry } from "./vertical.js";
+import {
+  getHardFhLgVerticalLockFromProduct,
+  ECOMMERCE_VERTICAL_TAG_FURNITURE,
+  ECOMMERCE_VERTICAL_TAG_LUXURY,
+} from "./ecommerceTags.js";
 
 const OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
 const DEFAULT_MODEL = "gpt-4o-mini";
@@ -41,6 +46,7 @@ const STRONG_LUXURY_SIGNALS = [
   "sandal", "sandals", "pump", "pumps", "heel", "heels", "sneaker", "sneakers", "loafer", "loafers", "slide", "slides",
   "oxford", "oxfords", "espadrille", "espadrilles", "wedge", "wedges", "stiletto", "stilettos",
   "trainer", "trainers", "footwear", "hobo", "woc", "pochette", "minaudiere",
+  "bag charm", "bag charms", "key ring", "key rings", "keychain", "key chain", "key chains",
 ];
 
 /** If title/vendor/tags hint these brands, allow vision fallback when text model says HOME_INTERIOR. */
@@ -191,6 +197,14 @@ function lightingPendantFixtureSignals(t) {
     return true;
   }
   return false;
+}
+
+export function productIsWearableJewelryPendant(product) {
+  const t = verticalClassificationBlobLower(product);
+  if (jewelryPendantPersonalLuxurySignals(t)) return true;
+  if (!/\bpendants?\b/i.test(t)) return false;
+  if (lightingPendantFixtureSignals(t)) return false;
+  return productTitleLooksLikeWearableJewelry(product);
 }
 
 export function verticalPendantLightingVersusJewelryConflict(product) {
@@ -489,6 +503,9 @@ const FURNITURE_HOME_GLASSWARE_SUBSTRINGS = [
  * @returns {boolean}
  */
 export function productLooksLikeFurnitureHomeGlassware(product) {
+  if (getHardFhLgVerticalLockFromProduct(product)?.vertical === "luxury") return false;
+  if (productTitleLooksLikeWearableJewelry(product)) return false;
+  if (productIsWearableJewelryPendant(product)) return false;
   const { title, productType, tagsStr, description } = getProductText(product);
   const blob = normalizeForVerticalMatch(`${title} ${productType} ${tagsStr} ${description}`)
     .toLowerCase()
@@ -880,6 +897,30 @@ export async function classifyWithLLM(product, logPayload = {}, logFn = null) {
 
   const { title, productType, tagsStr } = getProductText(product);
   const nameAndTypeAndTags = `${title} ${productType} ${tagsStr}`.toLowerCase();
+
+  const hardVerticalTag = getHardFhLgVerticalLockFromProduct(product);
+  if (hardVerticalTag) {
+    const lockedResult = {
+      category: hardVerticalTag.vertical === "luxury" ? "LUXURY" : "HOME_INTERIOR",
+      confidence: 1,
+      reasoning:
+        hardVerticalTag.tag === ECOMMERCE_VERTICAL_TAG_LUXURY
+          ? "Traxia LG tag — absolute Luxury vertical lock; LLM skipped."
+          : "Traxia FH tag — absolute Furniture vertical lock; LLM skipped.",
+    };
+    logPayload.raw = null;
+    logPayload.parsed = null;
+    logPayload.final = lockedResult;
+    logPayload.override = `ecommerce_vertical_tag_${hardVerticalTag.tag.toLowerCase()}`;
+    if (logFn) {
+      logFn("info", {
+        event: "llm_vertical.locked_ecommerce_tag",
+        category: lockedResult.category,
+        tag: hardVerticalTag.tag,
+      });
+    }
+    return lockedResult;
+  }
 
   // Decorative/costume masks (masquerade, feathered mask, etc.) → Furniture & Home Accessories
   if (DECOR_MASK_INDICATORS.some((term) => nameAndTypeAndTags.includes(term))) {

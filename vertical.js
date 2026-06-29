@@ -242,6 +242,7 @@ const SHOE_JEWELRY_TITLE_WORDS = [
   "sandal", "sandals", "loafer", "loafers", "pump", "pumps", "mule", "mules", "slide", "slides", "flat", "flats",
   "jewelry", "jewellery", "jewel", "earring", "earrings", "bracelet", "bracelets",
   "necklace", "necklaces", "ring", "rings", "pendant", "pendants", "brooch", "barrette", "barrettes",
+  "bag charm", "bag charms", "key ring", "key rings", "keychain", "key chain", "key chains",
   "watch", "watches", "wristwatch", "wristwatches", "timepiece", "timepieces",
 ];
 
@@ -285,6 +286,7 @@ const TITLE_LUXURY_WORDS = [
   "clutch", "tote", "totes", "crossbody", "wallet", "wallets", "luggage", "satchel", "briefcase",
   "agenda", "agenda cover", "belt", "belts", "scarf", "scarves",
   "purse", "purses", "card holder", "key pouch", "woc", "wallet on chain",
+  "bag charm", "bag charms", "key ring", "key rings", "keychain", "key chain", "key chains",
   "ballet flats", "flats", "heels", "pumps", "sneakers", "loafers", "boots", "sandals", "mules", "slides", "shoes",
   "jewelry", "earring", "earrings", "bracelet", "bracelets", "necklace", "necklaces", "pouch", "barrette", "barrettes",
   "watch", "watches", "wristwatch", "wristwatches", "timepiece", "timepieces",
