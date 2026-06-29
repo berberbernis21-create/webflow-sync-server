@@ -2985,6 +2985,33 @@ function getManualEcommerceVerticalLock(product) {
   return null;
 }
 
+/** FH / LG stamp stored on cache rows — compared on daily sync to detect merchant vertical intent changes. */
+function ecommerceVerticalTagStamp(tags) {
+  return getEcommerceVerticalOverrideFromTags(tags)?.tag ?? "";
+}
+
+function ecommerceVerticalTagChanged(product, cacheEntry) {
+  if (!cacheEntry) return true;
+  const current = ecommerceVerticalTagStamp(getProductTagsArray(product));
+  if (!Object.prototype.hasOwnProperty.call(cacheEntry, "ecommerceVerticalTagStamp")) {
+    return Boolean(current);
+  }
+  return current !== cacheEntry.ecommerceVerticalTagStamp;
+}
+
+/**
+ * When false, sync keeps an already-placed item on its cached vertical (luxury vs furniture).
+ * Allowed switches: forceReclassify, webhook, sync-by-ids, new placement, or FH/LG tag change.
+ */
+function shouldAllowVerticalSwitch(product, cacheEntry, options = {}) {
+  if (options.forceReclassify === true) return true;
+  const trigger = options.syncTrigger || "sync-all";
+  if (trigger === "webhook" || trigger === "sync-by-ids") return true;
+  if (!cacheEntry?.webflowId || !cacheEntry?.vertical) return true;
+  if (ecommerceVerticalTagChanged(product, cacheEntry)) return true;
+  return false;
+}
+
 /* ======================================================
    FURNITURE CATEGORY — detect + map to Shopify display
    Fallback: Accessories when no keyword matches.
@@ -3835,6 +3862,7 @@ const LUXURY_WEARABLE_CUES = [
   "scarf", "scarves", "silk scarf", "wool scarf", "cashmere scarf", "shawl", "stole", "foulard",
   "bangle", "bangles", "bracelet", "bracelets",
   "necklace", "necklaces", "earring", "earrings", "brooch", "brooches",
+  "pendant", "pendants", "coin purse", "pochette", "minaudiere",
   "watch", "watches", "wristwatch", "wristwatches", "timepiece", "timepieces",
 ];
 const LUXURY_SCARF_CUES = [
@@ -3927,8 +3955,11 @@ function productDimensionsForceFurniture(product) {
   return false;
 }
 
-/** Obvious home/furniture items — always win over LG tags, wearables, and LLM luxury noise. */
-function productMustBeFurnitureVertical(product) {
+/**
+ * True home/furniture inventory (coat racks, lamps, case goods, etc.) — may override LG on a mis-tagged item.
+ * Does NOT include oversize-dimension heuristics; those must not strip LG / belt / wallet / jewelry routing.
+ */
+function productIsGenuineFurnitureInventory(product) {
   if (!product) return false;
   if (productLooksLikeFurnitureTrap(product)) return true;
   if (productLooksLikeFurnitureCurio(product)) return true;
@@ -3939,7 +3970,13 @@ function productMustBeFurnitureVertical(product) {
   if (productLooksLikeBookFilmOrMedia(product)) return true;
   if (productLooksLikeFurnitureHomeBox(product)) return true;
   if (productLooksLikeFurnitureHomeGlassware(product)) return true;
-  if (productLooksLikeLightingFixture(product) && !verticalHardSignalAmbiguity(product)) return true;
+  if (
+    productLooksLikeLightingFixture(product) &&
+    !verticalHardSignalAmbiguity(product) &&
+    !productTitleLooksLikeWearableJewelry(product)
+  ) {
+    return true;
+  }
   if (
     productLooksLikeFurnitureCaseGoods(product) &&
     !mirroredCaseGoodsVersusBagWearableConflict(product)
@@ -3947,7 +3984,36 @@ function productMustBeFurnitureVertical(product) {
     return true;
   }
   if (productIsFineArtFurnitureVertical(product) && !productIsLuxuryScarf(product)) return true;
+  return false;
+}
+
+/** Obvious home/furniture items — may win over LLM luxury noise; wearables/LG still protected in sync guards. */
+function productMustBeFurnitureVertical(product) {
+  if (!product) return false;
+  if (productIsGenuineFurnitureInventory(product)) return true;
   if (productDimensionsForceFurniture(product)) return true;
+  return false;
+}
+
+/** Belts, bags, jewelry, LG/OJ tags, etc. — sync must never move these to Furniture & Home. */
+function productMustStayInLuxuryVertical(product) {
+  if (!product) return false;
+  if (productIsLuxuryScarf(product)) return true;
+  const tags = getProductTagsArray(product);
+  const verticalTag = getEcommerceVerticalOverrideFromTags(tags);
+  if (verticalTag?.vertical === "luxury") return true;
+  if (productHasJewelryCategoryTag(product)) return true;
+  if (getLuxuryCategoryOverrideFromEcommerceTags(tags)) return true;
+  if (productMustBeLuxuryVertical(product)) return true;
+  if (hasStrongLuxurySignalsInTitle(product)) return true;
+  if (isBeltProduct(product?.title || "", product?.body_html || "")) return true;
+  if (
+    isJewelryProduct(product?.title || "", product?.body_html || "", product) &&
+    !productLooksLikeFurnitureTrap(product) &&
+    !productLooksLikeHomeDecorTray(product)
+  ) {
+    return true;
+  }
   return false;
 }
 
@@ -3958,6 +4024,13 @@ function resolveVerticalFromEvidence(product, llmDetectedVertical) {
   }
   if (productIsFineArtFurnitureVertical(product)) {
     return { vertical: "furniture", reason: "fine_art_always_furniture" };
+  }
+  const verticalTag = getEcommerceVerticalOverrideFromTags(tags);
+  if (verticalTag?.vertical === "luxury" && !productIsGenuineFurnitureInventory(product)) {
+    return { vertical: "luxury", reason: `ecommerce_vertical_tag_${verticalTag.tag.toLowerCase()}` };
+  }
+  if (productMustStayInLuxuryVertical(product) && !productIsGenuineFurnitureInventory(product)) {
+    return { vertical: "luxury", reason: "luxury_wearable_or_tag_lock" };
   }
   if (productMustBeFurnitureVertical(product)) {
     if (productLooksLikeFurnitureTrap(product)) {
@@ -3974,9 +4047,9 @@ function resolveVerticalFromEvidence(product, llmDetectedVertical) {
     }
     return { vertical: "furniture", reason: "evidence_furniture_hard_guard" };
   }
-  const verticalTag = getEcommerceVerticalOverrideFromTags(tags);
+  const verticalTagAfterFurniture = getEcommerceVerticalOverrideFromTags(tags);
   if (
-    verticalTag?.vertical === "furniture" &&
+    verticalTagAfterFurniture?.vertical === "furniture" &&
     productMustBeLuxuryVertical(product) &&
     !productMustBeFurnitureVertical(product)
   ) {
@@ -3988,15 +4061,15 @@ function resolveVerticalFromEvidence(product, llmDetectedVertical) {
     });
     return { vertical: "luxury", reason: "wearable_product_identity_over_fh" };
   }
-  if (!verticalTag || verticalTag.vertical !== "furniture") {
+  if (!verticalTagAfterFurniture || verticalTagAfterFurniture.vertical !== "furniture") {
     if (!productMustBeFurnitureVertical(product) && productMustBeLuxuryVertical(product)) {
       return { vertical: "luxury", reason: "wearable_product_identity" };
     }
   }
-  if (verticalTag) {
+  if (verticalTagAfterFurniture) {
     return {
-      vertical: verticalTag.vertical,
-      reason: `ecommerce_vertical_tag_${verticalTag.tag.toLowerCase()}`,
+      vertical: verticalTagAfterFurniture.vertical,
+      reason: `ecommerce_vertical_tag_${verticalTagAfterFurniture.tag.toLowerCase()}`,
     };
   }
   if (productHasJewelryCategoryTag(product)) {
@@ -4332,10 +4405,19 @@ function productMustBeLuxuryVertical(product) {
   const title = product?.title || "";
   const description = product?.body_html || "";
   if (isBagOrAgendaProduct(title, description)) return true;
+  if (isBeltProduct(title, description)) return true;
+  if (hasStrongLuxurySignalsInTitle(product)) return true;
   if (productLooksLikeFootwearLuxury(product) && !productLooksLikeFineArtWallDecor(product)) return true;
   const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
   const text = [title, stripHtml(description)].filter(Boolean).join(" ").toLowerCase();
   if (textHasAnyWordCue(text, LUXURY_WEARABLE_CUES)) return true;
+  if (
+    isJewelryProduct(title, description, product) &&
+    !productLooksLikeFurnitureTrap(product) &&
+    !productLooksLikeHomeDecorTray(product)
+  ) {
+    return true;
+  }
   return false;
 }
 
@@ -4397,7 +4479,14 @@ function isJewelryProduct(title, descriptionHtml, product = null) {
   if (productLooksLikeBookFilmOrMedia(pseudo)) return false;
   if (productLooksLikeFurnitureHomeBox(pseudo)) return false;
   if (productLooksLikeFurnitureHomeGlassware(pseudo)) return false;
-  if (productLooksLikeLightingFixture(pseudo)) return false;
+  if (
+    productLooksLikeLightingFixture(pseudo) &&
+    !productTitleLooksLikeWearableJewelry(pseudo) &&
+    !matchWordBoundary(text, "pendant") &&
+    !matchWordBoundary(text, "pendants")
+  ) {
+    return false;
+  }
   if (isLikelyJewelryBandRing(text)) return true;
   return JEWELRY_KEYWORDS.some((kw) => matchWordBoundary(text, kw));
 }
@@ -4606,14 +4695,14 @@ function furnitureEcProductTypeForWebflow(productType, existingValue) {
   return null;
 }
 
-function cacheEntryAfterCreateOnlySkip(cacheEntry, currentHash, currentContentHash, shopifyProductId, webflowId, vertical, qty) {
+function cacheEntryAfterCreateOnlySkip(product, cacheEntry, currentHash, currentContentHash, shopifyProductId, webflowId, vertical, qty) {
   return {
     hash: currentHash,
     contentHash: currentContentHash,
     webflowId,
     lastQty: qty,
     vertical,
-    ...soldMarkedAtPayload(cacheEntry, qty),
+    ...cacheSyncMeta(product, cacheEntry, qty),
   };
 }
 
@@ -4913,6 +5002,7 @@ function getFurnitureCategoryManualOverride(tags, product = null) {
 
 /** LG tag, Traxia JEWELRY category, or obvious jewelry copy — never route to Furniture & Home. */
 function isLockedLuxuryProduct(product) {
+  if (productMustStayInLuxuryVertical(product) && !productIsGenuineFurnitureInventory(product)) return true;
   const tags = getProductTagsArray(product);
   if (productLooksLikeFurnitureTrap(product)) return false;
   if (productLooksLikeFurnitureHomeGlassware(product)) return false;
@@ -6105,6 +6195,14 @@ function soldMarkedAtPayload(cacheEntry, lastQty) {
   return {};
 }
 
+/** Cache fields written on every sync row update (sold timestamp + FH/LG stamp for vertical freeze). */
+function cacheSyncMeta(product, cacheEntry, lastQty) {
+  return {
+    ...soldMarkedAtPayload(cacheEntry, lastQty),
+    ecommerceVerticalTagStamp: ecommerceVerticalTagStamp(getProductTagsArray(product)),
+  };
+}
+
 function getSoldRetentionDaysFromEnv() {
   const raw =
     process.env.FURNITURE_SOLD_RETENTION_DAYS?.trim() ||
@@ -6509,7 +6607,7 @@ async function sweepWebflowOrphansAgainstShopifyCatalog(products, cache) {
                 webflowId: existing.id,
                 lastQty: qty,
                 vertical,
-                ...soldMarkedAtPayload(prevEntry, qty),
+                ...cacheSyncMeta(p, prevEntry, qty),
               };
               webflowLog("info", {
                 event: "cache.mutated",
@@ -6565,7 +6663,7 @@ async function sweepWebflowOrphansAgainstShopifyCatalog(products, cache) {
                 webflowId: existing.id,
                 lastQty: pq,
                 vertical,
-                ...soldMarkedAtPayload(prevEntry, pq),
+                ...cacheSyncMeta(confirmed.product, prevEntry, pq),
               };
               webflowLog("info", {
                 event: "cache.mutated",
@@ -6688,12 +6786,21 @@ async function syncSingleProductCore(product, cache, options = {}) {
     (cacheEntry?.webflowId && previousContentHash == null);
   const forceReclassify = options.forceReclassify === true;
   const createOnly = options.createOnly === true;
+  const syncTrigger =
+    options.syncTrigger ||
+    (options.fromWebhook === true ? "webhook" : "sync-all");
+  const allowVerticalSwitch = shouldAllowVerticalSwitch(product, cacheEntry, {
+    ...options,
+    syncTrigger,
+    forceReclassify,
+  });
   const cachedVerticalForSkip = cacheEntry?.vertical ?? "luxury";
   const manualLockForSkip = getManualEcommerceVerticalLock(product);
   const evidenceVsCache = manualLockForSkip
     ? { vertical: manualLockForSkip.vertical, reason: `ecommerce_lock_${manualLockForSkip.tag}` }
     : resolveVerticalFromEvidence(product, cachedVerticalForSkip);
-  const verticalNeedsCorrection = evidenceVsCache.vertical !== cachedVerticalForSkip;
+  const verticalNeedsCorrection =
+    allowVerticalSwitch && evidenceVsCache.vertical !== cachedVerticalForSkip;
 
   // Do NOT lock vertical from cache when webflowId is missing and qty is 0 — wrong vertical (e.g. luxury) blocked
   // Webflow index lookup + sold heuristic, causing skip_create_sold while the live listing stays on Furniture unpublished/sold.
@@ -6721,7 +6828,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
       webflowId: cacheEntry.webflowId,
       lastQty: qty,
       vertical,
-      ...soldMarkedAtPayload(cacheEntry, qty),
+      ...cacheSyncMeta(product, cacheEntry, qty),
     };
     webflowLog("info", {
       event: "sync_product.skip_unchanged_no_touch",
@@ -6766,7 +6873,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
             webflowId: existing.id,
             lastQty: qty,
             vertical,
-            ...soldMarkedAtPayload(cacheEntry, qty),
+            ...cacheSyncMeta(product, cacheEntry, qty),
           };
           webflowLog("info", {
             event: "sync_product.skip_unchanged_archived",
@@ -6784,7 +6891,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
           webflowId: existing.id,
           lastQty: qty,
           vertical,
-          ...soldMarkedAtPayload(cacheEntry, qty),
+          ...cacheSyncMeta(product, cacheEntry, qty),
         };
         return { operation: "update", id: existing.id };
       }
@@ -6815,7 +6922,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
           webflowId: existing.id,
           lastQty: qty,
           vertical,
-          ...soldMarkedAtPayload(cacheEntry, qty),
+          ...cacheSyncMeta(product, cacheEntry, qty),
         };
         webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "sold", webflowId: existing.id, vertical });
         return { operation: "sold", id: existing.id };
@@ -6842,7 +6949,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
             webflowId: existing.id,
             lastQty: qty,
             vertical,
-            ...soldMarkedAtPayload(cacheEntry, qty),
+            ...cacheSyncMeta(product, cacheEntry, qty),
           };
           return { operation: "update", id: existing.id };
         }
@@ -6872,7 +6979,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
           webflowId: existing.id,
           lastQty: qty,
           vertical,
-          ...soldMarkedAtPayload(cacheEntry, qty),
+          ...cacheSyncMeta(product, cacheEntry, qty),
         };
         webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "repair_images", webflowId: existing.id, vertical });
         return { operation: "update", id: existing.id };
@@ -6906,7 +7013,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
           webflowId: existing.id,
           lastQty: qty,
           vertical,
-          ...soldMarkedAtPayload(cacheEntry, qty),
+          ...cacheSyncMeta(product, cacheEntry, qty),
         };
         webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "repair_images", webflowId: existing.id, vertical });
         return { operation: "update", id: existing.id };
@@ -6936,7 +7043,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
           webflowId: existing.id,
           lastQty: qty,
           vertical,
-          ...soldMarkedAtPayload(cacheEntry, qty),
+          ...cacheSyncMeta(product, cacheEntry, qty),
         };
         webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "repair_images", webflowId: existing.id, vertical });
         return { operation: "update", id: existing.id };
@@ -6947,7 +7054,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
         webflowId: existing.id,
         lastQty: qty,
         vertical,
-        ...soldMarkedAtPayload(cacheEntry, qty),
+        ...cacheSyncMeta(product, cacheEntry, qty),
       };
       webflowLog("info", { event: "sync_product.skip_unchanged", shopifyProductId, productTitle: product.title, webflowId: existing.id, message: "Name/description/shopify snapshot unchanged; skipped LLM and write" });
       return { operation: "skip", id: existing.id };
@@ -7038,7 +7145,29 @@ async function syncSingleProductCore(product, cache, options = {}) {
 
   let vertical, detectedVertical, verticalCorrected;
   const ecommerceVerticalTag = getEcommerceVerticalOverrideFromTags(getProductTagsArray(product));
-  let manualEcommerceLock = getManualEcommerceVerticalLock(product);
+  const freezePlacedVertical =
+    Boolean(cacheEntry?.webflowId && cacheEntry?.vertical) &&
+    !forceReclassify &&
+    !allowVerticalSwitch;
+  let manualEcommerceLock = null;
+
+  if (freezePlacedVertical) {
+    vertical = cacheEntry.vertical;
+    detectedVertical = cacheEntry.vertical;
+    verticalCorrected = false;
+    webflowLog("info", {
+      event: "vertical.frozen_placed",
+      shopifyProductId,
+      productTitle: product.title || "",
+      vertical,
+      syncTrigger,
+      ecommerceTagStamp: ecommerceVerticalTagStamp(getProductTagsArray(product)) || null,
+      cachedEcommerceTagStamp: cacheEntry.ecommerceVerticalTagStamp ?? null,
+      message:
+        "Daily sync: keeping existing vertical unless FH/LG tag changes or a product webhook runs",
+    });
+  } else {
+  manualEcommerceLock = getManualEcommerceVerticalLock(product);
   if (
     manualEcommerceLock?.vertical === "furniture" &&
     productMustBeLuxuryVertical(product) &&
@@ -7058,7 +7187,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
   if (manualEcommerceLock && !forceReclassify) {
     if (
       manualEcommerceLock.vertical === "luxury" &&
-      productMustBeFurnitureVertical(product) &&
+      productIsGenuineFurnitureInventory(product) &&
       !productIsLuxuryScarf(product)
     ) {
       webflowLog("warn", {
@@ -7066,7 +7195,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
         shopifyProductId,
         productTitle: product.title || "",
         lockTag: manualEcommerceLock.tag,
-        message: "LG/manual luxury tag ignored — obvious furniture/home item",
+        message: "LG tag ignored — genuine furniture/home inventory (lamp, coat rack, case goods, etc.)",
       });
       manualEcommerceLock = null;
     }
@@ -7091,11 +7220,13 @@ async function syncSingleProductCore(product, cache, options = {}) {
     const llmDetectedVertical = llmResult.category === "LUXURY" ? "luxury" : "furniture";
     const evidenceVertical = resolveVerticalFromEvidence(product, llmDetectedVertical);
     detectedVertical = evidenceVertical.vertical;
-    if (
-      ecommerceVerticalTag &&
-      !(ecommerceVerticalTag.vertical === "luxury" && productMustBeFurnitureVertical(product))
+    if (ecommerceVerticalTag?.vertical === "luxury" && !productIsGenuineFurnitureInventory(product)) {
+      detectedVertical = "luxury";
+    } else if (
+      ecommerceVerticalTag?.vertical === "furniture" &&
+      !(productMustBeLuxuryVertical(product) && !hasExplicitFurnitureVerticalTag(product))
     ) {
-      detectedVertical = ecommerceVerticalTag.vertical;
+      detectedVertical = "furniture";
     }
     if (!manualEcommerceLock && isLockedLuxuryProduct(product)) {
       detectedVertical = "luxury";
@@ -7112,7 +7243,12 @@ async function syncSingleProductCore(product, cache, options = {}) {
     ) {
       detectedVertical = "luxury";
     }
-    if (!manualEcommerceLock && productMustBeFurnitureVertical(product) && !productIsLuxuryScarf(product)) {
+    if (
+      !manualEcommerceLock &&
+      productMustBeFurnitureVertical(product) &&
+      !productIsLuxuryScarf(product) &&
+      !productMustStayInLuxuryVertical(product)
+    ) {
       detectedVertical = "furniture";
     }
     if (!manualEcommerceLock && productIsFineArtFurnitureVertical(product) && !productIsLuxuryScarf(product)) {
@@ -7140,6 +7276,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
     const correctedToFurniture =
       !manualEcommerceLock &&
       !isLockedLuxuryProduct(product) &&
+      !productMustStayInLuxuryVertical(product) &&
       !productIsLuxuryScarf(product) &&
       cacheEntry?.vertical === "luxury" &&
       detectedVertical === "furniture";
@@ -7147,9 +7284,11 @@ async function syncSingleProductCore(product, cache, options = {}) {
       ? "luxury"
       : correctedToFurniture
         ? "furniture"
-        : productMustBeFurnitureVertical(product) || productLooksLikeFurnitureTrap(product)
-          ? "furniture"
-          : (cacheEntry?.vertical ?? detectedVertical);
+        : productMustStayInLuxuryVertical(product)
+          ? "luxury"
+          : productMustBeFurnitureVertical(product) || productLooksLikeFurnitureTrap(product)
+            ? "furniture"
+            : (cacheEntry?.vertical ?? detectedVertical);
     verticalCorrected = correctedToLuxury;
     if (!manualEcommerceLock && productLooksLikeWristwatchLuxury(product)) {
       if (vertical !== "luxury") {
@@ -7183,7 +7322,12 @@ async function syncSingleProductCore(product, cache, options = {}) {
       vertical = "luxury";
       detectedVertical = "luxury";
     }
-    if (!manualEcommerceLock && productMustBeFurnitureVertical(product) && !productIsLuxuryScarf(product)) {
+    if (
+      !manualEcommerceLock &&
+      productMustBeFurnitureVertical(product) &&
+      !productIsLuxuryScarf(product) &&
+      !productMustStayInLuxuryVertical(product)
+    ) {
       if (vertical !== "furniture") {
         verticalCorrected = cacheEntry?.vertical === "luxury";
         webflowLog("info", {
@@ -7197,7 +7341,11 @@ async function syncSingleProductCore(product, cache, options = {}) {
       vertical = "furniture";
       detectedVertical = "furniture";
     }
-    if (!manualEcommerceLock && productIsFineArtFurnitureVertical(product)) {
+    if (
+      !manualEcommerceLock &&
+      productIsFineArtFurnitureVertical(product) &&
+      !productMustStayInLuxuryVertical(product)
+    ) {
       if (vertical !== "furniture") {
         verticalCorrected = cacheEntry?.vertical === "luxury";
         webflowLog("info", {
@@ -7334,6 +7482,9 @@ async function syncSingleProductCore(product, cache, options = {}) {
     }
   }
 
+  } // end !freezePlacedVertical (classifier / recovered vertical resolution)
+
+  if (!freezePlacedVertical) {
   if (!manualEcommerceLock && !ecommerceVerticalTag && productLooksLikeWristwatchLuxury(product) && vertical !== "luxury") {
     webflowLog("info", {
       event: "vertical.override_wristwatch_final",
@@ -7441,11 +7592,13 @@ async function syncSingleProductCore(product, cache, options = {}) {
     });
   }
 
+  } // end !freezePlacedVertical (final vertical override pass)
+
   // Remove copy on the other vertical when tag or classifier places item here (incl. manual FH/LG changes).
   const slugForCleanup = product.handle || "";
   const shopifyUrlForCleanup = `https://${process.env.SHOPIFY_STORE || ""}.myshopify.com/products/${slugForCleanup}`;
 
-  if (vertical === "luxury" && productMustBeFurnitureVertical(product) && !productIsLuxuryScarf(product)) {
+  if (!freezePlacedVertical && vertical === "luxury" && productMustBeFurnitureVertical(product) && !productIsLuxuryScarf(product)) {
     webflowLog("warn", {
       event: "vertical.blocked_luxury_cleanup_for_furniture",
       shopifyProductId,
@@ -7457,7 +7610,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
     verticalCorrected = false;
   }
 
-  if (vertical === "luxury") {
+  if (!freezePlacedVertical && vertical === "luxury") {
     const furnitureConfig = getWebflowConfig("furniture");
     if (furnitureConfig?.siteId && furnitureConfig?.token) {
       const existingInFurniture = await findExistingWebflowEcommerceProduct(
@@ -7507,7 +7660,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
     }
   }
 
-  if (vertical === "furniture" && !isLockedLuxuryProduct(product)) {
+  if (!freezePlacedVertical && vertical === "furniture" && !isLockedLuxuryProduct(product)) {
     const luxuryConfig = getWebflowConfig("luxury");
     if (luxuryConfig?.collectionId && luxuryConfig?.token) {
       const existingInLuxury = await findExistingWebflowItem(shopifyProductId, shopifyUrlForCleanup, slugForCleanup, luxuryConfig);
@@ -7547,6 +7700,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
 
   // Jewelry guard can set luxury after cache still says furniture — run same move as verticalCorrected.
   if (
+    !freezePlacedVertical &&
     !manualEcommerceLock &&
     vertical === "luxury" &&
     cacheEntry?.vertical === "furniture" &&
@@ -8067,7 +8221,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
           webflowId: cacheEntry.webflowId,
           lastQty: qty,
           vertical,
-          ...soldMarkedAtPayload(cacheEntry, qty),
+          ...cacheSyncMeta(product, cacheEntry, qty),
         };
         webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "repair_images", webflowId: cacheEntry.webflowId, vertical });
         return { operation: "update", id: cacheEntry.webflowId };
@@ -8092,7 +8246,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
           webflowId: cacheEntry.webflowId,
           lastQty: qty,
           vertical,
-          ...soldMarkedAtPayload(cacheEntry, qty),
+          ...cacheSyncMeta(product, cacheEntry, qty),
         };
         webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "repair_images", webflowId: cacheEntry.webflowId, vertical });
         return { operation: "update", id: cacheEntry.webflowId };
@@ -8112,7 +8266,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
           webflowId: cacheEntry.webflowId,
           lastQty: qty,
           vertical,
-          ...soldMarkedAtPayload(cacheEntry, qty),
+          ...cacheSyncMeta(product, cacheEntry, qty),
         };
         webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "repair_images", webflowId: cacheEntry.webflowId, vertical });
         return { operation: "update", id: cacheEntry.webflowId };
@@ -8124,7 +8278,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
         webflowId: cacheEntry.webflowId,
         lastQty: qty,
         vertical,
-        ...soldMarkedAtPayload(cacheEntry, qty),
+        ...cacheSyncMeta(product, cacheEntry, qty),
       };
       webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "skip", webflowId: cacheEntry.webflowId, vertical });
       return { operation: "skip", id: cacheEntry.webflowId };
@@ -8189,6 +8343,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
 
     if (createOnly) {
       cache[shopifyProductId] = cacheEntryAfterCreateOnlySkip(
+        product,
         cacheEntry,
         currentHash,
         currentContentHash,
@@ -8247,7 +8402,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
               webflowId: existing.id,
               lastQty: qty,
               vertical,
-              ...soldMarkedAtPayload(cacheEntry, qty),
+              ...cacheSyncMeta(product, cacheEntry, qty),
             };
             webflowLog("info", {
               event: "sync_product.skip_archived_furniture",
@@ -8292,7 +8447,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
         webflowId: existing.id,
         lastQty: qty,
         vertical,
-        ...soldMarkedAtPayload(cacheEntry, qty),
+        ...cacheSyncMeta(product, cacheEntry, qty),
       };
       webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "sold", webflowId: existing.id, vertical });
       return { operation: "sold", id: existing.id };
@@ -8342,7 +8497,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
             webflowId: existing.id,
             lastQty: qty,
             vertical,
-            ...soldMarkedAtPayload(cacheEntry, qty),
+            ...cacheSyncMeta(product, cacheEntry, qty),
           };
           webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "repair_images", webflowId: existing.id, vertical });
           return { operation: "update", id: existing.id };
@@ -8366,7 +8521,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
             webflowId: existing.id,
             lastQty: qty,
             vertical,
-            ...soldMarkedAtPayload(cacheEntry, qty),
+            ...cacheSyncMeta(product, cacheEntry, qty),
           };
           webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "repair_images", webflowId: existing.id, vertical });
           return { operation: "update", id: existing.id };
@@ -8386,7 +8541,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
             webflowId: existing.id,
             lastQty: qty,
             vertical,
-            ...soldMarkedAtPayload(cacheEntry, qty),
+            ...cacheSyncMeta(product, cacheEntry, qty),
           };
           webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "repair_images", webflowId: existing.id, vertical });
           return { operation: "update", id: existing.id };
@@ -8398,7 +8553,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
           webflowId: existing.id,
           lastQty: qty,
           vertical,
-          ...soldMarkedAtPayload(cacheEntry, qty),
+          ...cacheSyncMeta(product, cacheEntry, qty),
         };
         webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "skip", webflowId: existing.id, vertical });
         return { operation: "skip", id: existing.id };
@@ -8435,7 +8590,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
         webflowId: existing.id,
         lastQty: qty,
         vertical,
-        ...soldMarkedAtPayload(cacheEntry, qty),
+        ...cacheSyncMeta(product, cacheEntry, qty),
       };
       webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "update", webflowId: existing.id, vertical });
       return { operation: "update", id: existing.id };
@@ -8456,7 +8611,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
         webflowId: existing.id,
         lastQty: qty,
         vertical,
-        ...soldMarkedAtPayload(cacheEntry, qty),
+        ...cacheSyncMeta(product, cacheEntry, qty),
       };
       webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "skip", webflowId: existing.id, vertical });
       return { operation: "skip", id: existing.id };
@@ -8477,7 +8632,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
         webflowId: existing.id,
         lastQty: qty,
         vertical,
-        ...soldMarkedAtPayload(cacheEntry, qty),
+        ...cacheSyncMeta(product, cacheEntry, qty),
       };
       webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "repair_images", webflowId: existing.id, vertical });
       return { operation: "update", id: existing.id };
@@ -8502,7 +8657,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
         webflowId: existing.id,
         lastQty: qty,
         vertical,
-        ...soldMarkedAtPayload(cacheEntry, qty),
+        ...cacheSyncMeta(product, cacheEntry, qty),
       };
       webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "repair_images", webflowId: existing.id, vertical });
       return { operation: "update", id: existing.id };
@@ -8522,7 +8677,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
         webflowId: existing.id,
         lastQty: qty,
         vertical,
-        ...soldMarkedAtPayload(cacheEntry, qty),
+        ...cacheSyncMeta(product, cacheEntry, qty),
       };
       webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "repair_images", webflowId: existing.id, vertical });
       return { operation: "update", id: existing.id };
@@ -8535,7 +8690,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
       webflowId: existing.id,
       lastQty: qty,
       vertical,
-      ...soldMarkedAtPayload(cacheEntry, qty),
+      ...cacheSyncMeta(product, cacheEntry, qty),
     };
     webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "skip", webflowId: existing.id, vertical });
     return { operation: "skip", id: existing.id };
@@ -8605,6 +8760,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
     if (existingFromGuard) {
       if (createOnly) {
         cache[shopifyProductId] = cacheEntryAfterCreateOnlySkip(
+          product,
           cacheEntry,
           currentHash,
           currentContentHash,
@@ -8646,7 +8802,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
             webflowId: guardExisting.id,
             lastQty: qty,
             vertical: detectedVertical,
-            ...soldMarkedAtPayload(cacheEntry, qty),
+            ...cacheSyncMeta(product, cacheEntry, qty),
           };
           webflowLog("info", {
             event: "sync_product.skip_create_guard_archived",
@@ -8686,7 +8842,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
           webflowId: guardExisting.id,
           lastQty: qty,
           vertical: detectedVertical,
-          ...soldMarkedAtPayload(cacheEntry, qty),
+          ...cacheSyncMeta(product, cacheEntry, qty),
         };
         webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "sold", webflowId: guardExisting.id, vertical: detectedVertical });
         return { operation: "sold", id: guardExisting.id };
@@ -8721,7 +8877,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
           webflowId: guardExisting.id,
           lastQty: qty,
           vertical: detectedVertical,
-          ...soldMarkedAtPayload(cacheEntry, qty),
+          ...cacheSyncMeta(product, cacheEntry, qty),
         };
         webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "skip", webflowId: guardExisting.id, vertical: detectedVertical });
         return { operation: "skip", id: guardExisting.id };
@@ -8751,7 +8907,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
         webflowId: guardExisting.id,
         lastQty: qty,
         vertical: detectedVertical,
-        ...soldMarkedAtPayload(cacheEntry, qty),
+        ...cacheSyncMeta(product, cacheEntry, qty),
       };
       if (detectedVertical === "furniture") {
         await syncGoogleMerchantFurnitureFromShopifyProduct(product, "in stock", "furniture_guard_update", cache);
@@ -8942,7 +9098,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
       webflowId: newId,
       lastQty: qty,
       vertical: detectedVertical,
-      ...soldMarkedAtPayload(cacheEntry, qty),
+      ...cacheSyncMeta(product, cacheEntry, qty),
     };
     if (detectedVertical === "furniture") {
       await syncGoogleMerchantFurnitureFromShopifyProduct(product, soldNow ? "out of stock" : "in stock", "furniture_create", cache);
@@ -9022,6 +9178,8 @@ async function runWebhookSingleProductSync(shopifyProductId, triggerPath) {
       duplicateEmailSentFor,
       shopifyWriteEmailSentFor,
       skipMissingFieldsAlert: true,
+      syncTrigger: "webhook",
+      fromWebhook: true,
     });
     saveCache(cache);
     if (result?.duplicateCorrected && result?.duplicateLog) {
@@ -12149,6 +12307,7 @@ async function executeSyncAll({ reclassifyAll = false, reclassifyIdsSet = null, 
             shopifyWriteEmailSentFor,
             forceReclassify: reclassifyAll || (reclassifyIdsSet != null && reclassifyIdsSet.has(String(p.id))),
             skipMissingFieldsAlert: true,
+            syncTrigger: "sync-all",
           })
         )
       );
@@ -12551,6 +12710,7 @@ app.post("/sync-by-ids", async (req, res) => {
           skipMissingFieldsAlert: true,
           categoryOverride,
           skipTagWrites,
+          syncTrigger: "sync-by-ids",
         });
         if (result?.duplicateCorrected && result?.duplicateLog) {
           await sendDuplicatePlacementEmail(result.duplicateLog, duplicateEmailSentFor);

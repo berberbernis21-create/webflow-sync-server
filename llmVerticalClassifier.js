@@ -174,7 +174,9 @@ function jewelryPendantPersonalLuxurySignals(t) {
   if (/\bpendants?\s+on\s+(a\s+)?(chain|rope|cord)\b/.test(t)) return true;
   if (/\blocket\s+pendants?\b/.test(t)) return true;
   if (/\bpendants?\b/.test(t) && /\b(choker|lobster\s+clasp|bail|jump\s+ring)\b/i.test(t)) return true;
-  if (/\bpendants?\b/.test(t) && /\b(karat|carat|\d+k\b|sterling\s+silver|diamond|gemstone|fine\s+jewelry|fine\s+jewellery)\b/i.test(t)) return true;
+  if (/\bpendants?\b/.test(t) && /\b(karat|carat|\d+k\b|sterling\s+silver|925|silver|gold|turquoise|diamond|gemstone|fine\s+jewelry|fine\s+jewellery)\b/i.test(t)) return true;
+  if (/\b(cross|coin|charm|turquoise|silver|gold|sterling)\b[\w\s-]{0,24}\bpendants?\b/.test(t)) return true;
+  if (/\bpendants?\b[\w\s-]{0,24}\b(cross|coin|charm|turquoise)\b/.test(t)) return true;
   return false;
 }
 
@@ -279,7 +281,10 @@ function titleTypeTagsLookLikeLighting(product) {
     /\bpendants?\s+(necklace|necklaces|charm|charms)\b/.test(t) ||
     /\b(necklace|necklaces)\s+pendants?\b/.test(t) ||
     /\bpendants?\s+on\s+(a\s+)?(chain|rope|cord)\b/.test(t) ||
-    /\blocket\s+pendants?\b/.test(t);
+    /\blocket\s+pendants?\b/.test(t) ||
+    (/\bpendants?\b/.test(t) && /\b(925|sterling|silver|gold|turquoise|karat|carat|\d+k\b|jewelry|jewellery|cross|coin)\b/.test(t)) ||
+    /\b(cross|coin|charm|turquoise|silver|gold|sterling)\b[\w\s-]{0,24}\bpendants?\b/.test(t) ||
+    /\bpendants?\b[\w\s-]{0,24}\b(cross|coin|charm|turquoise)\b/.test(t);
 
   if (!jewelryPendantPhrase) {
     if (/\bpendants?\s+(light|lights|lamp|lamps|fixture|fixtures|chandelier|chandeliers|sconce)\b/.test(t)) return true;
