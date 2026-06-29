@@ -2948,6 +2948,21 @@ function ecommerceVerticalTagChanged(product, cacheEntry) {
   return current !== cacheEntry.ecommerceVerticalTagStamp;
 }
 
+/** Where the item already lives — cache row or live Webflow index (survives cache loss after deploy). */
+function getExistingPlacedVertical(product, cacheEntry) {
+  if (cacheEntry?.webflowId && cacheEntry?.vertical) {
+    return { vertical: cacheEntry.vertical, source: "cache" };
+  }
+  const id = String(product?.id ?? "");
+  if (id && furnitureProductIndex?.byShopifyId?.get(id)) {
+    return { vertical: "furniture", source: "webflow_furniture_index" };
+  }
+  if (id && luxuryItemIndex?.byShopifyId?.get(id)) {
+    return { vertical: "luxury", source: "webflow_luxury_index" };
+  }
+  return null;
+}
+
 /**
  * When false, sync keeps an already-placed item on its cached vertical (luxury vs furniture).
  * Allowed switches: forceReclassify, webhook, sync-by-ids, new placement, or FH/LG tag change.
@@ -2956,11 +2971,20 @@ function shouldAllowVerticalSwitch(product, cacheEntry, options = {}) {
   if (options.forceReclassify === true) return true;
   const trigger = options.syncTrigger || "sync-all";
   if (trigger === "webhook" || trigger === "sync-by-ids") return true;
+
+  const placed = getExistingPlacedVertical(product, cacheEntry);
+  if (!placed) return true;
+
+  if (ecommerceVerticalTagChanged(product, cacheEntry)) {
+    const stamp = ecommerceVerticalTagStamp(getProductTagsArray(product));
+    if (stamp === ECOMMERCE_VERTICAL_TAG_LUXURY || stamp === ECOMMERCE_VERTICAL_TAG_FURNITURE) {
+      return true;
+    }
+  }
+
+  if (trigger === "sync-all") return false;
+
   if (!cacheEntry?.webflowId || !cacheEntry?.vertical) return true;
-  if (ecommerceVerticalTagChanged(product, cacheEntry)) return true;
-  const stamp = ecommerceVerticalTagStamp(getProductTagsArray(product));
-  if (stamp === ECOMMERCE_VERTICAL_TAG_LUXURY && cacheEntry.vertical === "furniture") return true;
-  if (stamp === ECOMMERCE_VERTICAL_TAG_FURNITURE && cacheEntry.vertical === "luxury") return true;
   return false;
 }
 
@@ -3920,6 +3944,10 @@ function productIsGenuineFurnitureInventory(product) {
   if (getHardFhLgVerticalLock(product)) return false;
   if (productTitleLooksLikeWearableJewelry(product)) return false;
   if (productIsWearableJewelryPendant(product)) return false;
+  if (furnitureRugIndicatesRugs(product?.title || "", product?.body_html || "", getProductTagsArray(product))) {
+    return true;
+  }
+  if (titleIndicatesLightingFurniture(product?.title || "")) return true;
   if (productLooksLikeFurnitureTrap(product)) return true;
   if (productLooksLikeFurnitureCurio(product)) return true;
   if (productLooksLikeFurnitureDoll(product)) return true;
@@ -7110,9 +7138,10 @@ async function syncSingleProductCore(product, cache, options = {}) {
   let vertical, detectedVertical, verticalCorrected;
   const ecommerceVerticalTag = getEcommerceVerticalOverrideFromTags(getProductTagsArray(product));
   const hardFhLgLock = !forceReclassify ? getHardFhLgVerticalLock(product) : null;
+  const placedVertical = getExistingPlacedVertical(product, cacheEntry);
   const freezePlacedVertical =
     !hardFhLgLock &&
-    Boolean(cacheEntry?.webflowId && cacheEntry?.vertical) &&
+    Boolean(placedVertical) &&
     !forceReclassify &&
     !allowVerticalSwitch;
   let manualEcommerceLock = null;
@@ -7134,8 +7163,8 @@ async function syncSingleProductCore(product, cache, options = {}) {
           : "FH tag — absolute Furniture lock; classifier and LLM skipped",
     });
   } else if (freezePlacedVertical) {
-    vertical = cacheEntry.vertical;
-    detectedVertical = cacheEntry.vertical;
+    vertical = placedVertical.vertical;
+    detectedVertical = placedVertical.vertical;
     verticalCorrected = false;
     webflowLog("info", {
       event: "vertical.frozen_placed",
@@ -7143,8 +7172,9 @@ async function syncSingleProductCore(product, cache, options = {}) {
       productTitle: product.title || "",
       vertical,
       syncTrigger,
+      placementSource: placedVertical.source,
       ecommerceTagStamp: ecommerceVerticalTagStamp(getProductTagsArray(product)) || null,
-      cachedEcommerceTagStamp: cacheEntry.ecommerceVerticalTagStamp ?? null,
+      cachedEcommerceTagStamp: cacheEntry?.ecommerceVerticalTagStamp ?? null,
       message:
         "Daily sync: keeping existing vertical unless FH/LG tag changes or a product webhook runs",
     });
@@ -7395,18 +7425,21 @@ async function syncSingleProductCore(product, cache, options = {}) {
   } else {
     vertical = recoveredFromWebflow.vertical;
     detectedVertical = vertical;
-    const evidenceVertical = resolveVerticalFromEvidence(product, detectedVertical);
-    if (evidenceVertical.vertical !== vertical) {
-      vertical = evidenceVertical.vertical;
-      detectedVertical = evidenceVertical.vertical;
-      webflowLog("info", {
-        event: "vertical.override_evidence_recovered",
-        shopifyProductId,
-        productTitle: product.title || "",
-        reason: evidenceVertical.reason,
-        message: "Recovered vertical was overridden by evidence guard",
-      });
+    if (syncTrigger !== "sync-all" || !placedVertical) {
+      const evidenceVertical = resolveVerticalFromEvidence(product, detectedVertical);
+      if (evidenceVertical.vertical !== vertical) {
+        vertical = evidenceVertical.vertical;
+        detectedVertical = evidenceVertical.vertical;
+        webflowLog("info", {
+          event: "vertical.override_evidence_recovered",
+          shopifyProductId,
+          productTitle: product.title || "",
+          reason: evidenceVertical.reason,
+          message: "Recovered vertical was overridden by evidence guard",
+        });
+      }
     }
+    if (!(syncTrigger === "sync-all" && placedVertical)) {
     if (!manualEcommerceLock && !ecommerceVerticalTag && productLooksLikeWristwatchLuxury(product)) {
       vertical = "luxury";
       detectedVertical = "luxury";
@@ -7426,6 +7459,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
     if (!manualEcommerceLock && isLockedLuxuryProduct(product)) {
       vertical = "luxury";
       detectedVertical = "luxury";
+    }
     }
   }
 
