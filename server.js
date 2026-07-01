@@ -4799,7 +4799,7 @@ async function loadLuxuryItemIndex() {
     if (items.length < limit) break;
     offset += limit;
   }
-  luxuryItemIndex = { byShopifyId, bySlug, byUrl };
+  luxuryItemIndex = { byShopifyId, bySlug, byUrl, complete: true };
   webflowLog("info", { event: "luxury_item_index.loaded", count: byShopifyId.size });
 }
 
@@ -4843,7 +4843,7 @@ async function loadFurnitureProductIndex() {
       if (list.length < limit) break;
       offset += limit;
     }
-    furnitureProductIndex = { byShopifyId, bySlug, byName };
+    furnitureProductIndex = { byShopifyId, bySlug, byName, complete: true };
     webflowLog("info", { event: "furniture_product_index.loaded", mode: "ecommerce", count: byShopifyId.size, byName: byName.size });
     return;
   }
@@ -4883,7 +4883,7 @@ async function loadFurnitureProductIndex() {
     if (items.length < limit) break;
     offset += limit;
   }
-  furnitureProductIndex = { byShopifyId, bySlug, byName, byUrl };
+  furnitureProductIndex = { byShopifyId, bySlug, byName, byUrl, complete: true };
   webflowLog("info", { event: "furniture_product_index.loaded", mode: "cms", count: byShopifyId.size, byName: byName.size });
 }
 
@@ -5483,8 +5483,16 @@ async function findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, confi
       });
       return fromIndex;
     }
-    const fromLiveId = await scanCmsCollectionForShopifyProductId(config, shopifyProductId);
-    if (fromLiveId) return fromLiveId;
+    if (itemIndex?.complete) {
+      webflowLog("info", {
+        event: "match_scan.index_miss_confirmed",
+        shopifyProductId,
+        message: "Run index fully loaded; Shopify ID not in this CMS collection",
+      });
+    } else {
+      const fromLiveId = await scanCmsCollectionForShopifyProductId(config, shopifyProductId);
+      if (fromLiveId) return fromLiveId;
+    }
   }
 
   // 2) Slug (index + live slug scan)
@@ -7040,6 +7048,18 @@ async function syncSingleProductCore(product, cache, options = {}) {
         webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "repair_images", webflowId: existing.id, vertical });
         return { operation: "update", id: existing.id };
       }
+      if (await repairFurnitureEcommerceSkuPriceIfNeeded(product, existing, config, "sync_product.skip_unchanged.repair_sku_price")) {
+        cache[shopifyProductId] = {
+          hash: currentHash,
+          contentHash: currentContentHash,
+          webflowId: existing.id,
+          lastQty: qty,
+          vertical,
+          ...cacheSyncMeta(product, cacheEntry, qty),
+        };
+        webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "repair_sku_price", webflowId: existing.id, vertical });
+        return { operation: "update", id: existing.id };
+      }
       cache[shopifyProductId] = {
         hash: currentHash,
         contentHash: currentContentHash,
@@ -8537,6 +8557,30 @@ async function syncSingleProductCore(product, cache, options = {}) {
             ...cacheSyncMeta(product, cacheEntry, qty),
           };
           webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "repair_images", webflowId: existing.id, vertical });
+          return { operation: "update", id: existing.id };
+        }
+        // Price/compare-at/images live on the ecommerce SKU, not product fieldData.
+        if (vertical === "furniture" && furnitureUsesEcommerceApi(config)) {
+          webflowLog("info", {
+            event: "sync_product.skip_webflow_unchanged.sync_ecommerce_sku",
+            shopifyProductId,
+            productTitle: name,
+            webflowId: existing.id,
+            message: "Product fieldData matches but Shopify snapshot changed; syncing SKU (price/markdown/images)",
+          });
+          await syncFurnitureEcommerceSku(product, existing.id, config);
+          if (!soldNow) {
+            await syncGoogleMerchantFurnitureFromShopifyProduct(product, "in stock", "furniture_sku_only_update", cache);
+          }
+          cache[shopifyProductId] = {
+            hash: currentHash,
+            contentHash: currentContentHash,
+            webflowId: existing.id,
+            lastQty: qty,
+            vertical,
+            ...cacheSyncMeta(product, cacheEntry, qty),
+          };
+          webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "update_sku", webflowId: existing.id, vertical });
           return { operation: "update", id: existing.id };
         }
         webflowLog("info", { event: "sync_product.skip_webflow_unchanged", shopifyProductId, productTitle: name, webflowId: existing.id, message: "Retrieved from Webflow; same as Shopify would send; not touching" });
@@ -10798,6 +10842,48 @@ function furnitureEcommerceNeedsImageRepairFromShopify(product, ecommerceProduct
   if (!shopifyProductHasDisplayImages(product)) return false;
   const skuFd = ecommerceProduct?.skus?.[0]?.fieldData;
   return furnitureSkuFieldDataImageUrls(skuFd).length === 0;
+}
+
+function shopifyPrimaryPriceCents(product) {
+  const price = product?.variants?.[0]?.price;
+  if (price == null || price === "") return null;
+  const n = parseFloat(price);
+  return Number.isFinite(n) ? Math.round(n * 100) : null;
+}
+
+/** Furniture ecommerce price/compare-at live on SKU; detect drift from Shopify. */
+function furnitureEcommerceNeedsSkuPriceSyncFromShopify(product, ecommerceProduct) {
+  if (isFurnitureSoldOrMarkingSold({ webflowProduct: ecommerceProduct, shopifyProduct: product })) {
+    return false;
+  }
+  const desiredCents = shopifyPrimaryPriceCents(product);
+  if (desiredCents == null) return false;
+  const skuFd = ecommerceProduct?.skus?.[0]?.fieldData;
+  if (!skuFd) return true;
+  const webflowPriceCents = webflowSkuMoneyFieldToCents(skuFd.price);
+  if (webflowPriceCents == null) return true;
+  return webflowPriceCents !== desiredCents;
+}
+
+async function repairFurnitureEcommerceSkuPriceIfNeeded(product, existing, config, logEvent) {
+  if (!existing?.id || !furnitureUsesEcommerceApi(config)) return false;
+  let live = existing;
+  if (!live?.skus?.[0]?.fieldData?.price && config?.siteId && config?.token) {
+    const fetched = await getWebflowEcommerceProductById(config.siteId, existing.id, config.token);
+    if (fetched) live = fetched;
+  }
+  if (!furnitureEcommerceNeedsSkuPriceSyncFromShopify(product, live)) return false;
+  webflowLog("info", {
+    event: logEvent,
+    shopifyProductId: product?.id,
+    productTitle: (product?.title || "").slice(0, 120),
+    webflowId: existing.id,
+    shopifyPriceCents: shopifyPrimaryPriceCents(product),
+    webflowPriceCents: webflowSkuMoneyFieldToCents(live?.skus?.[0]?.fieldData?.price),
+    message: "Shopify SKU price differs from Webflow; forcing ecommerce SKU sync (markdown/compare-at)",
+  });
+  await syncFurnitureEcommerceSku(product, live.id, config);
+  return true;
 }
 
 /** Shopify has images but Luxury CMS item has no featured / gallery image URLs. */
