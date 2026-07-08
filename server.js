@@ -1893,6 +1893,7 @@ async function syncFurnitureEcommerceSku(product, webflowProductId, config, cont
   const existingFd = defaultSku.fieldData || {};
   const previousPriceCents = webflowSkuMoneyFieldToCents(existingFd.price);
   const compareSlug = getFurnitureSkuCompareAtSlug();
+  const existingCompareAtCents = webflowSkuMoneyFieldToCents(existingFd[compareSlug]);
 
   const fieldData = {
     price: priceCents != null ? { value: priceCents, unit: "USD" } : null,
@@ -1901,10 +1902,17 @@ async function syncFurnitureEcommerceSku(product, webflowProductId, config, cont
     "more-images": moreImagesUrls.length > 0 ? moreImagesUrls.slice(0, 10).map((url) => (url ? { url } : null)).filter(Boolean) : null,
   };
 
-  applyFurnitureSkuCompareAtField(fieldData, compareSlug, priceCents, previousPriceCents, {
-    webflowProductId,
-    shopifyProductId: product?.id,
-  });
+  applyFurnitureSkuCompareAtField(
+    fieldData,
+    compareSlug,
+    priceCents,
+    previousPriceCents,
+    existingCompareAtCents,
+    {
+      webflowProductId,
+      shopifyProductId: product?.id,
+    }
+  );
 
   if (isSkuImageImportBlocked(config.siteId, webflowProductId)) {
     delete fieldData["main-image"];
@@ -5830,12 +5838,37 @@ const COMPARE_AT_MIN_DROP_CENTS = 99;
 
 /**
  * Markdown-only compare-at: set when price drops by more than $0.99.
- * Markups and same/small price changes clear compare-at (no false MARK DOWN badge).
+ * If compare-at already exists, only price is updated (original “was” price is kept).
+ * Markups and same/small price changes clear compare-at only when none exists yet.
  */
-function applyFurnitureSkuCompareAtField(fieldData, compareSlug, priceCents, previousPriceCents, logMeta = {}) {
+function applyFurnitureSkuCompareAtField(
+  fieldData,
+  compareSlug,
+  priceCents,
+  previousPriceCents,
+  existingCompareAtCents,
+  logMeta = {}
+) {
   if (priceCents == null || previousPriceCents == null || previousPriceCents <= 0) return;
 
   const dropCents = previousPriceCents - priceCents;
+  const hasExistingCompareAt =
+    existingCompareAtCents != null && existingCompareAtCents > 0;
+
+  if (hasExistingCompareAt) {
+    if (dropCents > COMPARE_AT_MIN_DROP_CENTS) {
+      webflowLog("info", {
+        event: "syncFurnitureEcommerceSku.price_drop_preserve_compare_at",
+        existingCompareAtCents,
+        previousPriceCents,
+        newPriceCents: priceCents,
+        dropCents,
+        ...logMeta,
+      });
+    }
+    return;
+  }
+
   if (dropCents > COMPARE_AT_MIN_DROP_CENTS) {
     fieldData[compareSlug] = { value: previousPriceCents, unit: "USD" };
     webflowLog("info", {
