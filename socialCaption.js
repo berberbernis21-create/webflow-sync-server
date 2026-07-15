@@ -193,19 +193,18 @@ function formatHashtags(hashtags) {
   return String(hashtags || "").trim();
 }
 
-/** Strip any #tags the model wrongly put inside the caption body. */
+/** Strip any #tags the model wrongly put inside the caption body (top, bottom, or mid). */
 function stripHashtagsFromCaption(caption) {
   let t = String(caption || "");
-  // Remove leading hashtag-only block(s)
-  t = t.replace(/^(?:\s*#[\w]+\s*)+\n+/g, "");
-  // Remove trailing hashtag-only block(s)
-  t = t.replace(/\n+(?:\s*#[\w]+\s*)+\s*$/g, "");
-  // Remove leftover isolated hashtag lines
+  // Remove every #tag token — hashtags belong only in the JSON array / appended once at end.
+  t = t.replace(/#[A-Za-z0-9_]+/g, " ");
+  // Drop lines that are now empty / whitespace-only after tag removal
   t = t
-    .split("\n")
-    .filter((line) => !/^\s*(?:#[\w]+\s*)+$/.test(line))
+    .split(/\r?\n/)
+    .map((line) => line.replace(/[ \t]{2,}/g, " ").trimEnd())
+    .filter((line, i, arr) => line.trim() || (i > 0 && i < arr.length - 1 && arr[i - 1].trim()))
     .join("\n");
-  return t.replace(/\n{3,}/g, "\n\n").trim();
+  return t.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 /**
@@ -417,14 +416,16 @@ ${listingBits}`;
         captionLen: caption.length,
       });
 
+      const fullText = hashtags ? `${caption}\n\n${hashtags}` : caption;
       return res.json({
         success: true,
         model,
         caption,
         hashtags,
         // Hashtags once, at the end only
-        fullText: hashtags ? `${caption}\n\n${hashtags}` : caption,
-        content: parsed,
+        fullText,
+        // Never leak the raw model caption (often had leading hashtags).
+        content: { ...parsed, caption, hashtags: parsed.hashtags, fullText },
       });
     } catch (err) {
       webflowLog("error", {
