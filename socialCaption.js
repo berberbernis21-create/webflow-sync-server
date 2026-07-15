@@ -83,21 +83,21 @@ BRAND VOICE:
 - Vary capitalization across posts (Title Case / Sentence case / ALL CAPS hooks)
 - Educational, not lecturing. Confident, never try-hard.
 
-ITEM EMOJIS (pick the one that matches the piece — NEVER 👜):
+ITEM EMOJIS (pick the one that matches the piece - NEVER 👜):
 lamp💡 · chair🪑 · sofa/sectional🛋️ · table/desk🍽️ · dresser/cabinet🗄️ · art/painting🖼️ · rug🧶 · mirror🪞 · vase/pot🏺 · clock⏰ · lighting ✨ · stool/bench🪑 · bookshelf📚 · outdoor🪴
 
-MANDATORY CAPTION LAYOUT (blank line between EVERY section — NO hashtags anywhere in caption):
-1) TAGLINE / HOOK — short punchy sell line with 1–3 emojis (example vibe: "💡 ✨ Illuminate Your Space with Sophistication") — make THIS item feel desirable
-2) PRODUCT NAME LINE — full listing title + matching item emoji (pendant/candle lighting → 🕯️ or 💡, NEVER 👜 for furniture)
-3) DIMENSIONS — only if in listing: 📐 W" x D" x H" (or W" x H" if depth missing). Never write "inches"
-4) FEATURES — either:
+MANDATORY CAPTION LAYOUT (blank line between EVERY section - NO hashtags anywhere in caption):
+1) TAGLINE / HOOK - short punchy sell line with 1-3 emojis (example vibe: "💡 ✨ Illuminate Your Space with Sophistication") - make THIS item feel desirable
+2) PRODUCT NAME LINE - full listing title + matching item emoji (pendant/candle lighting → 🕯️ or 💡, NEVER 👜 for furniture)
+3) PRICE - 💰 $XX.XX exact from listing (include $) - place RIGHT AFTER the title, ABOVE dimensions
+4) DIMENSIONS - only if in listing: 📐 W" x D" x H" (or W" x H" if depth missing). Never write "inches"
+5) FEATURES - either:
    - one flowing line: ✨ feature, ✨ feature, ✨ feature
-   - OR 2–5 short lines each starting with ✨
+   - OR 2-5 short lines each starting with ✨
    Pull from description. Sell materials, finish, style, AS IS honesty.
-5) PRICE — 💰 $XX.XX exact from listing (include $)
-6) BODY — 1 hungry sales paragraph that markets the hell out of it: atmosphere, room impact, why someone should want it NOW — still honest, no fake urgency spam
-7) Perfect for: — 2–4 bullets using "-" (not •)
-8) LOCATION 📍 — one strong Scottsdale line. Vary wording. Examples:
+6) BODY - 1 hungry sales paragraph that markets the hell out of it: atmosphere, room impact, why someone should want it NOW - still honest, no fake urgency spam
+7) Perfect for: - 2-4 bullets using "-" (not •)
+8) LOCATION 📍 - one strong Scottsdale line. Vary wording. Examples:
 ${LOCATION_EXAMPLES_FURNITURE}
 9) CTA:
    PRIMARY (vary): 👉 Shop the feed · Tap to shop · Shop right here · Shop this post
@@ -107,7 +107,7 @@ HASHTAGS:
 - Put the 5 hashtags ONLY in the JSON "hashtags" array
 - NEVER put #hashtags in the caption string (not top, not bottom, not middle)
 
-QUALITY BAR — MARKET IT:
+QUALITY BAR - MARKET IT:
 - Caption should make a stranger want this piece
 - Lead with desire, close with easy next step
 - AS IS stays honest and framed as character when true
@@ -117,7 +117,8 @@ QUALITY BAR — MARKET IT:
 HARD BANS:
 - Hashtags inside "caption"
 - Markdown (** __ * [links](url))
-- Em dashes / en dashes (use hyphen or comma)
+- Em dashes / en dashes / long dashes (— – ―) - ALWAYS use a normal hyphen (-) or a comma instead. Zero exceptions.
+- Price below features or below dimensions (price must be above dimensions)
 - "Ships from Scottsdale"
 - "inside @lostandfoundresale"
 - Generic hooks that could fit any product
@@ -135,16 +136,16 @@ BRAND VOICE:
 ITEM EMOJIS:
 handbag👜 · scarf🧣 · shoes👠 · wallet💳 · watch⌚ · jewelry📿 · men's bag💼 · belt🪢 · sunglasses🕶️
 
-MANDATORY CAPTION LAYOUT (blank line between EVERY section — NO hashtags in caption):
-1) TAGLINE / HOOK — short desire-forward line with emojis
-2) PRODUCT NAME LINE — title + item emoji
-3) PRICE 💰 $XX.XX — exact listing price (never "Price Upon Request" if a price exists)
-4) FEATURES — ✔ or 🤍/💜 lines (or one ✨ comma line) from description
-5) BODY — sell the lifestyle / why this piece, without repeating the full title
-6) LOCATION 📍 — ALWAYS @lostandfoundresale (${LOCATION_EXAMPLES_LUXURY})
-7) CTA — 👉 Shop the feed (or similar) then lostandfoundhandbags.com (NEVER lostandfoundresale.com for shop link)
+MANDATORY CAPTION LAYOUT (blank line between EVERY section - NO hashtags in caption):
+1) TAGLINE / HOOK - short desire-forward line with emojis
+2) PRODUCT NAME LINE - title + item emoji
+3) PRICE 💰 $XX.XX - exact listing price (never "Price Upon Request" if a price exists)
+4) FEATURES - ✔ or 🤍/💜 lines (or one ✨ comma line) from description
+5) BODY - sell the lifestyle / why this piece, without repeating the full title
+6) LOCATION 📍 - ALWAYS @lostandfoundresale (${LOCATION_EXAMPLES_LUXURY})
+7) CTA - 👉 Shop the feed (or similar) then lostandfoundhandbags.com (NEVER lostandfoundresale.com for shop link)
 
-HASHTAGS: exactly 5 in JSON "hashtags" array ONLY — never inside caption.
+HASHTAGS: exactly 5 in JSON "hashtags" array ONLY - never inside caption.
 
 QUALITY BAR:
 - Premium, human, persuasive
@@ -154,7 +155,7 @@ QUALITY BAR:
 HARD BANS:
 - Hashtags inside "caption"
 - Dimensions unless listing has them or user asked
-- Markdown; em/en dashes
+- Markdown; em/en/long dashes (— – ―) - use hyphen (-) or comma only
 - "Ships from Scottsdale"
 - Generic influencer fluff
 - "Please see … below the description" / Delivery-Pickup-Freight Options pointers
@@ -205,6 +206,40 @@ function stripHashtagsFromCaption(caption) {
     .filter((line, i, arr) => line.trim() || (i > 0 && i < arr.length - 1 && arr[i - 1].trim()))
     .join("\n");
   return t.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+/** Never ship em/en/long dashes in captions - replace with hyphen. */
+function stripEmDashes(text) {
+  return String(text || "")
+    .replace(/[\u2014\u2013\u2015\u2212\uFE58\uFE63\uFF0D]/g, "-") // em, en, horizontal, minus, small/fullwidth
+    .replace(/\s+-\s+/g, " - ");
+}
+
+/**
+ * Ensure 💰 price line sits above 📐 dimensions when both exist.
+ * Model sometimes still puts price under features.
+ */
+function ensurePriceAboveDimensions(caption) {
+  const parts = String(caption || "").split(/\n/);
+  let priceIdx = -1;
+  let dimIdx = -1;
+  for (let i = 0; i < parts.length; i++) {
+    const line = parts[i].trim();
+    if (priceIdx < 0 && /^💰/.test(line)) priceIdx = i;
+    if (dimIdx < 0 && /^📐/.test(line)) dimIdx = i;
+  }
+  if (priceIdx < 0 || dimIdx < 0 || priceIdx < dimIdx) return String(caption || "");
+
+  const priceLine = parts[priceIdx];
+  // Remove price line (and a blank line immediately after it if present)
+  parts.splice(priceIdx, 1);
+  if (parts[priceIdx] !== undefined && parts[priceIdx].trim() === "") parts.splice(priceIdx, 1);
+  // Recompute dim index after splice
+  dimIdx = parts.findIndex((l) => /^\s*📐/.test(l));
+  if (dimIdx < 0) return parts.join("\n");
+  // Insert price (with blank line) immediately before dimensions
+  parts.splice(dimIdx, 0, priceLine, "");
+  return parts.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
 /**
@@ -330,10 +365,11 @@ Build a KILLER, one-of-a-kind caption from the product story in the listing. Do 
 TASK:
 1) Treat PRODUCT CONTEXT as ground truth. Never invent.
 2) Center the caption on what the item IS — market it hard, make desire obvious.
-3) Match the house layout: tagline → title → dims → ✨ features → 💰 price → sell body → Perfect for: → 📍 → CTA.
+3) Match the house layout: tagline → title → 💰 price → dims → ✨ features → sell body → Perfect for: → 📍 → CTA.
 4) Obey FRAME + OBJECTIVE.
-5) Shipping only if natural — vary or omit; never "see below".
-6) Return exactly 5 hashtags in the hashtags array ONLY — caption must contain ZERO hashtags.
+5) Shipping only if natural - vary or omit; never "see below".
+6) Return exactly 5 hashtags in the hashtags array ONLY - caption must contain ZERO hashtags.
+7) NEVER use em dashes or en dashes anywhere - only regular hyphens (-) or commas.
 
 Return JSON:
 {
@@ -362,7 +398,7 @@ ${listingBits}`;
             {
               role: "system",
               content:
-                "You are Lost & Found's elite social caption writer and salesperson. House style: punchy tagline, title, dims, sparkle features, price, desire-driven body, Perfect for, location, CTA. Hashtags belong ONLY in the JSON hashtags array — never duplicate them in the caption. Sell the item hard while staying honest. No markdown. Return valid JSON only.",
+                "You are Lost & Found's elite social caption writer and salesperson. House style: punchy tagline, title, PRICE right after title then dims, sparkle features, desire-driven body, Perfect for, location, CTA. Hashtags belong ONLY in the JSON hashtags array. NEVER use em/en dashes - only hyphens or commas. Sell hard while staying honest. No markdown. Return valid JSON only.",
             },
             { role: "user", content: textPrompt },
           ],
@@ -401,7 +437,9 @@ ${listingBits}`;
         return res.status(502).json({ error: "OpenAI content was not valid JSON" });
       }
 
-      const caption = stripHashtagsFromCaption(String(parsed.caption || "").replace(/\s+$/g, ""));
+      const caption = ensurePriceAboveDimensions(
+        stripEmDashes(stripHashtagsFromCaption(String(parsed.caption || "").replace(/\s+$/g, "")))
+      );
       const hashtags = formatHashtags(parsed.hashtags);
       if (!caption) {
         return res.status(502).json({ error: "Empty caption from model" });
