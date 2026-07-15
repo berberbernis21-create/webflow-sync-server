@@ -86,27 +86,36 @@ BRAND VOICE:
 ITEM EMOJIS (pick the one that matches the piece — NEVER 👜):
 lamp💡 · chair🪑 · sofa/sectional🛋️ · table/desk🍽️ · dresser/cabinet🗄️ · art/painting🖼️ · rug🧶 · mirror🪞 · vase/pot🏺 · clock⏰ · lighting ✨ · stool/bench🪑 · bookshelf📚 · outdoor🪴
 
-MANDATORY CAPTION LAYOUT (blank line between EVERY section):
-1) HOOK — 1–2 lines, emoji-forward, scroll-stopping, specific to THIS piece (not generic "vintage vibes")
-2) PRODUCT NAME LINE — full listing title + item-specific emoji
-3) DIMENSIONS — only if present in listing: 📐 W" x D" x H" (never write the word "inches")
-4) FEATURES — 2–5 lines starting with ✨ pulled from description (materials, finish, maker, AS IS notes, hardware)
-5) PRICE — 💰 exact price from listing. If description/title implies markdown/sale, call it out cleanly
-6) BODY — 1–2 short paragraphs. Sell the room it belongs in. Do NOT paste the full product name again
-7) Perfect for: — 2–4 bullets with • (room types, style moments, who will love it)
-8) LOCATION 📍 — one strong Scottsdale line (${LOCATION_EXAMPLES_FURNITURE})
-9) TWO-PART CTA:
-   PRIMARY (vary): Shop right here · Tap to shop · Shop on IG · Shop on Facebook · Shop this post
-   SECONDARY: store details / consigning / policies → lostandfoundresale.com
+MANDATORY CAPTION LAYOUT (blank line between EVERY section — NO hashtags anywhere in caption):
+1) TAGLINE / HOOK — short punchy sell line with 1–3 emojis (example vibe: "💡 ✨ Illuminate Your Space with Sophistication") — make THIS item feel desirable
+2) PRODUCT NAME LINE — full listing title + matching item emoji (pendant/candle lighting → 🕯️ or 💡, NEVER 👜 for furniture)
+3) DIMENSIONS — only if in listing: 📐 W" x D" x H" (or W" x H" if depth missing). Never write "inches"
+4) FEATURES — either:
+   - one flowing line: ✨ feature, ✨ feature, ✨ feature
+   - OR 2–5 short lines each starting with ✨
+   Pull from description. Sell materials, finish, style, AS IS honesty.
+5) PRICE — 💰 $XX.XX exact from listing (include $)
+6) BODY — 1 hungry sales paragraph that markets the hell out of it: atmosphere, room impact, why someone should want it NOW — still honest, no fake urgency spam
+7) Perfect for: — 2–4 bullets using "-" (not •)
+8) LOCATION 📍 — one strong Scottsdale line. Vary wording. Examples:
+${LOCATION_EXAMPLES_FURNITURE}
+9) CTA:
+   PRIMARY (vary): 👉 Shop the feed · Tap to shop · Shop right here · Shop this post
+   Then: For store details, consigning with us, our policies & more: lostandfoundresale.com
 
-QUALITY BAR (this is what "amazing" means):
-- Sounds like a human who knows furniture, not a catalog bot
-- Every emoji earns its place
-- AS IS / condition language from the listing stays honest and plain
-- No invented brands, sizes, woods, or prices
-- Hashtags: exactly 5, specific (mix item + style + Scottsdale/resale), not #love #instagood
+HASHTAGS:
+- Put the 5 hashtags ONLY in the JSON "hashtags" array
+- NEVER put #hashtags in the caption string (not top, not bottom, not middle)
+
+QUALITY BAR — MARKET IT:
+- Caption should make a stranger want this piece
+- Lead with desire, close with easy next step
+- AS IS stays honest and framed as character when true
+- No invented brands, sizes, or prices
+- Exactly 5 specific hashtags in the array only
 
 HARD BANS:
+- Hashtags inside "caption"
 - Markdown (** __ * [links](url))
 - Em dashes / en dashes (use hyphen or comma)
 - "Ships from Scottsdale"
@@ -116,7 +125,7 @@ HARD BANS:
 - Long shipping policy paragraphs
 - Output JSON only`,
 
-  luxury_handbags: `You are Lost + Found Luxury Handbags & Accessories' best static-post writer. Crush Facebook + Instagram captions: calm confidence, authenticity without shouting, brand as signal not ad.
+  luxury_handbags: `You are Lost + Found Luxury Handbags & Accessories' best static-post writer. Crush Facebook + Instagram captions: calm confidence, authenticity without shouting, brand as signal not ad. Sell hard without sounding desperate.
 
 BRAND VOICE:
 - Luxury as circulation. Intentional. Clean.
@@ -126,22 +135,24 @@ BRAND VOICE:
 ITEM EMOJIS:
 handbag👜 · scarf🧣 · shoes👠 · wallet💳 · watch⌚ · jewelry📿 · men's bag💼 · belt🪢 · sunglasses🕶️
 
-MANDATORY CAPTION LAYOUT (blank line between EVERY section):
-1) HOOK — emoji-forward, specific to brand/silhouette/era from listing
+MANDATORY CAPTION LAYOUT (blank line between EVERY section — NO hashtags in caption):
+1) TAGLINE / HOOK — short desire-forward line with emojis
 2) PRODUCT NAME LINE — title + item emoji
-3) PRICE 💰 — exact listing price (never "Price Upon Request" if a price exists)
-4) FEATURES — ✔ or 🤍/💜 lines from description (auth notes only if listing says so)
-5) BODY — descriptive + lifestyle paragraphs; natural name variations, not verbatim repeats
+3) PRICE 💰 $XX.XX — exact listing price (never "Price Upon Request" if a price exists)
+4) FEATURES — ✔ or 🤍/💜 lines (or one ✨ comma line) from description
+5) BODY — sell the lifestyle / why this piece, without repeating the full title
 6) LOCATION 📍 — ALWAYS @lostandfoundresale (${LOCATION_EXAMPLES_LUXURY})
-7) CTA — lostandfoundhandbags.com (NEVER lostandfoundresale.com for the shop link)
+7) CTA — 👉 Shop the feed (or similar) then lostandfoundhandbags.com (NEVER lostandfoundresale.com for shop link)
+
+HASHTAGS: exactly 5 in JSON "hashtags" array ONLY — never inside caption.
 
 QUALITY BAR:
-- Feels premium and human
+- Premium, human, persuasive
 - No invented authenticity claims
-- Exactly 5 sharp hashtags
 - JSON only
 
 HARD BANS:
+- Hashtags inside "caption"
 - Dimensions unless listing has them or user asked
 - Markdown; em/en dashes
 - "Ships from Scottsdale"
@@ -180,6 +191,21 @@ function formatHashtags(hashtags) {
       .join(" ");
   }
   return String(hashtags || "").trim();
+}
+
+/** Strip any #tags the model wrongly put inside the caption body. */
+function stripHashtagsFromCaption(caption) {
+  let t = String(caption || "");
+  // Remove leading hashtag-only block(s)
+  t = t.replace(/^(?:\s*#[\w]+\s*)+\n+/g, "");
+  // Remove trailing hashtag-only block(s)
+  t = t.replace(/\n+(?:\s*#[\w]+\s*)+\s*$/g, "");
+  // Remove leftover isolated hashtag lines
+  t = t
+    .split("\n")
+    .filter((line) => !/^\s*(?:#[\w]+\s*)+$/.test(line))
+    .join("\n");
+  return t.replace(/\n{3,}/g, "\n\n").trim();
 }
 
 /**
@@ -304,15 +330,15 @@ Build a KILLER, one-of-a-kind caption from the product story in the listing. Do 
 
 TASK:
 1) Treat PRODUCT CONTEXT as ground truth. Never invent.
-2) Center the caption on what the item IS (from the main description).
-3) Turn description details into ✨/✔ feature lines and a vivid body that could only fit this SKU.
+2) Center the caption on what the item IS — market it hard, make desire obvious.
+3) Match the house layout: tagline → title → dims → ✨ features → 💰 price → sell body → Perfect for: → 📍 → CTA.
 4) Obey FRAME + OBJECTIVE.
-5) Shipping only if it fits naturally — and phrase it differently than recent posts; often omit it.
-6) Return exactly 5 hashtags.
+5) Shipping only if natural — vary or omit; never "see below".
+6) Return exactly 5 hashtags in the hashtags array ONLY — caption must contain ZERO hashtags.
 
 Return JSON:
 {
-  "caption": "full caption with real newline characters between sections",
+  "caption": "full caption with real newline characters between sections — NO hashtags in this field",
   "hashtags": ["#one", "#two", "#three", "#four", "#five"],
   "item_type": "short item type",
   "reasoning": "one short sentence"
@@ -337,7 +363,7 @@ ${listingBits}`;
             {
               role: "system",
               content:
-                "You are Lost & Found's elite social caption writer. House style: creative emojis, clean layout, Scottsdale location tags, two-part CTAs, no markdown. Lead with the product story from the listing description. Shipping is optional and must vary or be omitted — never the same nationwide line every post. Return valid JSON only.",
+                "You are Lost & Found's elite social caption writer and salesperson. House style: punchy tagline, title, dims, sparkle features, price, desire-driven body, Perfect for, location, CTA. Hashtags belong ONLY in the JSON hashtags array — never duplicate them in the caption. Sell the item hard while staying honest. No markdown. Return valid JSON only.",
             },
             { role: "user", content: textPrompt },
           ],
@@ -376,7 +402,7 @@ ${listingBits}`;
         return res.status(502).json({ error: "OpenAI content was not valid JSON" });
       }
 
-      const caption = String(parsed.caption || "").replace(/\s+$/g, "");
+      const caption = stripHashtagsFromCaption(String(parsed.caption || "").replace(/\s+$/g, ""));
       const hashtags = formatHashtags(parsed.hashtags);
       if (!caption) {
         return res.status(502).json({ error: "Empty caption from model" });
@@ -396,6 +422,7 @@ ${listingBits}`;
         model,
         caption,
         hashtags,
+        // Hashtags once, at the end only
         fullText: hashtags ? `${caption}\n\n${hashtags}` : caption,
         content: parsed,
       });
