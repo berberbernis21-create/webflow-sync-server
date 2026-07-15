@@ -36,6 +36,7 @@ import {
 } from "./lib/consignmentCors.js";
 import consignmentRouter from "./routes/consignmentSubmission.js";
 import { recoverStaleConsignmentIntakes } from "./lib/consignmentIntakeRecovery.js";
+import { registerSocialCaptionRoute } from "./socialCaption.js";
 import {
   productLooksLikeFurnitureTrap,
   productLooksLikeFurnitureHomeTrunk,
@@ -540,6 +541,7 @@ app.use(createConsignmentCorsMiddleware());
 app.use("/api", consignmentRouter);
 app.use(
   express.json({
+    limit: "15mb",
     verify: (req, res, buf) => {
       req.rawBody = buf;
     },
@@ -11972,9 +11974,9 @@ app.post("/api/listing-blurb", async (req, res) => {
     maxBodyChars = 420;
     structureGuide = isLuxury
       ? omitLuxuryAuthenticationCopy
-        ? "Open with the item type and standout style details in premium but natural Marketplace wording. Do NOT include explicit brand names/trademarks. Use 2-4 short lines grounded in title + catalogDescription: condition callout, materials, hardware/finish, silhouette/style, and practical use if supported by catalog facts. Do NOT mention authentication, authenticity certificates, COA, designer verification, or handbag-style guarantees (not offered for jewelry/small accessories or for listings at $175 and under). Keep pickup in Scottsdale (near Scottsdale Quarter is fine) and note shipping options are available with full logistics on the site link below. End with a confident natural call to action to message now or email for details. Never use an em dash; use commas or periods."
-        : "Open with the item type and standout style details in premium but natural Marketplace wording. Do NOT include explicit brand names/trademarks. Use 2-4 short lines grounded in title + catalogDescription: condition callout, materials, hardware/finish, silhouette/style, and practical use if supported by catalog facts. Mention authentication documentation is available. Keep pickup in Scottsdale (near Scottsdale Quarter is fine) and note shipping options are available with full logistics on the site link below. End with a confident natural call to action to message now or email for details. Never use an em dash; use commas or periods."
-      : "Open on the item in normal Marketplace wording (e.g. 'Check out...', 'Selling...') using title + catalogDescription as the factual base: same claims, tight paraphrase; never invent brands, damage, dimensions, or materials not supported by catalog/title. No shop name or consignment pitch up front. 1-3 short lines: what it is, condition/size only if catalog says so, casual price, Scottsdale-area pickup near Scottsdale Quarter if you mention area, and that shipping options are available (which service applies is on the site; do not hedge with 'might' / 'maybe' / 'might be available'). End with one short line: full pickup/shipping/freight/checkout wording is on the website at the link below; email for questions; do not type the email address. Never use an em dash (long dash) in your output; use commas, periods, or 'and' instead.";
+        ? "Open with the item type and standout style details in premium but natural Marketplace wording. Do NOT include explicit brand names/trademarks. Use 2-4 short lines grounded in title + catalogDescription: condition callout, materials, hardware/finish, silhouette/style, and practical use if supported by catalog facts. Do NOT mention authentication, authenticity certificates, COA, designer verification, or handbag-style guarantees (not offered for jewelry/small accessories or for listings at $175 and under). Do NOT mention pickup, shipping, delivery, movers, or contact info — a fixed shipping paragraph is appended after your text. Never use an em dash; use commas or periods."
+        : "Open with the item type and standout style details in premium but natural Marketplace wording. Do NOT include explicit brand names/trademarks. Use 2-4 short lines grounded in title + catalogDescription: condition callout, materials, hardware/finish, silhouette/style, and practical use if supported by catalog facts. Mention authentication documentation is available. Do NOT mention pickup, shipping, delivery, movers, or contact info — a fixed shipping paragraph is appended after your text. Never use an em dash; use commas or periods."
+      : "Open on the item in normal Marketplace wording (e.g. 'Check out...', 'Selling...') using title + catalogDescription as the factual base: what it is, honest condition, materials, size, and price. No shop name. Do NOT mention pickup, shipping, delivery, movers, Scottsdale Quarter, checkout, phone, or email — a fixed shipping paragraph is appended after your text. Never use an em dash (long dash) in your output; use commas, periods, or 'and' instead.";
     toneGuide = isLuxury
       ? "Facebook voice for collectors and smart deal seekers: informed and trustworthy, but not posh, not boutique, not corporate. Short lines, no hype."
       : "Sounds like a real person on Facebook Marketplace speaking to collectors, yard-sale/value shoppers, flippers, and practical home buyers. Short, plain, conversational.";
@@ -11984,13 +11986,15 @@ app.post("/api/listing-blurb", async (req, res) => {
         : "Do NOT use or echo: Lost & Found, Lost and Found, consignment (as a store label), Discover, stunning, gorgeous, masterpiece, don't miss out, perfect for anyone, beautifully balances, elevate your space, timeless appeal, artisanal flair, captures the essence, anyone looking to add, yours for just, act fast, limited opportunity, shop with confidence. Do not use explicit brand/trademark names from sourceTitle or catalogDescription in output. Do not use em-dash punctuation (Unicode U+2014) or en-dash as a clause dash (U+2013); use commas, periods, or 'and'."
       : "Do NOT use or echo: Lost & Found, Lost and Found, consignment (as a store label), Discover, stunning, gorgeous, masterpiece, don't miss out, perfect for anyone, beautifully balances, elevate your space, timeless appeal, artisanal flair, captures the essence, anyone looking to add, yours for just, act fast, limited opportunity, shop with confidence. Do not use em-dash punctuation (Unicode U+2014) or en-dash as a clause dash (U+2013); use commas, periods, or 'and'.";
     logisticsGuide = isLuxury
-      ? "Use storePolicyInternalOnly so you do not invent carriers, rates, or guarantees. Keep logistics short: shipping options are available and full rules are on the site link below. Never add phone numbers, dollar amounts, time windows, storage/freight numbers, or broker names in the body."
-      : "Use storePolicyInternalOnly so you do not invent carriers, rates, or guarantees. Say shipping options are available and spelled out on the site link below. Never 'shipping might be available' or similar hedging. Never put phone numbers, dollar amounts, time windows, storage/freight numbers, or broker names in your body.";
+      ? "Product description ONLY. Do not mention pickup, shipping, delivery, freight, movers, dollar amounts, Scottsdale Quarter, checkout, phone, or email. A fixed shipping paragraph is appended after your text."
+      : "Product description ONLY. Do not mention pickup, shipping, delivery, freight, movers, $95, Scottsdale Quarter, checkout, phone, or email. A fixed shipping paragraph is appended after your text.";
   }
-  if (moverAssistEligible) {
-    logisticsGuide += ` Include one short line exactly like this meaning: "${moverAssistLine}"`;
-  } else {
-    logisticsGuide += " Do not mention mover hourly rates or delivery setup services unless the item is clearly heavy/large in JSON.";
+  if (isCraigslist) {
+    if (moverAssistEligible) {
+      logisticsGuide += ` Include one short line exactly like this meaning: "${moverAssistLine}"`;
+    } else {
+      logisticsGuide += " Do not mention mover hourly rates or delivery setup services unless the item is clearly heavy/large in JSON.";
+    }
   }
 
   const storePolicyInternalOnly = [
@@ -12030,8 +12034,8 @@ app.post("/api/listing-blurb", async (req, res) => {
     pickupHours: pickupHours || "MON - SAT 10-5, SUN 12-4",
     contactEmail,
     catalogDescription: catalog || "(none supplied)",
-    moverAssistEligible,
-    moverAssistLine: moverAssistEligible ? moverAssistLine : "",
+    moverAssistEligible: isCraigslist ? moverAssistEligible : false,
+    moverAssistLine: isCraigslist && moverAssistEligible ? moverAssistLine : "",
     storePolicyInternalOnly,
     structure: structureGuide,
     toneTarget: toneGuide,
@@ -12068,15 +12072,13 @@ Output rules:
 - Do NOT open with or include the business name or a ‘we are a consignment shop’ line. Jump straight into the item like a normal FB seller.
 - Facebook casual: short, direct. Write for collectors and deal-minded buyers, not a posh boutique audience.
 - Use audienceLane and audienceGuidance as a light touch only. Keep language natural and restrained, not over-the-top.
-- If moverAssistEligible is true in JSON, include one short delivery-help line using moverAssistLine naturally. If false, do not mention mover hourly rates.
-- Lead with the product; ground specifics in catalogDescription + title. Close by nudging them to the site link below for logistics and email for questions.
+- Write ONLY the product pitch: what it is, condition, materials, size, and price. Do NOT mention pickup, shipping, delivery, movers, $95, Scottsdale Quarter, checkout, phone, email, or links — a fixed shipping paragraph is appended after your text.
 - HARD LENGTH: aim ~180-340 characters; max 420 characters. Trim fluff if long.
 - Only paraphrase catalog facts; never invent damage or brands.
 - Treat logistics and policy facts as hard constraints: do not change or contradict shipping availability, pickup location, AS IS condition language, or checkout/contact direction implied by JSON guidance.
 - If inventoryKind is luxury_handbags_accessories: never include explicit brand or trademark names in output text.
 - If inventoryKind is luxury_jewelry_small_goods: never include explicit brand or trademark names; never claim authentication, COA, designer verification, or certificates (jewelry/small goods).
 - JSON may include storePolicyInternalOnly: treat it as silent context only. Never repeat or summarize it in your reply.
-- For shipping: prefer confident wording like ‘shipping options are available’ or ‘shipping’s on the site’. Do not say they might or may be available.
 - Never use an em dash in your output (Unicode U+2014, often shown as a long dash between clauses). Use a comma, a period, or the word ‘and’ instead. Same for en dash (U+2013) used as a sentence dash; for number ranges a plain hyphen is OK (e.g. 16-29).
 - At most one exclamation mark in the whole post (usually none).`;
 
@@ -12094,7 +12096,7 @@ Use variationHint and variationProfile to keep phrasing fresh between runs (new 
 Do not reuse the same opener/closer phrasing every time.
 Apply audienceLane and audienceGuidance with restraint: keep it subtle and natural.
 
-Example vibe (do not copy): "Check out this Canyon de Chelly print by Wilson Hurley, framed, about 35.5 x 30.5. Asking $199. Local pickup in Scottsdale, shipping options are on the link below. Email if you have questions."
+Example vibe (do not copy): "Selling a Forever Patio square dining table, 41 inches square and 29 inches tall. Black powder-coated metal, clean contemporary outdoor style. Asking $300."
 
 Facts JSON:\n${JSON.stringify(facts)}`;
 
@@ -12170,6 +12172,8 @@ Facts JSON:\n${JSON.stringify(facts)}`;
     return res.status(500).json({ error: err?.message || "listing-blurb failed" });
   }
 });
+
+registerSocialCaptionRoute(app, { log: webflowLog });
 
 /**
  * POST /clear-cache — Remove cache entries for given Shopify product IDs so the next sync will
@@ -12894,7 +12898,21 @@ app.use((err, req, res, next) => {
     res.setHeader("Vary", "Origin");
   }
   console.error("[server] unhandled error:", err?.message || err);
-  res.status(500).json({ success: false, error: "Server error. Please try again." });
+  const tooLarge =
+    err?.type === "entity.too.large" ||
+    err?.status === 413 ||
+    /request entity too large/i.test(String(err?.message || ""));
+  if (tooLarge) {
+    return res.status(413).json({
+      success: false,
+      error: "Request body too large. Send an image URL instead of base64 when possible.",
+      code: "payload_too_large",
+    });
+  }
+  res.status(500).json({
+    success: false,
+    error: err?.message || "Server error. Please try again.",
+  });
 });
 
 process.on("unhandledRejection", (reason) => {
@@ -12916,6 +12934,7 @@ app.listen(PORT, () => {
   console.log(`Facebook listing helper (Webflow default): ${scheme}://${host}/api/listing?name=...`);
   console.log(`  Shopify mode: ${scheme}://${host}/api/listing?name=...&source=shopify`);
   console.log(`  Facebook copy (OpenAI): POST ${scheme}://${host}/api/listing-blurb (needs OPENAI_API_KEY)`);
+  console.log(`  Social caption (OpenAI gpt-4o vision): POST ${scheme}://${host}/api/social-caption`);
   console.log(`  Package assign (OpenAI): POST ${scheme}://${host}/api/package-assign (OPENAI_PACKAGE_MODEL, default gpt-5.2)`);
   void recoverStaleConsignmentIntakes().catch((err) => {
     webflowLog("error", {
