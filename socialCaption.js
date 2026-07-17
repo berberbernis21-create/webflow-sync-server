@@ -61,12 +61,103 @@ const INTENT_INSTRUCTIONS = {
 - Conversational, welcoming, process-focused`,
 };
 
-const LOCATION_EXAMPLES_FURNITURE = `LOCATION LINE EXAMPLES (pick ONE and vary each caption — do not copy verbatim every time):
+const LOCATION_EXAMPLES_FURNITURE = `LOCATION LINE EXAMPLES (pick ONE and vary each caption — do NOT reuse the same one back-to-back, NEVER default to "Sitting pretty in Scottsdale"):
 📍 Located in Scottsdale, AZ near Scottsdale Quarter
 📍 Scottsdale pickup · Lost + Found Resale Interiors
-📍 Sitting pretty in Scottsdale — come see it in person
 📍 Scottsdale, Arizona · shop the floor or shop this post
-NEVER: "inside @lostandfoundresale" | NEVER: art scene | NEVER: Ships from Scottsdale`;
+📍 On our Scottsdale floor right now
+📍 In-store in Scottsdale · online for everyone else
+📍 Scottsdale showroom find · we ship everywhere
+📍 Come touch it in Scottsdale, or grab it right from this post
+📍 Local? Come see it. Not local? We ship everywhere.
+NEVER: "inside @lostandfoundresale" | NEVER: art scene | NEVER: "Ships from Scottsdale" as the location line | NEVER: "we ship most pieces"`;
+
+/**
+ * True shipping/fulfillment facts from lostandfoundresale.com product pages.
+ * The model may pull ONE natural line from these — never the whole list.
+ */
+const FULFILLMENT_FACTS = `FULFILLMENT FACTS (true — pick AT MOST ONE angle per caption, reword it naturally, or skip entirely):
+- We ship everywhere (parcel + freight) — NEVER say "most pieces" or "most items"
+- Parcel-size items: standard shipping shows automatically at checkout
+- Big / bulky / oversized pieces: freight preparation + LTL freight or third-party carriers — still ship everywhere
+- Local delivery: $95/hr flat rate — same rate no matter the size or number of items (two movers + large box truck via trusted third-party providers)
+- Self pickup in Scottsdale always welcome
+- We help coordinate freight quotes (FreightCenter etc.) for out-of-town buyers
+- All items sold as-is · all sales final
+Example one-liners (vary, never copy verbatim every post):
+"We ship everywhere."
+"Small enough to ship — checkout does the math."
+"Yes, we can freight this — we ship everywhere."
+"Local delivery $95/hr — same rate no matter size or how many pieces."
+"Pickup in Scottsdale or we ship it everywhere."
+NEVER: "we ship most pieces" | NEVER: paste policy paragraphs, storage fees, 72-hour windows, liftgate details, or "see Delivery, Pickup & Freight Options"`;
+
+/**
+ * Style variety pool — one is picked at random per request so posts don't all sound the same.
+ * Extra important when frame/intent are "let the engine decide".
+ */
+const CAPTION_STYLES = [
+  {
+    id: "classic_house",
+    text: `STYLE FOR THIS POST: CLASSIC HOUSE
+- The standard Lost + Found layout done clean: punchy tagline, tight features, hungry sell body
+- Polished but warm`,
+  },
+  {
+    id: "natural_conversational",
+    text: `STYLE FOR THIS POST: NATURAL / CONVERSATIONAL
+- Write like a real person talking to a friend who loves interiors
+- Looser sentences, contractions, one aside in parentheses allowed
+- Fewer emojis (keep 💰 📐 📍), tagline can read like a text message
+- Still hits every mandatory layout section`,
+  },
+  {
+    id: "minimal_organized",
+    text: `STYLE FOR THIS POST: MINIMAL / ORGANIZED
+- Short. Clean. Almost catalog-like.
+- Tagline is 3-6 words. Features are 3 crisp lines. Body is 2-3 tight sentences max.
+- Zero filler words`,
+  },
+  {
+    id: "funky_playful",
+    text: `STYLE FOR THIS POST: FUNKY / PLAYFUL
+- Fun hook, personality, a little cheeky (never cringe, never all-caps spam)
+- Unexpected but fitting emojis, playful phrasing like "this one's a mood"
+- Body still sells hard with real facts`,
+  },
+  {
+    id: "cool_editorial",
+    text: `STYLE FOR THIS POST: COOL / EDITORIAL
+- Reads like a design magazine caption: confident, visual, a little cinematic
+- Lead with the room scene this piece creates
+- Restrained emojis, elevated vocabulary without being pretentious`,
+  },
+  {
+    id: "storyteller",
+    text: `STYLE FOR THIS POST: STORYTELLER
+- Open with a tiny scene or moment (morning light, dinner party, reading nook)
+- Then land the facts: price, dims, features
+- Warm, sensory, human`,
+  },
+  {
+    id: "bold_hype",
+    text: `STYLE FOR THIS POST: BOLD / HYPE (tasteful)
+- Big energy hook, ALL CAPS allowed for 2-4 words max
+- Fast rhythm, short punches, confident close
+- Hype the piece, never fake urgency`,
+  },
+  {
+    id: "expert_curator",
+    text: `STYLE FOR THIS POST: EXPERT CURATOR
+- Speak as the eye that found this piece: why it made the floor
+- Point out one detail most people would miss
+- Quietly authoritative, teaches taste`,
+  },
+];
+
+function pickCaptionStyle() {
+  return CAPTION_STYLES[Math.floor(Math.random() * CAPTION_STYLES.length)];
+}
 
 const LOCATION_EXAMPLES_LUXURY = `LOCATION LINE EXAMPLES (ALWAYS include @lostandfoundresale — vary phrasing):
 📍 @lostandfoundresale · Scottsdale, AZ
@@ -107,12 +198,14 @@ HASHTAGS:
 - Put the 5 hashtags ONLY in the JSON "hashtags" array
 - NEVER put #hashtags in the caption string (not top, not bottom, not middle)
 
-QUALITY BAR - MARKET IT:
-- Caption should make a stranger want this piece
-- Lead with desire, close with easy next step
-- AS IS stays honest and framed as character when true
-- No invented brands, sizes, or prices
-- Exactly 5 specific hashtags in the array only
+QUALITY BAR - MAKE IT KILLER:
+- A stranger scrolling should STOP and want this piece
+- Specific > generic: materials, finish, scale, room impact from THIS listing only
+- Tagline must be unique to this SKU - if it could sell a random vase, rewrite it
+- Body sells atmosphere + why it belongs in someone's home NOW, without fake countdown urgency
+- AS IS stays honest and framed as character / history when true
+- End with a clear easy next step (shop / come see it / we ship everywhere)
+- Exactly 5 sharp, specific hashtags in the array only (not #HomeDecor alone if you can be more specific)
 
 HARD BANS:
 - Hashtags inside "caption"
@@ -121,6 +214,8 @@ HARD BANS:
 - Price below features or below dimensions (price must be above dimensions)
 - "Ships from Scottsdale"
 - "inside @lostandfoundresale"
+- "Sitting pretty in Scottsdale" as a default / go-to line
+- "we ship most pieces" / "shipping available on most" - say we ship everywhere
 - Generic hooks that could fit any product
 - "Please see … below the description" / Delivery-Pickup-Freight Options pointers
 - Long shipping policy paragraphs
@@ -167,7 +262,8 @@ function getFrameBlock(frame) {
   if (key && FRAME_INSTRUCTIONS[key]) return FRAME_INSTRUCTIONS[key];
   return `FRAME MODE: Let the engine decide (Data-Led)
 - Confident, evidence-backed product storytelling from listing facts
-- Vary structure each time while keeping the mandatory layout sections`;
+- COMMIT fully to the STYLE FOR THIS POST block below — that's your personality this post
+- Vary hooks, location lines, CTAs, and rhythm from post to post while keeping the mandatory layout sections`;
 }
 
 function getIntentBlock(intent) {
@@ -192,6 +288,42 @@ function formatHashtags(hashtags) {
       .join(" ");
   }
   return String(hashtags || "").trim();
+}
+
+/** Never return empty — fill to 5 tags from defaults when the model forgets. */
+function ensureHashtags(hashtags, listing = {}, division = "resale_interiors") {
+  const collected = [];
+  const take = (tag) => {
+    let t = String(tag || "").trim();
+    if (!t) return;
+    if (!t.startsWith("#")) t = `#${t}`;
+    t = t.replace(/[^#A-Za-z0-9_]/g, "");
+    if (!/^#[A-Za-z0-9_]+$/.test(t)) return;
+    if (!collected.some((x) => x.toLowerCase() === t.toLowerCase())) collected.push(t);
+  };
+
+  String(formatHashtags(hashtags) || "")
+    .replace(/,/g, " ")
+    .split(/\s+/)
+    .forEach((t) => {
+      if (t.includes("#")) (t.match(/#[A-Za-z0-9_]+/g) || []).forEach(take);
+      else if (/^[A-Za-z0-9_]+$/.test(t)) take(t);
+    });
+
+  const fallbacks =
+    division === "luxury_handbags"
+      ? ["#LuxuryResale", "#DesignerFinds", "#ScottsdaleLuxury", "#Consignment", "#LostAndFound"]
+      : ["#ScottsdaleInteriors", "#ResaleFinds", "#LostAndFound", "#ShopLocalAZ", "#VintageModern"];
+
+  String(listing.title || listing.vertical || "")
+    .replace(/[^A-Za-z0-9\s]/g, " ")
+    .split(/\s+/)
+    .filter((w) => w.length >= 4)
+    .slice(0, 3)
+    .forEach((w) => take(`#${w}`));
+
+  fallbacks.forEach(take);
+  return collected.slice(0, 5).join(" ");
 }
 
 /** Strip any #tags the model wrongly put inside the caption body (top, bottom, or mid). */
@@ -283,13 +415,10 @@ function sanitizeListingTextForCaption(text) {
 
 const SHIPPING_CAPTION_RULES = `SHIPPING / PICKUP (OPTIONAL — DO NOT REPEAT THE SAME LINE EVERY POST):
 - The HEART of every caption is what the ITEM is: materials, look, scale, style, room, story from the listing description
-- Shipping/pickup is secondary. Many posts should skip logistics entirely
-- When you DO mention it, keep it natural and DIFFERENT each time (one short phrase max), e.g. vary across posts:
-  "Ships nationwide" / "We can ship this" / "Available to ship" / "Scottsdale pickup or ship it out"
-- NEVER copy-paste "Nationwide shipping is available." on every caption
-- NEVER write "Please see Delivery, Pickup & Freight Options below the description…"
-- NEVER tell people to scroll/look below the description
-- NEVER dump freight policies, brokers, liftgate fees, or 72-hour windows`;
+- Shipping/pickup is secondary. Some posts should skip logistics entirely
+- When you DO mention it, use the FULFILLMENT FACTS below — one short natural phrase max, different each post
+- Match the fact to the item: parcel-size → auto shipping at checkout; big/bulky → freight / we ship everywhere; local → pickup or local delivery $95/hr (same rate no matter size or item count)
+${FULFILLMENT_FACTS}`;
 
 const PRODUCT_FOCUS_RULES = `PRODUCT-FIRST RULE (MOST IMPORTANT):
 - Build the killer caption from the MAIN product explanation in the listing — what it is, how it looks/feels, why it belongs in a room
@@ -349,25 +478,39 @@ export function registerSocialCaptionRoute(app, { log } = {}) {
       .filter(Boolean)
       .join("\n");
 
+    const style = pickCaptionStyle();
+
     const textPrompt = `${getBasePrompt(division)}
 
 ${getFrameBlock(frame)}
 
 ${getIntentBlock(intent)}
 
+${style.text}
+
 ${PRODUCT_FOCUS_RULES}
 
 ${SHIPPING_CAPTION_RULES}
 
+VARIETY RULES (CRITICAL — posts must NOT sound alike):
+- Commit fully to the STYLE FOR THIS POST personality above
+- Never reuse the same tagline formula, location line, or CTA as a "default"
+- "Sitting pretty in Scottsdale" is BANNED as a go-to — rotate through all location options
+- NEVER say "we ship most pieces" — say we ship everywhere
+- Local delivery angle when used: $95/hr, same rate no matter size or how many items
+- Rotate CTAs: Shop the feed / Tap to shop / Shop this post / Shop right here / DM us / Come see it / We ship everywhere
+- Vary emoji density and capitalization by style
+- Make the caption feel custom-written for THIS photo and THIS SKU only
+
 MEDIA TYPE: static_post (photo is already on the Meta post — you do NOT receive an image).
-Build a KILLER, one-of-a-kind caption from the product story in the listing. Do not reuse the same shipping sentence every post.
+Write a KILLER, scroll-stopping, one-of-a-kind caption from the product story. Desire first. Facts sharp. Logistics optional and short. Do not reuse the same shipping sentence every post.
 
 TASK:
 1) Treat PRODUCT CONTEXT as ground truth. Never invent.
-2) Center the caption on what the item IS — market it hard, make desire obvious.
+2) Center the caption on what the item IS — market the hell out of it, make desire obvious.
 3) Match the house layout: tagline → title → 💰 price → dims → ✨ features → sell body → Perfect for: → 📍 → CTA.
-4) Obey FRAME + OBJECTIVE.
-5) Shipping only if natural - vary or omit; never "see below".
+4) Obey FRAME + OBJECTIVE + STYLE FOR THIS POST.
+5) Shipping only if natural - one short line max; we ship everywhere; local delivery $95/hr flat; never "see below".
 6) Return exactly 5 hashtags in the hashtags array ONLY - caption must contain ZERO hashtags.
 7) NEVER use em dashes or en dashes anywhere - only regular hyphens (-) or commas.
 
@@ -391,14 +534,14 @@ ${listingBits}`;
         },
         body: JSON.stringify({
           model,
-          temperature: 0.92,
+          temperature: 1.05,
           max_tokens: 2200,
           response_format: { type: "json_object" },
           messages: [
             {
               role: "system",
               content:
-                "You are Lost & Found's elite social caption writer and salesperson. House style: punchy tagline, title, PRICE right after title then dims, sparkle features, desire-driven body, Perfect for, location, CTA. Hashtags belong ONLY in the JSON hashtags array. NEVER use em/en dashes - only hyphens or commas. Sell hard while staying honest. No markdown. Return valid JSON only.",
+                "You are Lost & Found Resale's elite social caption writer - the one who makes people stop scrolling and want the piece. You have RANGE: natural, minimal, funky, editorial, storyteller, bold, or curator. Always keep the mandatory layout (tagline, title, PRICE right after title then dims, features, hungry sell body, Perfect for, location, CTA). Commit hard to the assigned style so no two posts sound alike. Say we ship everywhere (never 'most pieces'). Local delivery is $95/hr same rate no matter size or item count. Hashtags ONLY in the JSON hashtags array. NEVER use em/en dashes - only hyphens or commas. Sell hard, stay honest, make it amazing. No markdown. Return valid JSON only.",
             },
             { role: "user", content: textPrompt },
           ],
@@ -440,7 +583,10 @@ ${listingBits}`;
       const caption = ensurePriceAboveDimensions(
         stripEmDashes(stripHashtagsFromCaption(String(parsed.caption || "").replace(/\s+$/g, "")))
       );
-      const hashtags = formatHashtags(parsed.hashtags);
+      const hashtags = ensureHashtags(parsed.hashtags, {
+        title: listing?.title || itemName || "",
+        vertical: listing?.vertical || "",
+      }, division);
       if (!caption) {
         return res.status(502).json({ error: "Empty caption from model" });
       }
@@ -450,6 +596,7 @@ ${listingBits}`;
         model,
         division,
         frame: frame || "data_led",
+        style: style.id,
         textOnly: true,
         captionLen: caption.length,
       });
