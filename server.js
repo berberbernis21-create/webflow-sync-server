@@ -48,9 +48,9 @@ import {
   ECOMMERCE_TAG_PREFIX,
   ECOMMERCE_VERTICAL_TAG_FURNITURE,
   ECOMMERCE_VERTICAL_TAG_LUXURY,
+  ecommerceTagsAuthorizeVerticalChange,
+  getEcommerceClassificationFromTags,
   getEcommerceVerticalOverrideFromTags,
-  getHardFhLgVerticalLockFromProduct,
-  getHardFhLgVerticalLockFromTags,
   isEcommerceVerticalOnlyTag,
   productHasLuxuryEcommerceTag,
 } from "./ecommerceTags.js";
@@ -2247,41 +2247,22 @@ async function publishToSalesChannels(productId) {
 }
 
 /* ======================================================
-   SHOPIFY — WRITE METAFIELDS (department, category, vertical, dimensions_status)
-   Department = parent (Furniture & Home | Luxury Goods). Category = child (Living Room, Handbags, etc.).
-   Furniture & Home and Luxury Goods are mutually exclusive: furniture gets furniture_and_home = category, luxury_goods = "";
-   luxury gets furniture_and_home = "", luxury_goods = category. Collection rules use these.
-   Override Furniture & Home metafield: FURNITURE_AND_HOME_METAFIELD_NAMESPACE, FURNITURE_AND_HOME_METAFIELD_KEY
+   SHOPIFY — WRITE NON-TAXONOMY METAFIELDS
+   Traxia ecommerce tags are the taxonomy source of truth. The sync never writes
+   department, category, vertical, product type group, furniture, or luxury taxonomy.
 ====================================================== */
-const FURNITURE_AND_HOME_NAMESPACE = (process.env.FURNITURE_AND_HOME_METAFIELD_NAMESPACE || "custom").trim() || "custom";
-const FURNITURE_AND_HOME_KEY = (process.env.FURNITURE_AND_HOME_METAFIELD_KEY || "furniture_category").trim() || "furniture_category";
-
-async function updateShopifyMetafields(productId, { department, category, vertical, dimensionsStatus }) {
+async function updateShopifyMetafields(productId, { dimensionsStatus }) {
+  if (dimensionsStatus == null || String(dimensionsStatus).trim() === "") return;
   const ownerId = `gid://shopify/Product/${productId}`;
-  const dept = department ?? "";
-  const cat = category ?? "";
-  const vert = vertical ?? "luxury";
-  const isFurniture = dept === "Furniture & Home";
-  // "category" metafield only accepts luxury options (Handbags, Totes, etc.). Furniture uses furniture_and_home only.
   const metafields = [
-    { ownerId, key: "department", namespace: "custom", type: "single_line_text_field", value: dept },
-    ...(!isFurniture ? [{ ownerId, key: "category", namespace: "custom", type: "single_line_text_field", value: cat || "Other " }] : []),
-    { ownerId, key: "vertical", namespace: "custom", type: "single_line_text_field", value: vert },
-    { ownerId, key: "product_type_group", namespace: "custom", type: "single_line_text_field", value: dept },
-    // Furniture & Home: Living Room, Bedroom, Accessories, etc. (use env vars if your store's definition differs)
-    ...(isFurniture ? [{ ownerId, key: FURNITURE_AND_HOME_KEY, namespace: FURNITURE_AND_HOME_NAMESPACE, type: "single_line_text_field", value: cat || "Accessories" }] : []),
-    // luxury_goods: Handbags, Other , etc. (Luxury Goods dropdown)
-    ...(!isFurniture ? [{ ownerId, key: "luxury_goods", namespace: "custom", type: "single_line_text_field", value: cat || "Other " }] : []),
-  ].filter((m) => m.value != null && String(m.value).trim() !== "");
-  if (dimensionsStatus != null && String(dimensionsStatus).trim() !== "") {
-    metafields.push({
+    {
       ownerId,
       key: "dimensions_status",
       namespace: "custom",
       type: "single_line_text_field",
       value: dimensionsStatus,
-    });
-  }
+    },
+  ];
 
   const mutation = `
     mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
@@ -2303,85 +2284,15 @@ async function updateShopifyMetafields(productId, { department, category, vertic
       event: "metafields_set.user_errors",
       productId,
       userErrors: errors,
-      furnitureMetafield: isFurniture ? { namespace: FURNITURE_AND_HOME_NAMESPACE, key: FURNITURE_AND_HOME_KEY, value: cat || "Accessories" } : null,
-      hint: "If Furniture & Home fails: check Shopify Settings → Custom data → Products for the metafield's exact namespace and key, then set FURNITURE_AND_HOME_METAFIELD_NAMESPACE and FURNITURE_AND_HOME_METAFIELD_KEY.",
     });
     throw new Error(`Shopify metafieldsSet failed: ${msg}`);
   }
-  if (!isFurniture) {
-    await deleteShopifyMetafields(productId, [
-      { namespace: FURNITURE_AND_HOME_NAMESPACE, key: FURNITURE_AND_HOME_KEY },
-      { namespace: "custom", key: "dimensions_status" },
-    ]);
-  }
 }
 
-async function deleteShopifyMetafields(productId, keys) {
-  const ownerId = `gid://shopify/Product/${productId}`;
-  const metafields = (keys || [])
-    .map(({ namespace, key }) => ({
-      ownerId,
-      namespace: String(namespace || "").trim(),
-      key: String(key || "").trim(),
-    }))
-    .filter((m) => m.namespace && m.key);
-  if (!metafields.length) return;
-  const mutation = `
-    mutation MetafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
-      metafieldsDelete(metafields: $metafields) {
-        deletedMetafields { key namespace }
-        userErrors { field message }
-      }
-    }
-  `;
-  const res = await postShopifyGraphqlWithRetry(
-    { query: mutation, variables: { metafields } },
-    "metafieldsDelete",
-    { productId }
-  );
-  const errors = res.data?.data?.metafieldsDelete?.userErrors ?? [];
-  if (errors.length > 0) {
-    webflowLog("warn", {
-      event: "metafields_delete.user_errors",
-      productId,
-      userErrors: errors,
-    });
-  }
-}
 /* ======================================================
-   SHOPIFY — WRITE our logic TO Shopify (vendor, productType, tags)
-   We decide vertical/category; we WRITE that to Shopify so Shopify matches Webflow. Tags = department + category.
+   SHOPIFY — NON-TAXONOMY PRODUCT WRITES
 ====================================================== */
-const SYNC_DEPARTMENT_TAGS = ["Furniture & Home", "Luxury Goods"];
-/** Shorthand tags merchants or old setups use — we strip these whenever we rewrite department/category so they do not fight automation (e.g. "Luxury" vs "Luxury Goods"). */
-const LEGACY_VERTICAL_SHORTHAND_TAGS = ["Luxury", "Furniture"];
-const SYNC_CATEGORY_TAGS = [
-  "Living Room", "Dining Room", "Office Den", "Rugs", "Art / Mirrors", "Bedroom", "Accessories", "Outdoor / Patio", "Lighting",
-  "Handbags", "Totes", "Crossbody", "Wallets", "Backpacks", "Luggage", "Scarves", "Belts",
-  "Necklaces", "Rings", "Bracelets", "Earrings", "Other Jewelry", "Jewelry",
-  "Small Bags", "Other ", "Other",
-  "Recently Sold",
-];
-function mergeProductTagsForSync(existingTags, department, category) {
-  const existing = Array.isArray(existingTags) ? existingTags : (typeof existingTags === "string" ? existingTags.split(",").map((s) => s.trim()).filter(Boolean) : []);
-  const toRemove = new Set([...SYNC_DEPARTMENT_TAGS, ...SYNC_CATEGORY_TAGS].map((t) => t.trim()).filter(Boolean));
-  const shorthandRemoveLower = new Set(LEGACY_VERTICAL_SHORTHAND_TAGS.map((t) => String(t).trim().toLowerCase()).filter(Boolean));
-  const kept = existing.filter((t) => {
-    const s = String(t).trim();
-    if (toRemove.has(s)) return false;
-    if (shorthandRemoveLower.has(s.toLowerCase())) return false;
-    return true;
-  });
-  const toAdd = [department, category].filter((v) => v != null && String(v).trim() !== "");
-  const combined = [...kept];
-  for (const tag of toAdd) {
-    const t = String(tag).trim();
-    if (t && !combined.includes(t)) combined.push(t);
-  }
-  return combined;
-}
-
-async function updateShopifyVendorAndType(productId, brandValue, productType, existingTags, department, category, descriptionHtml) {
+async function updateShopifyVendorAndDescription(productId, brandValue, descriptionHtml) {
   const mutation = `
     mutation UpdateProduct($input: ProductInput!) {
       productUpdate(input: $input) {
@@ -2404,12 +2315,6 @@ async function updateShopifyVendorAndType(productId, brandValue, productType, ex
     id: `gid://shopify/Product/${productId}`,
     vendor: brandValue || "Unknown",
   };
-  if (productType != null && String(productType).trim() !== "") {
-    input.productType = String(productType).trim();
-  }
-  if (department != null && category != null) {
-    input.tags = mergeProductTagsForSync(existingTags ?? [], department, category);
-  }
   // Only update description if explicitly provided (not null and not empty)
   if (descriptionHtml != null && String(descriptionHtml).trim() !== "") {
     input.descriptionHtml = String(descriptionHtml).trim();
@@ -2917,11 +2822,21 @@ function getLuxuryCategoryOverrideFromEcommerceTags(tags) {
   return null;
 }
 
+function getEcommerceClassification(product) {
+  return getEcommerceClassificationFromTags(getProductTagsArray(product));
+}
+
 /**
  * LG / FH — absolute vertical lock from Traxia. Never overridden by LLM, classifier, or Category: ACCESSORIES.
  */
 function getHardFhLgVerticalLock(product) {
-  return getHardFhLgVerticalLockFromTags(getProductTagsArray(product));
+  const classification = getEcommerceClassification(product);
+  if (classification.conflicts.length || !classification.vertical) return null;
+  return {
+    vertical: classification.vertical,
+    tag: classification.verticalTag,
+    source: "hard_ecommerce_vertical_tag",
+  };
 }
 
 function getManualEcommerceVerticalLock(product) {
@@ -2944,18 +2859,10 @@ function getManualEcommerceVerticalLock(product) {
   return null;
 }
 
-/** FH / LG stamp stored on cache rows — compared on daily sync to detect merchant vertical intent changes. */
+/** Legacy FH/LG cache stamp retained for compatibility with existing cache rows. */
 function ecommerceVerticalTagStamp(tags) {
-  return getEcommerceVerticalOverrideFromTags(tags)?.tag ?? "";
-}
-
-function ecommerceVerticalTagChanged(product, cacheEntry) {
-  if (!cacheEntry) return true;
-  const current = ecommerceVerticalTagStamp(getProductTagsArray(product));
-  if (!Object.prototype.hasOwnProperty.call(cacheEntry, "ecommerceVerticalTagStamp")) {
-    return Boolean(current);
-  }
-  return current !== cacheEntry.ecommerceVerticalTagStamp;
+  const classification = getEcommerceClassificationFromTags(tags);
+  return classification.conflicts.length ? "" : (classification.verticalTag ?? "");
 }
 
 /** Where the item already lives — cache row or live Webflow index (survives cache loss after deploy). */
@@ -2973,29 +2880,49 @@ function getExistingPlacedVertical(product, cacheEntry) {
   return null;
 }
 
-/**
- * When false, sync keeps an already-placed item on its cached vertical (luxury vs furniture).
- * Allowed switches: forceReclassify, webhook, sync-by-ids, new placement, or FH/LG tag change.
- */
-function shouldAllowVerticalSwitch(product, cacheEntry, options = {}) {
-  if (options.forceReclassify === true) return true;
-  const trigger = options.syncTrigger || "sync-all";
-  if (trigger === "webhook" || trigger === "sync-by-ids") return true;
+function getExistingPlacedCategory(product, vertical) {
+  const id = String(product?.id ?? "");
+  if (!id) return null;
+  const item =
+    vertical === "furniture"
+      ? furnitureProductIndex?.byShopifyId?.get(id)
+      : luxuryItemIndex?.byShopifyId?.get(id);
+  const raw = item?.fieldData?.category;
+  if (vertical === "luxury") {
+    const value = typeof raw === "string" ? raw.trim() : "";
+    return value || null;
+  }
 
+  const ref =
+    typeof raw === "string"
+      ? raw.trim()
+      : raw && typeof raw === "object"
+        ? String(raw.id ?? raw.value ?? "").trim()
+        : "";
+  if (!ref) return null;
+  for (const category of FURNITURE_TAXONOMY) {
+    if (resolveFurnitureCategoryRef(category) === ref) return category;
+  }
+  return null;
+}
+
+/** Tagged products follow FH/LG only; untagged products retain best-guess behavior. */
+function shouldAllowVerticalSwitch(product, cacheEntry, options = {}) {
   const placed = getExistingPlacedVertical(product, cacheEntry);
   if (!placed) return true;
 
-  if (ecommerceVerticalTagChanged(product, cacheEntry)) {
-    const stamp = ecommerceVerticalTagStamp(getProductTagsArray(product));
-    if (stamp === ECOMMERCE_VERTICAL_TAG_LUXURY || stamp === ECOMMERCE_VERTICAL_TAG_FURNITURE) {
-      return true;
-    }
-  }
+  const classification = getEcommerceClassification(product);
+  const ecommerceDecision = ecommerceTagsAuthorizeVerticalChange(
+    classification,
+    placed.vertical
+  );
+  if (ecommerceDecision != null) return ecommerceDecision;
 
-  if (trigger === "sync-all") return false;
-
-  if (!cacheEntry?.webflowId || !cacheEntry?.vertical) return true;
-  return false;
+  // Untagged inventory keeps the existing best-guess behavior.
+  if (options.forceReclassify === true) return true;
+  const trigger = options.syncTrigger || "sync-all";
+  if (trigger === "webhook" || trigger === "sync-by-ids") return true;
+  return trigger !== "sync-all" && (!cacheEntry?.webflowId || !cacheEntry?.vertical);
 }
 
 /* ======================================================
@@ -6230,11 +6157,27 @@ function soldMarkedAtPayload(cacheEntry, lastQty) {
   return {};
 }
 
-/** Cache fields written on every sync row update (sold timestamp + FH/LG stamp for vertical freeze). */
+const RESOLVED_ECOMMERCE_TAXONOMY = Symbol("resolvedEcommerceTaxonomy");
+
+/** Cache fields written on every sync row update. Taxonomy advances only after category resolution succeeds. */
 function cacheSyncMeta(product, cacheEntry, lastQty) {
+  const resolved = product?.[RESOLVED_ECOMMERCE_TAXONOMY] ?? null;
   return {
     ...soldMarkedAtPayload(cacheEntry, lastQty),
     ecommerceVerticalTagStamp: ecommerceVerticalTagStamp(getProductTagsArray(product)),
+    ...(resolved
+      ? {
+          ecommerceClassificationFingerprint: resolved.fingerprint,
+          resolvedCategory: resolved.category,
+          resolvedVertical: resolved.vertical,
+        }
+      : {
+          ...(Object.prototype.hasOwnProperty.call(cacheEntry || {}, "ecommerceClassificationFingerprint")
+            ? { ecommerceClassificationFingerprint: cacheEntry.ecommerceClassificationFingerprint }
+            : {}),
+          ...(cacheEntry?.resolvedCategory ? { resolvedCategory: cacheEntry.resolvedCategory } : {}),
+          ...(cacheEntry?.resolvedVertical ? { resolvedVertical: cacheEntry.resolvedVertical } : {}),
+        }),
   };
 }
 
@@ -6803,6 +6746,13 @@ function runSerializedByShopifyProductId(shopifyProductId, fn) {
 async function syncSingleProductCore(product, cache, options = {}) {
   const shopifyProductId = String(product.id);
   const cacheEntry = getCacheEntry(cache, shopifyProductId);
+  const ecommerceClassification = getEcommerceClassification(product);
+  const ecommerceFingerprintChanged =
+    cacheEntry?.ecommerceClassificationFingerprint !== ecommerceClassification.fingerprint;
+  const taggedTaxonomyNeedsInitialization =
+    ecommerceClassification.tagged &&
+    !ecommerceClassification.conflicts.length &&
+    ecommerceFingerprintChanged;
   const duplicateEmailSentFor = options.duplicateEmailSentFor ?? null;
   const shopifyWriteEmailSentFor = options.shopifyWriteEmailSentFor ?? null;
 
@@ -6837,6 +6787,17 @@ async function syncSingleProductCore(product, cache, options = {}) {
   const verticalNeedsCorrection =
     allowVerticalSwitch && evidenceVsCache.vertical !== cachedVerticalForSkip;
 
+  if (ecommerceClassification.conflicts.length) {
+    webflowLog("error", {
+      event: "ecommerce_taxonomy.conflict",
+      shopifyProductId,
+      productTitle: product.title || "",
+      fingerprint: ecommerceClassification.fingerprint,
+      conflicts: ecommerceClassification.conflicts,
+      message: "Conflicting ecommerce tags; preserving existing taxonomy",
+    });
+  }
+
   // Do NOT lock vertical from cache when webflowId is missing and qty is 0 — wrong vertical (e.g. luxury) blocked
   // Webflow index lookup + sold heuristic, causing skip_create_sold while the live listing stays on Furniture unpublished/sold.
 
@@ -6853,6 +6814,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
     shopifyDataUnchangedForCache &&
     cacheEntry?.webflowId &&
     !verticalNeedsCorrection &&
+    !taggedTaxonomyNeedsInitialization &&
     !forceReclassify &&
     !shopifySoldBlocksNoTouch
   ) {
@@ -7192,12 +7154,13 @@ async function syncSingleProductCore(product, cache, options = {}) {
 
   let vertical, detectedVertical, verticalCorrected;
   const ecommerceVerticalTag = getEcommerceVerticalOverrideFromTags(getProductTagsArray(product));
-  const hardFhLgLock = !forceReclassify ? getHardFhLgVerticalLock(product) : null;
+  // FH/LG comes from the merchant's Traxia e-commerce tags and is absolute.
+  // forceReclassify must refresh classifier-derived decisions, not bypass explicit merchant intent.
+  const hardFhLgLock = getHardFhLgVerticalLock(product);
   const placedVertical = getExistingPlacedVertical(product, cacheEntry);
   const freezePlacedVertical =
     !hardFhLgLock &&
     Boolean(placedVertical) &&
-    !forceReclassify &&
     !allowVerticalSwitch;
   let manualEcommerceLock = null;
 
@@ -7630,7 +7593,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
 
   } // end !freezePlacedVertical && !hardFhLgLock (final vertical override pass)
 
-  if (hardFhLgLock && !forceReclassify) {
+  if (hardFhLgLock) {
     vertical = hardFhLgLock.vertical;
     detectedVertical = hardFhLgLock.vertical;
     verticalCorrected = false;
@@ -8012,7 +7975,6 @@ async function syncSingleProductCore(product, cache, options = {}) {
 
         categoryForMetafield = mapCategoryForShopify(resolvedLux);
         if (
-          !options.categoryOverride &&
           isJewelryProduct(name, description, product) &&
           !isBagOrAgendaProduct(name, description)
         ) {
@@ -8030,17 +7992,39 @@ async function syncSingleProductCore(product, cache, options = {}) {
   if (isWristwatchProduct(name, description, product)) {
     categoryForMetafield = "Accessories";
   }
-  if (options.categoryOverride) {
-    categoryForMetafield = mapCategoryForShopify(String(options.categoryOverride).trim());
-    webflowLog("info", {
-      event: "luxury_category.override_explicit",
-      shopifyProductId,
-      resolved: categoryForMetafield,
-    });
+  const authoritativeCategory =
+    vertical === "furniture"
+      ? getFurnitureCategoryOverrideFromEcommerceTags(productTags)?.category
+      : getLuxuryCategoryOverrideFromEcommerceTags(productTags)?.category;
+  const preservedTaggedCategory =
+    cacheEntry?.resolvedCategory || getExistingPlacedCategory(product, vertical);
+  const cachedFingerprintKnown = Object.prototype.hasOwnProperty.call(
+    cacheEntry || {},
+    "ecommerceClassificationFingerprint"
+  );
+  if (
+    ecommerceClassification.tagged &&
+    !ecommerceClassification.conflicts.length &&
+    authoritativeCategory
+  ) {
+    categoryForMetafield = authoritativeCategory;
+  } else if (
+    ecommerceClassification.tagged &&
+    (!ecommerceFingerprintChanged || !cachedFingerprintKnown) &&
+    preservedTaggedCategory
+  ) {
+    categoryForMetafield = preservedTaggedCategory;
+  } else if (ecommerceClassification.conflicts.length && preservedTaggedCategory) {
+    categoryForMetafield = preservedTaggedCategory;
   }
   const shopifyDepartment = department;
   const shopifyCategoryValue = categoryForMetafield;
   const category = shopifyCategoryValue;
+  product[RESOLVED_ECOMMERCE_TAXONOMY] = {
+    fingerprint: ecommerceClassification.fingerprint,
+    vertical,
+    category,
+  };
 
   const showOnWebflow = vertical === "luxury" ? !soldNow : true;
   const shopifyUrl = `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${slug}`;
@@ -8158,21 +8142,14 @@ async function syncSingleProductCore(product, cache, options = {}) {
         await removeConditionOptionIfFurniture(product);
       }
 
-      // Write metafields + vendor/type/tags to Shopify so Shopify matches the vertical we're syncing to Webflow.
+      // Taxonomy is read-only. Only non-taxonomy Shopify fields may be updated here.
       await updateShopifyMetafields(shopifyProductId, {
-        department: shopifyDepartment,
-        category: shopifyCategoryValue,
-        vertical: vertical === "furniture" ? "furniture" : "luxury",
         dimensionsStatus: vertical === "furniture" ? dimensionsStatus : undefined,
       });
       // Only pass description if it changed
-      await updateShopifyVendorAndType(
+      await updateShopifyVendorAndDescription(
         shopifyProductId,
         brand,
-        shopifyCategoryValue,
-        getProductTagsArray(product),
-        options.skipTagWrites ? null : shopifyDepartment,
-        options.skipTagWrites ? null : shopifyCategoryValue,
         descriptionChanged ? description : null
       );
     }
@@ -12600,171 +12577,11 @@ app.post("/sync-all", async (req, res) => {
     });
 });
 
-function normalizeCategoryByTitleMap(raw) {
-  if (!raw || typeof raw !== "object") return {};
-  const out = {};
-  for (const [k, v] of Object.entries(raw)) {
-    const title = String(k || "").trim().toLowerCase();
-    const cat = String(v || "").trim();
-    if (title && cat) out[title] = cat;
-  }
-  return out;
-}
-
-function mapLuxuryCategoryToWebflowField(category) {
-  const mapped = mapCategoryForShopify(category);
-  const isLuxuryCategory = mapped && LUXURY_TAXONOMY.includes(mapped);
-  const luxuryCategory = isLuxuryCategory ? mapped : "Other ";
-  return luxuryCategory && luxuryCategory.trimEnd() === "Other" ? "Other" : luxuryCategory ?? "";
-}
-
-/**
- * Fast path: Shopify category metafields + Luxury CMS category field only (no tags, images, furniture indexes).
- */
-async function setLuxuryCategoryOnly(product, categoryRaw, cache) {
-  const shopifyProductId = String(product?.id ?? "").trim();
-  if (!shopifyProductId) return { operation: "failed", error: "missing_shopify_id" };
-  const categoryMapped = mapCategoryForShopify(String(categoryRaw || "").trim());
-  const config = getWebflowConfig("luxury");
-  if (!config?.collectionId || !config?.token) {
-    return { operation: "failed", error: "luxury_webflow_not_configured" };
-  }
-
-  await updateShopifyMetafields(shopifyProductId, {
-    department: "Luxury Goods",
-    category: categoryMapped,
-    vertical: "luxury",
+app.post("/set-categories", (_req, res) => {
+  res.status(410).json({
+    error: "taxonomy_is_ecommerce_tag_controlled",
+    message: "Category and vertical can only change when Traxia ecommerce tags change.",
   });
-
-  const slug = product.handle || "";
-  const shopifyUrl = `https://${process.env.SHOPIFY_STORE}.myshopify.com/products/${slug}`;
-  let webflowId =
-    cache[shopifyProductId]?.webflowId ??
-    luxuryItemIndex?.byShopifyId?.get(shopifyProductId)?.id ??
-    null;
-  if (!webflowId) {
-    const existing = await findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, config);
-    webflowId = existing?.id ?? null;
-  }
-  if (!webflowId) return { operation: "failed", error: "webflow_item_not_found" };
-
-  const webflowCategory = mapLuxuryCategoryToWebflowField(categoryRaw);
-  const existing = await getWebflowItemById(webflowId, config);
-  const currentCategory = existing?.fieldData?.category ?? "";
-  if (String(currentCategory) !== String(webflowCategory)) {
-    await patchLuxuryCmsItemFieldData(config, webflowId, { category: webflowCategory }, { existing });
-  }
-
-  cache[shopifyProductId] = {
-    ...(cache[shopifyProductId] || {}),
-    webflowId,
-    vertical: "luxury",
-  };
-  suppressWebhookSyncForProduct(shopifyProductId);
-  webflowLog("info", {
-    event: "set_category.done",
-    shopifyProductId,
-    productTitle: product.title,
-    category: categoryMapped,
-    webflowCategory,
-    webflowId,
-  });
-  return { operation: "update", id: webflowId };
-}
-
-app.post("/set-categories", async (req, res) => {
-  syncRequestId = crypto.randomUUID().slice(0, 8);
-  syncStartTime = Date.now();
-  const rawIds = req.body?.shopifyProductIds ?? req.body?.ids ?? [];
-  const ids = Array.isArray(rawIds) ? rawIds.map((id) => String(id).trim()).filter(Boolean) : [];
-  if (!ids.length) {
-    return res.status(400).json({ error: "shopifyProductIds (array) is required" });
-  }
-  const categoryByTitle = normalizeCategoryByTitleMap(req.body?.categoryByTitle);
-  if (!Object.keys(categoryByTitle).length) {
-    return res.status(400).json({ error: "categoryByTitle map is required" });
-  }
-  webflowLog("info", {
-    event: "set-categories.entry",
-    count: ids.length,
-    categoryOverrides: Object.keys(categoryByTitle).length,
-  });
-  try {
-    luxuryItemIndex = null;
-    await loadLuxuryItemIndex();
-    const cache = loadCache();
-    let updated = 0,
-      failed = 0,
-      skipped = 0;
-    const results = [];
-
-    for (const shopifyProductId of ids) {
-      try {
-        const product = await fetchShopifyProductById(shopifyProductId);
-        if (!product) {
-          failed++;
-          results.push({ shopifyProductId, error: "shopify_product_not_found" });
-          continue;
-        }
-        const titleKey = String(product.title || "").trim().toLowerCase();
-        const category = categoryByTitle[titleKey];
-        if (!category) {
-          skipped++;
-          results.push({ shopifyProductId, title: product.title, operation: "skip", error: "no_category_override" });
-          continue;
-        }
-        const result = await setLuxuryCategoryOnly(product, category, cache);
-        if (result.operation === "failed") {
-          failed++;
-          results.push({ shopifyProductId, title: product.title, error: result.error });
-        } else {
-          updated++;
-          results.push({
-            shopifyProductId,
-            title: product.title,
-            operation: "update",
-            webflowId: result.id,
-            category,
-          });
-        }
-      } catch (err) {
-        failed++;
-        results.push({ shopifyProductId, error: err.message || String(err) });
-        webflowLog("error", {
-          event: "set-categories.product_failed",
-          shopifyProductId,
-          message: err.message,
-        });
-      }
-    }
-
-    saveCache(cache);
-    const durationMs = syncStartTime != null ? Date.now() - syncStartTime : null;
-    webflowLog("info", {
-      event: "set-categories.exit",
-      count: ids.length,
-      updated,
-      skipped,
-      failed,
-      durationMs,
-    });
-    res.json({
-      status: "ok",
-      requested: ids.length,
-      updated,
-      skipped,
-      failed,
-      durationMs,
-      results,
-    });
-  } catch (err) {
-    webflowLog("error", { event: "set-categories.error", message: err.message });
-    res.status(500).json({ error: err.message });
-  } finally {
-    syncRequestId = null;
-    luxuryItemIndex = null;
-    syncStartTime = null;
-  }
 });
 
 app.post("/sync-by-ids", async (req, res) => {
@@ -12777,15 +12594,11 @@ app.post("/sync-by-ids", async (req, res) => {
   }
   const forceReclassify = req.body?.forceReclassify !== false;
   const createOnly = req.body?.createOnly === true;
-  const categoryByTitle = normalizeCategoryByTitleMap(req.body?.categoryByTitle);
-  const skipTagWrites = req.body?.skipTagWrites === true || Object.keys(categoryByTitle).length > 0;
   webflowLog("info", {
     event: "sync-by-ids.entry",
     count: ids.length,
     forceReclassify,
     createOnly,
-    categoryOverrides: Object.keys(categoryByTitle).length,
-    skipTagWrites,
   });
   try {
     await loadFurnitureCategoryMap();
@@ -12816,16 +12629,12 @@ app.post("/sync-by-ids", async (req, res) => {
           results.push({ shopifyProductId, error: "shopify_product_not_found" });
           continue;
         }
-        const titleKey = String(product.title || "").trim().toLowerCase();
-        const categoryOverride = categoryByTitle[titleKey] || null;
         const result = await syncSingleProduct(product, cache, {
           duplicateEmailSentFor,
           shopifyWriteEmailSentFor,
           forceReclassify,
           createOnly,
           skipMissingFieldsAlert: true,
-          categoryOverride,
-          skipTagWrites,
           syncTrigger: "sync-by-ids",
         });
         if (result?.duplicateCorrected && result?.duplicateLog) {
