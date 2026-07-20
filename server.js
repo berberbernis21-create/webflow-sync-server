@@ -2247,22 +2247,44 @@ async function publishToSalesChannels(productId) {
 }
 
 /* ======================================================
-   SHOPIFY — WRITE NON-TAXONOMY METAFIELDS
-   Traxia ecommerce tags are the taxonomy source of truth. The sync never writes
-   department, category, vertical, product type group, furniture, or luxury taxonomy.
+   SHOPIFY — WRITE METAFIELDS (department, category, vertical, dimensions_status)
+   Traxia ecommerce tags are the taxonomy source of truth for DECIDING taxonomy,
+   but the resolved taxonomy is written to BOTH Shopify and Webflow so they match.
+   Department = parent (Furniture & Home | Luxury Goods). Category = child (Living Room, Handbags, etc.).
+   Furniture & Home and Luxury Goods are mutually exclusive: furniture gets furniture_and_home = category, luxury_goods = "";
+   luxury gets furniture_and_home = "", luxury_goods = category. Collection rules use these.
+   Override Furniture & Home metafield: FURNITURE_AND_HOME_METAFIELD_NAMESPACE, FURNITURE_AND_HOME_METAFIELD_KEY
 ====================================================== */
-async function updateShopifyMetafields(productId, { dimensionsStatus }) {
-  if (dimensionsStatus == null || String(dimensionsStatus).trim() === "") return;
+const FURNITURE_AND_HOME_NAMESPACE = (process.env.FURNITURE_AND_HOME_METAFIELD_NAMESPACE || "custom").trim() || "custom";
+const FURNITURE_AND_HOME_KEY = (process.env.FURNITURE_AND_HOME_METAFIELD_KEY || "furniture_category").trim() || "furniture_category";
+
+async function updateShopifyMetafields(productId, { department, category, vertical, dimensionsStatus }) {
   const ownerId = `gid://shopify/Product/${productId}`;
+  const dept = department ?? "";
+  const cat = category ?? "";
+  const vert = vertical ?? "luxury";
+  const isFurniture = dept === "Furniture & Home";
+  // "category" metafield only accepts luxury options (Handbags, Totes, etc.). Furniture uses furniture_and_home only.
   const metafields = [
-    {
+    { ownerId, key: "department", namespace: "custom", type: "single_line_text_field", value: dept },
+    ...(!isFurniture ? [{ ownerId, key: "category", namespace: "custom", type: "single_line_text_field", value: cat || "Other " }] : []),
+    { ownerId, key: "vertical", namespace: "custom", type: "single_line_text_field", value: vert },
+    { ownerId, key: "product_type_group", namespace: "custom", type: "single_line_text_field", value: dept },
+    // Furniture & Home: Living Room, Bedroom, Accessories, etc. (use env vars if your store's definition differs)
+    ...(isFurniture ? [{ ownerId, key: FURNITURE_AND_HOME_KEY, namespace: FURNITURE_AND_HOME_NAMESPACE, type: "single_line_text_field", value: cat || "Accessories" }] : []),
+    // luxury_goods: Handbags, Other , etc. (Luxury Goods dropdown)
+    ...(!isFurniture ? [{ ownerId, key: "luxury_goods", namespace: "custom", type: "single_line_text_field", value: cat || "Other " }] : []),
+  ].filter((m) => m.value != null && String(m.value).trim() !== "");
+  if (dimensionsStatus != null && String(dimensionsStatus).trim() !== "") {
+    metafields.push({
       ownerId,
       key: "dimensions_status",
       namespace: "custom",
       type: "single_line_text_field",
       value: dimensionsStatus,
-    },
-  ];
+    });
+  }
+  if (!metafields.length) return;
 
   const mutation = `
     mutation MetafieldsSet($metafields: [MetafieldsSetInput!]!) {
@@ -2284,15 +2306,88 @@ async function updateShopifyMetafields(productId, { dimensionsStatus }) {
       event: "metafields_set.user_errors",
       productId,
       userErrors: errors,
+      furnitureMetafield: isFurniture ? { namespace: FURNITURE_AND_HOME_NAMESPACE, key: FURNITURE_AND_HOME_KEY, value: cat || "Accessories" } : null,
+      hint: "If Furniture & Home fails: check Shopify Settings → Custom data → Products for the metafield's exact namespace and key, then set FURNITURE_AND_HOME_METAFIELD_NAMESPACE and FURNITURE_AND_HOME_METAFIELD_KEY.",
     });
     throw new Error(`Shopify metafieldsSet failed: ${msg}`);
+  }
+  if (!isFurniture) {
+    await deleteShopifyMetafields(productId, [
+      { namespace: FURNITURE_AND_HOME_NAMESPACE, key: FURNITURE_AND_HOME_KEY },
+      { namespace: "custom", key: "dimensions_status" },
+    ]);
+  }
+}
+
+async function deleteShopifyMetafields(productId, keys) {
+  const ownerId = `gid://shopify/Product/${productId}`;
+  const metafields = (keys || [])
+    .map(({ namespace, key }) => ({
+      ownerId,
+      namespace: String(namespace || "").trim(),
+      key: String(key || "").trim(),
+    }))
+    .filter((m) => m.namespace && m.key);
+  if (!metafields.length) return;
+  const mutation = `
+    mutation MetafieldsDelete($metafields: [MetafieldIdentifierInput!]!) {
+      metafieldsDelete(metafields: $metafields) {
+        deletedMetafields { key namespace }
+        userErrors { field message }
+      }
+    }
+  `;
+  const res = await postShopifyGraphqlWithRetry(
+    { query: mutation, variables: { metafields } },
+    "metafieldsDelete",
+    { productId }
+  );
+  const errors = res.data?.data?.metafieldsDelete?.userErrors ?? [];
+  if (errors.length > 0) {
+    webflowLog("warn", {
+      event: "metafields_delete.user_errors",
+      productId,
+      userErrors: errors,
+    });
   }
 }
 
 /* ======================================================
-   SHOPIFY — NON-TAXONOMY PRODUCT WRITES
+   SHOPIFY — WRITE our logic TO Shopify (vendor, productType, tags)
+   Ecommerce tags (FH/LG + category letters) decide taxonomy; we WRITE the resolved
+   department/category back to Shopify so Shopify matches Webflow. Tags = department + category.
+   The Traxia ecommerce tags themselves (FH, LG, E COMMERCE …) are never touched.
 ====================================================== */
-async function updateShopifyVendorAndDescription(productId, brandValue, descriptionHtml) {
+const SYNC_DEPARTMENT_TAGS = ["Furniture & Home", "Luxury Goods"];
+/** Shorthand tags merchants or old setups use — we strip these whenever we rewrite department/category so they do not fight automation (e.g. "Luxury" vs "Luxury Goods"). */
+const LEGACY_VERTICAL_SHORTHAND_TAGS = ["Luxury", "Furniture"];
+const SYNC_CATEGORY_TAGS = [
+  "Living Room", "Dining Room", "Office Den", "Rugs", "Art / Mirrors", "Bedroom", "Accessories", "Outdoor / Patio", "Lighting",
+  "Handbags", "Totes", "Crossbody", "Wallets", "Backpacks", "Luggage", "Scarves", "Belts",
+  "Necklaces", "Rings", "Bracelets", "Earrings", "Other Jewelry", "Jewelry",
+  "Small Bags", "Other ", "Other",
+  "Recently Sold",
+];
+function mergeProductTagsForSync(existingTags, department, category) {
+  const existing = Array.isArray(existingTags) ? existingTags : (typeof existingTags === "string" ? existingTags.split(",").map((s) => s.trim()).filter(Boolean) : []);
+  const toRemove = new Set([...SYNC_DEPARTMENT_TAGS, ...SYNC_CATEGORY_TAGS].map((t) => t.trim()).filter(Boolean));
+  const shorthandRemoveLower = new Set(LEGACY_VERTICAL_SHORTHAND_TAGS.map((t) => String(t).trim().toLowerCase()).filter(Boolean));
+  const kept = existing.filter((t) => {
+    const s = String(t).trim();
+    if (toRemove.has(s)) return false;
+    if (shorthandRemoveLower.has(s.toLowerCase())) return false;
+    return true;
+  });
+  const toAdd = [department, category].filter((v) => v != null && String(v).trim() !== "");
+  const combined = [...kept];
+  for (const tag of toAdd) {
+    const t = String(tag).trim();
+    if (t && !combined.includes(t)) combined.push(t);
+  }
+  return combined;
+}
+
+async function updateShopifyVendorAndType(productId, brandValue, productType, existingTags, department, category, descriptionHtml) {
   const mutation = `
     mutation UpdateProduct($input: ProductInput!) {
       productUpdate(input: $input) {
@@ -2315,6 +2410,12 @@ async function updateShopifyVendorAndDescription(productId, brandValue, descript
     id: `gid://shopify/Product/${productId}`,
     vendor: brandValue || "Unknown",
   };
+  if (productType != null && String(productType).trim() !== "") {
+    input.productType = String(productType).trim();
+  }
+  if (department != null && category != null) {
+    input.tags = mergeProductTagsForSync(existingTags ?? [], department, category);
+  }
   // Only update description if explicitly provided (not null and not empty)
   if (descriptionHtml != null && String(descriptionHtml).trim() !== "") {
     input.descriptionHtml = String(descriptionHtml).trim();
@@ -8142,14 +8243,21 @@ async function syncSingleProductCore(product, cache, options = {}) {
         await removeConditionOptionIfFurniture(product);
       }
 
-      // Taxonomy is read-only. Only non-taxonomy Shopify fields may be updated here.
+      // Ecommerce tags decide taxonomy; write the resolved taxonomy to Shopify so it matches Webflow.
       await updateShopifyMetafields(shopifyProductId, {
+        department: shopifyDepartment,
+        category: shopifyCategoryValue,
+        vertical: vertical === "furniture" ? "furniture" : "luxury",
         dimensionsStatus: vertical === "furniture" ? dimensionsStatus : undefined,
       });
       // Only pass description if it changed
-      await updateShopifyVendorAndDescription(
+      await updateShopifyVendorAndType(
         shopifyProductId,
         brand,
+        shopifyCategoryValue,
+        getProductTagsArray(product),
+        shopifyDepartment,
+        shopifyCategoryValue,
         descriptionChanged ? description : null
       );
     }
