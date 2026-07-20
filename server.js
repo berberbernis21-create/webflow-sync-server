@@ -11581,10 +11581,16 @@ function storeDefaultPackageResult(packages, reason) {
 }
 
 /** Cheapest box that fits (with slack); store default only for bulky furniture or heavy items. */
+const BOOK_MAX_PLAUSIBLE_WEIGHT_LB = 6;
+
 function selectDeterministicShippingPackage(body, packages) {
   const facts = buildPackageShippingFacts(body);
   let itemSorted = facts.sorted;
-  const weightLb = facts.weightLb;
+  let weightLb = facts.weightLb;
+  // Inventory routinely tags books with bogus 10 lb weights — cap so weight checks don't push books into big boxes.
+  if (weightLb != null && weightLb > BOOK_MAX_PLAUSIBLE_WEIGHT_LB && productLooksLikeBookForShipping(body)) {
+    weightLb = BOOK_MAX_PLAUSIBLE_WEIGHT_LB;
+  }
   const dimNote = facts.source ? ` (from ${facts.source})` : "";
   let packedNote = "";
 
@@ -11761,7 +11767,7 @@ async function selectPackageWithAi(body) {
     "- Small items (longest edge ≤ 42 in and ≤ 25 lb, or ≤ 24 in any weight under 50 lb) always get a parcel box — never Store Default just because product type says Living Room or Furniture.",
     "- Tapestries, throws, blankets, and thin textiles ship folded or rolled — use packed dimensions (~20–26 in longest edge), NOT flat wall-display width×height from the title.",
     "- Belts, scarves, and ties ship rolled/coiled in small parcel boxes — never Store Default under 50 lb.",
-    "- Books (hardcover, paperback, coffee-table books, book sets): ALWAYS Small Box – Small Bag or Flat Art / Print Mailer. NEVER any Artwork Box. A \"coffee table book\" is a book, not furniture.",
+    "- Books (hardcover, paperback, coffee-table books, book sets): ALWAYS Small Box – Small Bag or Flat Art / Print Mailer. NEVER any Artwork Box. A \"coffee table book\" is a book, not furniture. Ignore inventory weights over 6 lb for a single book — they are data errors; real books weigh 1-5 lb.",
     "",
     "Always Store Default (action leave_store_default, packageLabel \"Store Default\"):",
     "- Bulky furniture: sofas, sectionals, beds, dressers, armoires, dining tables, large desks, etc.",
@@ -11861,10 +11867,14 @@ async function selectPackageWithAi(body) {
       .filter((p) => isBookAllowedPackage(p))
       .sort((a, b) => (a.priceMin ?? Infinity) - (b.priceMin ?? Infinity));
     const itemSorted = shippingFacts.sorted;
+    const bookWeightLb =
+      shippingFacts.weightLb != null && shippingFacts.weightLb > BOOK_MAX_PLAUSIBLE_WEIGHT_LB
+        ? BOOK_MAX_PLAUSIBLE_WEIGHT_LB
+        : shippingFacts.weightLb;
     const replacement =
       bookOptions.find((p) => {
         const boxSorted = sortedPackageBoxDims(p);
-        return !itemSorted || (boxSorted && itemFitsBoxDims(itemSorted, boxSorted) && packageWeightOk(shippingFacts.weightLb, p));
+        return !itemSorted || (boxSorted && itemFitsBoxDims(itemSorted, boxSorted) && packageWeightOk(bookWeightLb, p));
       }) || bookOptions[0];
     if (replacement) {
       canonical = allowedLabels.find((label) => normalizeLabel(label) === normalizeLabel(replacement.shopifyLabel)) || replacement.shopifyLabel;
