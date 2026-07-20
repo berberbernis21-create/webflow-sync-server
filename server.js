@@ -11441,6 +11441,22 @@ function productLooksLikeFlatArtForShipping(body) {
   return false;
 }
 
+/** Books — ship in Small Box – Small Bag or Flat Art / Print Mailer, NEVER an Artwork Box. */
+function productLooksLikeBookForShipping(body) {
+  const text = `${body.title || ""} ${body.productType || ""} ${(body.tags || []).join(" ")} ${body.description || ""}`.toLowerCase();
+  if (/\b(book\s*ends?|bookends?)\b/.test(text)) return false;
+  return /\b(books?|hardcovers?|hardbacks?|paperbacks?|cookbooks?|guidebooks?|textbooks?|storybooks?|encyclopedias?|monographs?)\b/.test(text);
+}
+
+function isArtworkBoxPackage(pkg) {
+  return /\bartwork\s*box\b/i.test(String(pkg?.shopifyLabel || ""));
+}
+
+function isBookAllowedPackage(pkg) {
+  const label = String(pkg?.shopifyLabel || "").toLowerCase();
+  return /flat art|print mailer/.test(label) || /small box/.test(label);
+}
+
 /** Tapestries, throws, thin textiles — ship folded/rolled; display dimensions are not rigid parcel limits. */
 function productLooksLikeFoldableTextileForShipping(body) {
   const text = `${body.title || ""} ${body.productType || ""} ${(body.tags || []).join(" ")} ${body.description || ""}`.toLowerCase();
@@ -11531,6 +11547,8 @@ function productIsBulkyFurnitureForShipping(body, itemSorted, weightLb) {
   if (weightLb != null && weightLb > PACKAGE_MAX_PARCEL_WEIGHT_LB) return true;
   const text = `${body.title || ""} ${body.productType || ""} ${(body.tags || []).join(" ")}`.toLowerCase();
   if (titleIndicatesLightingFurniture(body?.title || "")) return false;
+  // "Coffee table book" is a book, not a coffee table.
+  if (productLooksLikeBookForShipping(body)) return false;
   if (productLooksLikeShippableHomeDecor(body)) return false;
   if (itemSorted && isParcelShippableBySize(itemSorted, weightLb) && !/\b(sofa|sectional|loveseat|sleeper|recliner|dresser|armoire|dining\s+table|coffee\s+table|console\s+table|desk|bed\b|headboard|bookcase|bookshelf|buffet|sideboard|hutch|credenza|china\s+cabinet|entertainment\s+center|file\s+cabinet|mattress|box\s+spring)\b/.test(text)) {
     return false;
@@ -11592,10 +11610,12 @@ function selectDeterministicShippingPackage(body, packages) {
 
   if (!itemSorted) return null;
 
-  const isFlatArt = itemSorted[2] <= 6 && productLooksLikeFlatArtForShipping(body);
+  const isBook = productLooksLikeBookForShipping(body);
+  const isFlatArt = !isBook && itemSorted[2] <= 6 && productLooksLikeFlatArtForShipping(body);
 
   const candidates = packages
     .filter((p) => !isStoreDefaultPackage(p))
+    .filter((p) => !(isBook && isArtworkBoxPackage(p)))
     .map((pkg) => ({ pkg, boxSorted: sortedPackageBoxDims(pkg) }))
     .filter((x) => x.boxSorted && packageWeightOk(weightLb, x.pkg))
     .filter((x) => {
@@ -11608,6 +11628,20 @@ function selectDeterministicShippingPackage(body, packages) {
       if (pa !== pb) return pa - pb;
       return boxFitSlack(itemSorted, a.boxSorted) - boxFitSlack(itemSorted, b.boxSorted);
     });
+
+  if (isBook) {
+    const bookPreferred = candidates.filter((x) => isBookAllowedPackage(x.pkg));
+    if (bookPreferred.length) {
+      const { pkg, boxSorted } = bookPreferred[0];
+      const label = String(pkg.shopifyLabel || "").trim();
+      return {
+        packageLabel: label,
+        confidence: "high",
+        action: "apply",
+        reason: `Book (${itemSorted.join("×")} in${dimNote}) → ${label} (${boxSorted.join("×")} in). Books ship in Small Box or Flat Art / Print Mailer, never an Artwork Box.${packedNote}`,
+      };
+    }
+  }
 
   if (!candidates.length) {
     if (weightLb != null && weightLb > PACKAGE_MAX_PARCEL_WEIGHT_LB) {
@@ -11727,6 +11761,7 @@ async function selectPackageWithAi(body) {
     "- Small items (longest edge ≤ 42 in and ≤ 25 lb, or ≤ 24 in any weight under 50 lb) always get a parcel box — never Store Default just because product type says Living Room or Furniture.",
     "- Tapestries, throws, blankets, and thin textiles ship folded or rolled — use packed dimensions (~20–26 in longest edge), NOT flat wall-display width×height from the title.",
     "- Belts, scarves, and ties ship rolled/coiled in small parcel boxes — never Store Default under 50 lb.",
+    "- Books (hardcover, paperback, coffee-table books, book sets): ALWAYS Small Box – Small Bag or Flat Art / Print Mailer. NEVER any Artwork Box. A \"coffee table book\" is a book, not furniture.",
     "",
     "Always Store Default (action leave_store_default, packageLabel \"Store Default\"):",
     "- Bulky furniture: sofas, sectionals, beds, dressers, armoires, dining tables, large desks, etc.",
@@ -11817,13 +11852,31 @@ async function selectPackageWithAi(body) {
     };
   }
 
-  const canonical = allowedLabels.find((label) => normalizeLabel(label) === normalizeLabel(packageLabel)) || packageLabel;
+  let canonical = allowedLabels.find((label) => normalizeLabel(label) === normalizeLabel(packageLabel)) || packageLabel;
+  let finalReason = reason;
+
+  // Hard rule: books never ship in an Artwork Box — remap to Small Box / Flat Art mailer.
+  if (productLooksLikeBookForShipping(shippingBodyResolved) && /\bartwork\s*box\b/i.test(canonical)) {
+    const bookOptions = packageCatalog
+      .filter((p) => isBookAllowedPackage(p))
+      .sort((a, b) => (a.priceMin ?? Infinity) - (b.priceMin ?? Infinity));
+    const itemSorted = shippingFacts.sorted;
+    const replacement =
+      bookOptions.find((p) => {
+        const boxSorted = sortedPackageBoxDims(p);
+        return !itemSorted || (boxSorted && itemFitsBoxDims(itemSorted, boxSorted) && packageWeightOk(shippingFacts.weightLb, p));
+      }) || bookOptions[0];
+    if (replacement) {
+      canonical = allowedLabels.find((label) => normalizeLabel(label) === normalizeLabel(replacement.shopifyLabel)) || replacement.shopifyLabel;
+      finalReason = `Book — remapped from an Artwork Box to ${canonical}. Books ship in Small Box or Flat Art / Print Mailer, never an Artwork Box.`;
+    }
+  }
 
   const llmResult = {
     packageLabel: canonical,
     confidence,
     action,
-    reason,
+    reason: finalReason,
     model,
   };
 
