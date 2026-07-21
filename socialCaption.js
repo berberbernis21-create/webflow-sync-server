@@ -1,6 +1,6 @@
 /**
  * POST /api/social-caption — Static IG/FB captions for Meta Business Suite extension.
- * Text-only from listing facts (name, price, dimensions, description). No image to OpenAI.
+ * Solo posts: listing text. Set posts (items[]): listing text + optional photos (URLs/base64) for vision.
  * Tuned to match Lost + Found's existing social voice: emojis, location tags, CTAs.
  */
 
@@ -157,6 +157,110 @@ const CAPTION_STYLES = [
 
 function pickCaptionStyle() {
   return CAPTION_STYLES[Math.floor(Math.random() * CAPTION_STYLES.length)];
+}
+
+function inferSocialItemType(text) {
+  const t = String(text || "").toLowerCase();
+  if (
+    /\b(earrings?|ear clips?|necklace|pendant|brooch|bracelet|bangle|ring|locket|cufflinks?|anklet|choker|cabochon|sterling silver|925 silver|14k|18k|gemstone|aventurine|carnelian|turquoise)\b/.test(
+      t
+    )
+  ) {
+    return "jewelry";
+  }
+  if (
+    /\b(handbag|purse|tote|crossbody|satchel|clutch|shoulder bag|wallet|hobo|bucket bag|top handle|minaudiere|pochette|backpack|briefcase|duffle|duffel|classic flap)\b/.test(
+      t
+    )
+  ) {
+    return "handbag";
+  }
+  return "other";
+}
+
+function buildItemAccuracyRules(itemType, sourceText) {
+  const sourceHasSeason = /\b(spring|summer|autumn|fall|winter)\b/i.test(sourceText);
+  return `ITEM ACCURACY OVERRIDES (higher priority than the selected style):
+- Detected product type: ${itemType}
+- The hook is the highest-priority sales line. Make it a KILLER 4-10 word hook: specific, confident, memorable, and rooted in one distinguishing item fact (material, stone, color, form, maker, scale, or design). Pair that fact with desire or impact. No generic "golden hour", "nature's elegance", "small scale, big impact", changing-seasons, morning-routine, or random lifestyle opening.
+- ${
+    sourceHasSeason
+      ? "Seasonal language is allowed only because the listing itself contains a season."
+      : "The listing contains no season. NEVER mention spring, summer, autumn, fall, winter, or imply a current season."
+  }
+- ${
+    itemType === "jewelry"
+      ? "This is JEWELRY. Use a jewelry-appropriate emoji such as 💎, ✨, 📿, or the product itself. NEVER use 👜, 👛, 💼, handbag, purse, tote, bag, or handbag-specific language."
+      : "Use only an emoji and product language matching the detected item."
+  }
+- ${
+    itemType === "jewelry" || itemType === "handbag"
+      ? "NEVER include a dimensions line or measurements. Sell what it is: brand/maker, material, stones, color, silhouette, construction, and distinctive design."
+      : "Include dimensions only when they help a buyer understand this item."
+  }
+- If a style instruction conflicts with these accuracy rules, these rules win.`;
+}
+
+function buildFallbackHook(itemType, sourceText) {
+  const t = String(sourceText || "").toLowerCase();
+  if (itemType === "jewelry") {
+    if (/\b(orchid|dogwood|flower|floral|leaf)\b/.test(t)) {
+      return "🌸 Golden botanicals with statement-making power.";
+    }
+    if (/\bsigned\b/.test(t)) {
+      return "💎 Signed detail with collector-level presence.";
+    }
+    if (/\b(14k|18k|gold)\b/.test(t)) {
+      return "✨ Real gold, impossible-to-ignore detail.";
+    }
+    if (/\b(turquoise|aventurine|carnelian|aquamarine|amber|opal|gemstone)\b/.test(t)) {
+      return "💎 Natural color that refuses to whisper.";
+    }
+    if (/\b(earrings?|ear clips?)\b/.test(t)) {
+      return "✨ Face-framing detail with instant impact.";
+    }
+    return "💎 Jewelry with undeniable point of view.";
+  }
+  if (/\b(art|artwork|painting|print|canvas)\b/.test(t)) {
+    return "🖼️ The wall just found its focal point.";
+  }
+  return "✨ The detail that transforms the whole room.";
+}
+
+function enforceItemAccurateOpening(caption, itemType, sourceText) {
+  let lines = String(caption || "").split(/\r?\n/);
+  if (itemType === "jewelry" || itemType === "handbag") {
+    lines = lines.filter(
+      (line) =>
+        !/^\s*📐/.test(line) &&
+        !/^\s*(?:dimensions?|measurements?|size)\s*:/i.test(line) &&
+        !/\b\d+(?:\.\d+)?\s*(?:"|in\b|inches?)\s*[x×]\s*\d/i.test(line)
+    );
+  }
+  const originalFirstIndex = lines.findIndex((line) => line.trim());
+  const originalFirst = originalFirstIndex >= 0 ? lines[originalFirstIndex] : "";
+  if (itemType === "jewelry") {
+    lines = lines.map((line) => line.replace(/[👜👛💼]/gu, "💎"));
+  }
+
+  const sourceHasSeason = /\b(spring|summer|autumn|fall|winter)\b/i.test(sourceText);
+  const firstIndex = lines.findIndex((line) => line.trim());
+  if (firstIndex < 0) return lines.join("\n");
+
+  const first = lines[firstIndex];
+  const wrongType =
+    itemType === "jewelry" &&
+    /\b(handbag|purse|tote|satchel|crossbody|bag)\b|[👜👛💼]/i.test(originalFirst || first);
+  const inventedSeason =
+    !sourceHasSeason && /\b(spring|summer|autumn|fall|winter)\b/i.test(first);
+  const genericJewelryHook =
+    itemType === "jewelry" &&
+    /\b(golden hour|nature'?s elegance|all that'?s needed|changing seasons?|small scale)\b/i.test(first);
+
+  if (wrongType || inventedSeason || genericJewelryHook) {
+    lines[firstIndex] = buildFallbackHook(itemType, sourceText);
+  }
+  return lines.join("\n");
 }
 
 const LOCATION_EXAMPLES_LUXURY = `LOCATION LINE EXAMPLES (ALWAYS include @lostandfoundresale — vary phrasing):
@@ -427,6 +531,34 @@ const PRODUCT_FOCUS_RULES = `PRODUCT-FIRST RULE (MOST IMPORTANT):
 - Price and dimensions support the story; they are not the story
 - Every caption should feel written for THIS SKU only`;
 
+const SET_CAPTION_RULES = `SET / MULTI-ITEM POST (CRITICAL):
+You are writing ONE caption for a curated GROUP of products in a single Meta post (carousel / multi-photo).
+
+VOICE:
+- Speak to the collection as a whole first — how the pieces work together, the vibe, the room story
+- Then list each piece cleanly so shoppers can shop/tag every item
+- Mixed categories (glasses + bowls + accessories, lamps + tables, etc.) must FLOW — find the shared taste thread (material, era, color, use, hostess moment, tablescape) instead of a random dump
+- Prefer language like "a set that…" / "these pieces…" / "pairing…" — never sound like 3 separate posts glued together
+
+MANDATORY LAYOUT (blank line between sections — NO hashtags in caption):
+1) TAGLINE / HOOK — one scroll-stopping line about the SET vibe
+2) SHORT INTRO — 1-2 sentences on why these belong together
+3) ITEM ROSTER — one compact line per item, in order. Format:
+   ✨ Item full title — 💰 $price — 📐 dims (omit 📐 if none; omit 💰 if no price)
+   Keep each roster line to ONE line
+4) SHARED BODY — 1 short paragraph selling the group without repeating every title
+5) Perfect for: — 2-4 bullets with "-"
+6) LOCATION 📍 — one Scottsdale line (vary wording)
+7) CTA — shop this post / tap to shop, then lostandfoundresale.com (handbags URL for luxury)
+
+RULES:
+- Include EVERY item's real name and price from PRODUCT CONTEXT — never invent or skip
+- Do NOT overwhelm: no long per-item feature essays; roster stays tight
+- Do NOT write a full solo-product layout for each piece
+- If 4+ items, keep intro + body shorter so the roster stays scannable
+- Same hard bans (no markdown, no em dashes, no hashtags in caption)
+- Exactly 5 hashtags in the JSON array only`;
+
 export function registerSocialCaptionRoute(app, { log } = {}) {
   const webflowLog =
     typeof log === "function"
@@ -447,12 +579,45 @@ export function registerSocialCaptionRoute(app, { log } = {}) {
       body.division === "luxury_handbags" ? "luxury_handbags" : "resale_interiors";
     const frame = body.frame != null ? String(body.frame || "").trim() : "";
     const intent = body.intent != null ? String(body.intent || "").trim() : "";
-    const itemName = String(body.itemName || body.title || "").trim();
+    const rawItems = Array.isArray(body.items) ? body.items : [];
+    const setItems = rawItems
+      .map((it, idx) => {
+        const listingObj = it?.listing && typeof it.listing === "object" ? it.listing : {};
+        const featured =
+          it?.featuredImage && typeof it.featuredImage === "object" ? it.featuredImage : {};
+        const name = String(it?.itemName || listingObj.title || "").trim();
+        if (!name) return null;
+        const imageUrl = String(
+          it?.imageUrl || featured.url || listingObj.imageUrl || ""
+        ).trim();
+        const imageBase64 = String(it?.imageBase64 || featured.base64 || "").trim();
+        const mime = String(it?.mime || featured.mime || "image/jpeg").trim() || "image/jpeg";
+        return {
+          index: idx + 1,
+          itemName: name,
+          imageUrl,
+          imageBase64,
+          mime,
+          listing: {
+            title: String(listingObj.title || name).trim(),
+            price: String(listingObj.price || "").trim(),
+            dimensions: String(listingObj.dimensions || "").trim(),
+            description: sanitizeListingTextForCaption(listingObj.description || ""),
+            productUrl: String(listingObj.productUrl || "").trim(),
+            vertical: String(listingObj.vertical || "").trim(),
+          },
+        };
+      })
+      .filter(Boolean)
+      .slice(0, 10);
+    const isSetPost = setItems.length >= 2;
+
+    const itemName = String(body.itemName || body.title || setItems[0]?.itemName || "").trim();
     const input = String(body.input || "").trim().slice(0, 2500);
     const listing = body.listing && typeof body.listing === "object" ? body.listing : {};
     const model = String(process.env.OPENAI_SOCIAL_MODEL || "gpt-4o").trim();
 
-    if (!itemName && !input && !listing.title && !listing.description) {
+    if (!isSetPost && !itemName && !input && !listing.title && !listing.description) {
       return res.status(400).json({
         error: "Provide itemName and listing context (title, price, dimensions, description).",
       });
@@ -460,27 +625,128 @@ export function registerSocialCaptionRoute(app, { log } = {}) {
 
     const cleanDescription = sanitizeListingTextForCaption(listing.description || "");
     const cleanInput = sanitizeListingTextForCaption(input);
+    const itemSourceText = isSetPost
+      ? setItems
+          .map((it) =>
+            [it.listing.title, it.itemName, it.listing.vertical, it.listing.description]
+              .filter(Boolean)
+              .join(" ")
+          )
+          .join("\n")
+      : [listing.title, itemName, listing.vertical, cleanDescription, cleanInput]
+          .filter(Boolean)
+          .join(" ");
+    const detectedItemType = inferSocialItemType(itemSourceText);
 
-    const listingBits = [
-      `Item name: ${listing.title || itemName || ""}`,
-      listing.price ? `Price: ${listing.price}` : "",
-      listing.dimensions ? `Dimensions: ${listing.dimensions}` : "",
-      listing.productUrl ? `Product URL: ${listing.productUrl}` : "",
-      listing.vertical ? `Vertical: ${listing.vertical}` : "",
-      cleanDescription
-        ? `Listing description (PRIMARY SOURCE for the caption — what the item is, look, feel, use):\n${cleanDescription.slice(
-            0,
-            2800
-          )}`
-        : "",
-      cleanInput ? `Staff notes / extra context:\n${cleanInput.slice(0, 2500)}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n");
+    const listingBits = isSetPost
+      ? [
+          `SET SIZE: ${setItems.length} items`,
+          ...setItems.map((it) =>
+            [
+              `--- ITEM ${it.index} ---`,
+              `Item name: ${it.listing.title || it.itemName}`,
+              it.listing.price ? `Price: ${it.listing.price}` : "",
+              it.listing.dimensions ? `Dimensions: ${it.listing.dimensions}` : "",
+              it.listing.productUrl ? `Product URL: ${it.listing.productUrl}` : "",
+              it.listing.vertical ? `Vertical: ${it.listing.vertical}` : "",
+              it.listing.description
+                ? `Listing description:\n${it.listing.description.slice(0, 1200)}`
+                : "",
+            ]
+              .filter(Boolean)
+              .join("\n")
+          ),
+          cleanInput ? `Staff notes / extra context:\n${cleanInput.slice(0, 1500)}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n\n")
+      : [
+          `Item name: ${listing.title || itemName || ""}`,
+          listing.price ? `Price: ${listing.price}` : "",
+          listing.dimensions ? `Dimensions: ${listing.dimensions}` : "",
+          listing.productUrl ? `Product URL: ${listing.productUrl}` : "",
+          listing.vertical ? `Vertical: ${listing.vertical}` : "",
+          cleanDescription
+            ? `Listing description (PRIMARY SOURCE for the caption — what the item is, look, feel, use):\n${cleanDescription.slice(
+                0,
+                2800
+              )}`
+            : "",
+          cleanInput ? `Staff notes / extra context:\n${cleanInput.slice(0, 2500)}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n");
 
     const style = pickCaptionStyle();
 
-    const textPrompt = `${getBasePrompt(division)}
+    const resolveSetImageUrl = (it) => {
+      const url = String(it?.imageUrl || "").trim();
+      if (/^https?:\/\//i.test(url)) return url;
+      const b64 = String(it?.imageBase64 || "").trim();
+      if (!b64) return "";
+      const raw = b64.includes(",") ? b64.split(",").pop() : b64;
+      if (raw.length > 700000) return "";
+      const mime = String(it?.mime || "image/jpeg").trim() || "image/jpeg";
+      return `data:${mime};base64,${raw}`;
+    };
+
+    const setImageParts = [];
+    if (isSetPost) {
+      for (const it of setItems) {
+        const imgUrl = resolveSetImageUrl(it);
+        if (!imgUrl) continue;
+        setImageParts.push({
+          type: "text",
+          text: `PHOTO FOR ITEM ${it.index}: ${it.listing.title || it.itemName}`,
+        });
+        setImageParts.push({
+          type: "image_url",
+          image_url: { url: imgUrl, detail: "low" },
+        });
+      }
+    }
+
+    const textPrompt = isSetPost
+      ? `${getBasePrompt(division)}
+
+${getFrameBlock(frame)}
+
+${getIntentBlock(intent)}
+
+${style.text}
+
+${SET_CAPTION_RULES}
+
+${SHIPPING_CAPTION_RULES}
+
+VARIETY RULES:
+- Commit to STYLE FOR THIS POST
+- Never reuse the same tagline/location/CTA defaults
+- Say we ship everywhere (never "most pieces")
+- Hashtags ONLY in JSON hashtags array
+
+MEDIA TYPE: static multi-item Meta post. Photos are attached BELOW in ITEM order (photo 1 = ITEM 1, etc.).
+Use the images to make the set feel cohesive (shared material, color, era, scale, vibe) — still never invent facts not in PRODUCT CONTEXT.
+
+TASK:
+1) Read every item in PRODUCT CONTEXT and look at every photo below.
+2) Write ONE cohesive set caption that flows across mixed categories.
+3) Roster must include every item name + price (+ dims when present).
+4) Keep it scannable — desire first, details tight, never overwhelming.
+5) Exactly 5 hashtags in hashtags array; ZERO hashtags in caption.
+6) Never use em/en dashes — only hyphens or commas.
+
+Return JSON:
+{
+  "caption": "full caption with real newline characters — NO hashtags",
+  "hashtags": ["#one", "#two", "#three", "#four", "#five"],
+  "item_type": "set",
+  "reasoning": "one short sentence"
+}
+
+PRODUCT CONTEXT:
+${listingBits}`
+      : `${getBasePrompt(division)}
 
 ${getFrameBlock(frame)}
 
@@ -491,6 +757,8 @@ ${style.text}
 ${PRODUCT_FOCUS_RULES}
 
 ${SHIPPING_CAPTION_RULES}
+
+${buildItemAccuracyRules(detectedItemType, itemSourceText)}
 
 VARIETY RULES (CRITICAL — posts must NOT sound alike):
 - Commit fully to the STYLE FOR THIS POST personality above
@@ -525,6 +793,11 @@ Return JSON:
 PRODUCT CONTEXT:
 ${listingBits}`;
 
+    const userContent =
+      isSetPost && setImageParts.length
+        ? [{ type: "text", text: textPrompt }, ...setImageParts]
+        : textPrompt;
+
     try {
       const resp = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
@@ -534,16 +807,17 @@ ${listingBits}`;
         },
         body: JSON.stringify({
           model,
-          temperature: 1.05,
-          max_tokens: 2200,
+          temperature: isSetPost ? 0.95 : 1.05,
+          max_tokens: isSetPost ? 2800 : 2200,
           response_format: { type: "json_object" },
           messages: [
             {
               role: "system",
-              content:
-                "You are Lost & Found Resale's elite social caption writer - the one who makes people stop scrolling and want the piece. You have RANGE: natural, minimal, funky, editorial, storyteller, bold, or curator. Always keep the mandatory layout (tagline, title, PRICE right after title then dims, features, hungry sell body, Perfect for, location, CTA). Commit hard to the assigned style so no two posts sound alike. Say we ship everywhere (never 'most pieces'). Local delivery is $95/hr same rate no matter size or item count. Hashtags ONLY in the JSON hashtags array. NEVER use em/en dashes - only hyphens or commas. Sell hard, stay honest, make it amazing. No markdown. Return valid JSON only.",
+              content: isSetPost
+                ? "You are Lost & Found Resale's elite social caption writer for multi-item set posts. You receive listing facts AND photos in the same order as the items. Write one cohesive caption for the whole group, then a tight roster of every item with name and price. Mixed categories must flow. Never overwhelm. Hashtags ONLY in the JSON hashtags array. NEVER use em/en dashes. No markdown. Return valid JSON only."
+                : "You are Lost & Found Resale's elite social caption writer - the one who makes people stop scrolling and want the piece. You have RANGE: natural, minimal, funky, editorial, storyteller, bold, or curator. Always keep the mandatory layout (tagline, title, PRICE right after title then dims, features, hungry sell body, Perfect for, location, CTA). Commit hard to the assigned style so no two posts sound alike. Say we ship everywhere (never 'most pieces'). Local delivery is $95/hr same rate no matter size or item count. Hashtags ONLY in the JSON hashtags array. NEVER use em/en dashes - only hyphens or commas. Sell hard, stay honest, make it amazing. No markdown. Return valid JSON only.",
             },
-            { role: "user", content: textPrompt },
+            { role: "user", content: userContent },
           ],
         }),
       });
@@ -580,13 +854,22 @@ ${listingBits}`;
         return res.status(502).json({ error: "OpenAI content was not valid JSON" });
       }
 
-      const caption = ensurePriceAboveDimensions(
+      const captionRaw = ensurePriceAboveDimensions(
         stripEmDashes(stripHashtagsFromCaption(String(parsed.caption || "").replace(/\s+$/g, "")))
       );
-      const hashtags = ensureHashtags(parsed.hashtags, {
-        title: listing?.title || itemName || "",
-        vertical: listing?.vertical || "",
-      }, division);
+      const caption = isSetPost
+        ? captionRaw
+        : enforceItemAccurateOpening(captionRaw, detectedItemType, itemSourceText);
+      const hashtags = ensureHashtags(
+        parsed.hashtags,
+        {
+          title: isSetPost
+            ? setItems.map((it) => it.listing.title).join(" ")
+            : listing?.title || itemName || "",
+          vertical: listing?.vertical || "",
+        },
+        division
+      );
       if (!caption) {
         return res.status(502).json({ error: "Empty caption from model" });
       }
@@ -597,19 +880,23 @@ ${listingBits}`;
         division,
         frame: frame || "data_led",
         style: style.id,
-        textOnly: true,
+        textOnly: !(isSetPost && setImageParts.length),
+        imageCount: isSetPost ? setImageParts.filter((p) => p.type === "image_url").length : 0,
+        setSize: isSetPost ? setItems.length : 1,
         captionLen: caption.length,
       });
 
-      const fullText = hashtags ? `${caption}\n\n${hashtags}` : caption;
+      const fullText = hashtags
+        ? `${caption.replace(/\n{2,}$/g, "").trimEnd()}\n\n${hashtags}`
+        : caption;
       return res.json({
         success: true,
         model,
         caption,
         hashtags,
-        // Hashtags once, at the end only
         fullText,
-        // Never leak the raw model caption (often had leading hashtags).
+        setSize: isSetPost ? setItems.length : 1,
+        imageCount: isSetPost ? setImageParts.filter((p) => p.type === "image_url").length : 0,
         content: { ...parsed, caption, hashtags: parsed.hashtags, fullText },
       });
     } catch (err) {
