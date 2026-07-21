@@ -534,30 +534,112 @@ const PRODUCT_FOCUS_RULES = `PRODUCT-FIRST RULE (MOST IMPORTANT):
 const SET_CAPTION_RULES = `SET / MULTI-ITEM POST (CRITICAL):
 You are writing ONE caption for a curated GROUP of products in a single Meta post (carousel / multi-photo).
 
+COUNT LANGUAGE (HARD RULE):
+- SET SIZE is given in PRODUCT CONTEXT — match it exactly in the hook
+- 2 items → pair / duo / these two (NEVER trio, quartet, "set of 4")
+- 3 items → trio / these three (NEVER pair, duo, quartet)
+- 4 items → quartet / set of four / these four (NEVER trio)
+- 5+ items → collection / set of N / these N pieces (NEVER trio unless N is 3)
+- Wrong count words make the caption look broken — double-check before you write the tagline
+
 VOICE:
 - Speak to the collection as a whole first — how the pieces work together, the vibe, the room story
-- Then list each piece cleanly so shoppers can shop/tag every item
+- Then list each piece cleanly so shoppers can find every tagged item
 - Mixed categories (glasses + bowls + accessories, lamps + tables, etc.) must FLOW — find the shared taste thread (material, era, color, use, hostess moment, tablescape) instead of a random dump
 - Prefer language like "a set that…" / "these pieces…" / "pairing…" — never sound like 3 separate posts glued together
 
 MANDATORY LAYOUT (blank line between sections — NO hashtags in caption):
-1) TAGLINE / HOOK — one scroll-stopping line about the SET vibe
+1) TAGLINE / HOOK — one scroll-stopping line about the SET vibe (count-accurate)
 2) SHORT INTRO — 1-2 sentences on why these belong together
 3) ITEM ROSTER — one compact line per item, in order. Format:
-   ✨ Item full title — 💰 $price — 📐 dims (omit 📐 if none; omit 💰 if no price)
+   ✨ Item full title - 💰 $price - 📐 dims (omit 📐 if none; omit 💰 if no price)
    Keep each roster line to ONE line
 4) SHARED BODY — 1 short paragraph selling the group without repeating every title
 5) Perfect for: — 2-4 bullets with "-"
 6) LOCATION 📍 — one Scottsdale line (vary wording)
-7) CTA — shop this post / tap to shop, then lostandfoundresale.com (handbags URL for luxury)
+7) CTA / CONVERSATION — ONLY at the very end (after Location). Keep it clean. Never mid-caption.
+
+MULTI-PHOTO CTA (INSTAGRAM BUG — HARD BAN):
+- Instagram does NOT reliably show a "shop this post" banner on multi-image carousels
+- NEVER say: "Shop this post" / "shop this post" / "Tap to shop this post" / "Shop the post"
+- Instead rotate soft CTAs like:
+  - 👉 Shop this store right here
+  - 👉 Visit us online at lostandfoundresale.com (or lostandfoundhandbags.com for luxury)
+  - 👉 Visit us in store in Scottsdale
+  - 👉 Come see these pieces on the floor
+- Then one line: For store details, consigning with us, our policies & more: [correct site URL]
+- Furniture/resale → lostandfoundresale.com | Luxury handbags → lostandfoundhandbags.com
 
 RULES:
 - Include EVERY item's real name and price from PRODUCT CONTEXT — never invent or skip
 - Do NOT overwhelm: no long per-item feature essays; roster stays tight
 - Do NOT write a full solo-product layout for each piece
 - If 4+ items, keep intro + body shorter so the roster stays scannable
+- Keep conversation + CTA at the END only — clean closer, not scattered asks
 - Same hard bans (no markdown, no em dashes, no hashtags in caption)
 - Exactly 5 hashtags in the JSON array only`;
+
+/**
+ * Multi-photo IG bug: never ship "Shop this post". Soften to store / online / in-store.
+ * Also fix obvious wrong group-count words in the opening lines.
+ */
+function enforceSetCaptionHygiene(caption, setSize, division = "resale_interiors") {
+  let t = String(caption || "");
+  const n = Math.max(0, Number(setSize) || 0);
+  const site =
+    division === "luxury_handbags" ? "lostandfoundhandbags.com" : "lostandfoundresale.com";
+  const brandOnline =
+    division === "luxury_handbags" ? "Lost & Found Handbags" : "Lost & Found Resale";
+
+  // Count nouns in the first few non-empty lines only (hook / intro).
+  const lines = t.split(/\n/);
+  let touched = 0;
+  for (let i = 0; i < lines.length && touched < 3; i += 1) {
+    if (!String(lines[i] || "").trim()) continue;
+    let line = lines[i];
+    if (n !== 3) {
+      line = line.replace(/\btrios?\b/gi, n === 2 ? "pair" : n === 4 ? "quartet" : "collection");
+    }
+    if (n !== 2) {
+      line = line.replace(/\bduos?\b/gi, n === 3 ? "trio" : n === 4 ? "quartet" : "collection");
+    }
+    if (n !== 4) {
+      line = line.replace(/\bquartets?\b/gi, n === 2 ? "pair" : n === 3 ? "trio" : "collection");
+    }
+    if (n === 4) {
+      line = line.replace(/\bsets? of three\b/gi, "set of four");
+      line = line.replace(/\bthese three\b/gi, "these four");
+    }
+    if (n === 2) {
+      line = line.replace(/\bsets? of (?:three|four|3|4)\b/gi, "pair");
+      line = line.replace(/\bthese (?:three|four)\b/gi, "these two");
+    }
+    if (line !== lines[i]) touched += 1;
+    lines[i] = line;
+  }
+  t = lines.join("\n");
+
+  // Kill "shop this post" language for multi-image captions.
+  t = t
+    .replace(/👉\s*Tap to shop this post\.?/gi, "👉 Shop this store right here")
+    .replace(/👉\s*Shop this post\.?/gi, "👉 Shop this store right here")
+    .replace(/👉\s*Shop the post\.?/gi, "👉 Shop this store right here")
+    .replace(/\bTap to shop this post\b/gi, `Visit us online at ${brandOnline}`)
+    .replace(/\bShop this post\b/gi, "Shop this store right here")
+    .replace(/\bshop this post\b/gi, "shop this store right here")
+    .replace(/\bShop the post\b/gi, "Visit us in store")
+    .replace(/\bshop the post\b/gi, "visit us in store");
+
+  // If a soft CTA remains but the site URL vanished, append a clean closer line once.
+  if (
+    /shop this store right here|visit us online|visit us in store/i.test(t) &&
+    !new RegExp(site.replace(/\./g, "\\."), "i").test(t)
+  ) {
+    t = `${t.replace(/\s+$/g, "")}\n\nFor store details, consigning with us, our policies & more: ${site}`;
+  }
+
+  return t.replace(/\n{3,}/g, "\n\n").trim();
+}
 
 export function registerSocialCaptionRoute(app, { log } = {}) {
   const webflowLog =
@@ -730,11 +812,13 @@ Use the images to make the set feel cohesive (shared material, color, era, scale
 
 TASK:
 1) Read every item in PRODUCT CONTEXT and look at every photo below.
-2) Write ONE cohesive set caption that flows across mixed categories.
-3) Roster must include every item name + price (+ dims when present).
-4) Keep it scannable — desire first, details tight, never overwhelming.
-5) Exactly 5 hashtags in hashtags array; ZERO hashtags in caption.
-6) Never use em/en dashes — only hyphens or commas.
+2) SET SIZE is ${setItems.length} — use count-accurate language (never call ${setItems.length} items a trio unless size is 3).
+3) Write ONE cohesive set caption that flows across mixed categories.
+4) Roster must include every item name + price (+ dims when present).
+5) Keep it scannable — desire first, details tight, never overwhelming.
+6) CTA / conversation ONLY at the end. Because this is a MULTI-PHOTO post, NEVER say "Shop this post" (Instagram shop-banner bug). Use "Shop this store right here" / "Visit us online" / "Visit us in store" instead.
+7) Exactly 5 hashtags in hashtags array; ZERO hashtags in caption.
+8) Never use em/en dashes — only hyphens or commas.
 
 Return JSON:
 {
@@ -814,7 +898,7 @@ ${listingBits}`;
             {
               role: "system",
               content: isSetPost
-                ? "You are Lost & Found Resale's elite social caption writer for multi-item set posts. You receive listing facts AND photos in the same order as the items. Write one cohesive caption for the whole group, then a tight roster of every item with name and price. Mixed categories must flow. Never overwhelm. Hashtags ONLY in the JSON hashtags array. NEVER use em/en dashes. No markdown. Return valid JSON only."
+                ? `You are Lost & Found Resale's elite social caption writer for multi-item set posts. You receive listing facts AND photos in the same order as the items. Write one cohesive caption for the whole group, then a tight roster of every item with name and price. Match SET SIZE exactly in the hook (never say trio for 4 items). Mixed categories must flow. Never overwhelm. CTA/conversation only at the end. NEVER say "Shop this post" on multi-photo captions (Instagram shop-banner bug) — use visit us online / visit us in store / shop this store right here. Hashtags ONLY in the JSON hashtags array. NEVER use em/en dashes. No markdown. Return valid JSON only.`
                 : "You are Lost & Found Resale's elite social caption writer - the one who makes people stop scrolling and want the piece. You have RANGE: natural, minimal, funky, editorial, storyteller, bold, or curator. Always keep the mandatory layout (tagline, title, PRICE right after title then dims, features, hungry sell body, Perfect for, location, CTA). Commit hard to the assigned style so no two posts sound alike. Say we ship everywhere (never 'most pieces'). Local delivery is $95/hr same rate no matter size or item count. Hashtags ONLY in the JSON hashtags array. NEVER use em/en dashes - only hyphens or commas. Sell hard, stay honest, make it amazing. No markdown. Return valid JSON only.",
             },
             { role: "user", content: userContent },
@@ -858,7 +942,7 @@ ${listingBits}`;
         stripEmDashes(stripHashtagsFromCaption(String(parsed.caption || "").replace(/\s+$/g, "")))
       );
       const caption = isSetPost
-        ? captionRaw
+        ? enforceSetCaptionHygiene(captionRaw, setItems.length, division)
         : enforceItemAccurateOpening(captionRaw, detectedItemType, itemSourceText);
       const hashtags = ensureHashtags(
         parsed.hashtags,
