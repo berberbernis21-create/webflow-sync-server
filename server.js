@@ -291,7 +291,23 @@ function getGoogleMerchantConfig() {
     svc?.private_key ||
     "";
   const privateKey = String(privateKeyRaw || "").replace(/\\n/g, "\n").trim();
-  return { merchantId, clientEmail, privateKey };
+  const dataSourceRaw = String(process.env.GOOGLE_MERCHANT_DATA_SOURCE || "").trim();
+  let dataSource = "";
+  if (dataSourceRaw) {
+    if (dataSourceRaw.startsWith("accounts/")) {
+      dataSource = dataSourceRaw;
+    } else if (merchantId) {
+      dataSource = `accounts/${merchantId}/dataSources/${dataSourceRaw}`;
+    } else {
+      dataSource = dataSourceRaw;
+    }
+  }
+  // "merchant" (default) = Merchant API products/v1; "content" = legacy Content API v2.1 rollback.
+  const apiMode =
+    String(process.env.GOOGLE_MERCHANT_API || "merchant").trim().toLowerCase() === "content"
+      ? "content"
+      : "merchant";
+  return { merchantId, clientEmail, privateKey, dataSource, apiMode };
 }
 
 function toBase64Url(jsonObj) {
@@ -10459,13 +10475,127 @@ async function buildGoogleFurnitureProductFromShopify(product, availability = "i
   return out;
 }
 
+function toMerchantApiAvailability(availability) {
+  const a = String(availability || "").trim().toLowerCase();
+  if (a === "out of stock" || a === "out_of_stock" || a === "outofstock") return "OUT_OF_STOCK";
+  if (a === "preorder" || a === "pre_order") return "PREORDER";
+  if (a === "backorder" || a === "back_order") return "BACKORDER";
+  return "IN_STOCK";
+}
+
+function toMerchantApiCondition(condition) {
+  const c = String(condition || "").trim().toLowerCase();
+  if (c === "new") return "NEW";
+  if (c === "refurbished") return "REFURBISHED";
+  return "USED";
+}
+
+function toMerchantApiPrice(price) {
+  const currencyCode = String(price?.currency || price?.currencyCode || "USD").trim() || "USD";
+  const dollars = Number(price?.value ?? price?.amount ?? NaN);
+  if (!Number.isFinite(dollars)) return null;
+  const amountMicros = String(Math.round(dollars * 1_000_000));
+  return { amountMicros, currencyCode };
+}
+
+function toMerchantApiMeasure(measure) {
+  if (!measure) return null;
+  const value = Number(measure.value);
+  const unit = String(measure.unit || "").trim();
+  if (!Number.isFinite(value) || !unit) return null;
+  return { value, unit };
+}
+
+/** Convert Content-API-shaped furniture payload → Merchant API ProductInput. */
+function toMerchantApiProductInput(payload) {
+  const contentLanguage =
+    String(payload?.contentLanguage || process.env.GOOGLE_MERCHANT_CONTENT_LANGUAGE || "en").trim() ||
+    "en";
+  const feedLabel =
+    String(
+      payload?.feedLabel ||
+        payload?.targetCountry ||
+        process.env.GOOGLE_MERCHANT_TARGET_COUNTRY ||
+        "US"
+    )
+      .trim()
+      .toUpperCase() || "US";
+  const offerId = String(payload?.offerId || "").trim();
+  const productAttributes = {
+    title: String(payload?.title || "").trim(),
+    description: String(payload?.description || "").trim(),
+    link: payload?.link || undefined,
+    imageLink: payload?.imageLink || undefined,
+    additionalImageLinks: Array.isArray(payload?.additionalImageLinks)
+      ? payload.additionalImageLinks.filter(Boolean)
+      : undefined,
+    availability: toMerchantApiAvailability(payload?.availability),
+    condition: toMerchantApiCondition(payload?.condition),
+    brand: String(payload?.brand || "").trim() || undefined,
+    identifierExists: payload?.identifierExists === false ? false : undefined,
+    googleProductCategory: payload?.googleProductCategory
+      ? String(payload.googleProductCategory)
+      : undefined,
+  };
+  const price = toMerchantApiPrice(payload?.price);
+  if (price) productAttributes.price = price;
+  const shippingWeight = toMerchantApiMeasure(payload?.shippingWeight);
+  if (shippingWeight) productAttributes.shippingWeight = shippingWeight;
+  const shippingWidth = toMerchantApiMeasure(payload?.shippingWidth);
+  if (shippingWidth) productAttributes.shippingWidth = shippingWidth;
+  const shippingLength = toMerchantApiMeasure(payload?.shippingLength);
+  if (shippingLength) productAttributes.shippingLength = shippingLength;
+  const shippingHeight = toMerchantApiMeasure(payload?.shippingHeight);
+  if (shippingHeight) productAttributes.shippingHeight = shippingHeight;
+  // Drop empty arrays / undefined keys for a cleaner request body.
+  for (const key of Object.keys(productAttributes)) {
+    const v = productAttributes[key];
+    if (v === undefined || v === null || v === "") delete productAttributes[key];
+    if (Array.isArray(v) && v.length === 0) delete productAttributes[key];
+  }
+  return { offerId, contentLanguage, feedLabel, productAttributes };
+}
+
+function encodeMerchantProductInputId(contentLanguage, feedLabel, offerId) {
+  const plain = `${contentLanguage}~${feedLabel}~${offerId}`;
+  // Prefer base64url when offerId/path could confuse URL parsing.
+  if (/[/%~]/.test(String(offerId || ""))) {
+    return Buffer.from(plain, "utf8")
+      .toString("base64")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_")
+      .replace(/=+$/g, "");
+  }
+  return plain;
+}
+
 async function googleMerchantInsertProduct(payload) {
   const cfg = getGoogleMerchantConfig();
   if (!cfg.merchantId) throw new Error("GOOGLE_MERCHANT_ID missing");
   const token = await getGoogleMerchantAccessToken();
   if (!token) throw new Error("google merchant auth unavailable");
-  const url = `https://shoppingcontent.googleapis.com/content/v2.1/${encodeURIComponent(cfg.merchantId)}/products`;
-  return axios.post(url, payload, {
+
+  if (cfg.apiMode === "content") {
+    const url = `https://shoppingcontent.googleapis.com/content/v2.1/${encodeURIComponent(
+      cfg.merchantId
+    )}/products`;
+    return axios.post(url, payload, {
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      timeout: 30000,
+    });
+  }
+
+  if (!cfg.dataSource) {
+    throw new Error(
+      "GOOGLE_MERCHANT_DATA_SOURCE missing (API primary data source id or accounts/{id}/dataSources/{id})"
+    );
+  }
+  const body = toMerchantApiProductInput(payload);
+  const url = `https://merchantapi.googleapis.com/products/v1/accounts/${encodeURIComponent(
+    cfg.merchantId
+  )}/productInputs:insert`;
+  return axios.post(url, body, {
+    params: { dataSource: cfg.dataSource },
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     timeout: 30000,
   });
@@ -10709,16 +10839,47 @@ async function deleteGoogleMerchantFurnitureByOfferId(offerId, reason = "delete"
     const token = await getGoogleMerchantAccessToken();
     if (!token) return false;
     const lang = String(process.env.GOOGLE_MERCHANT_CONTENT_LANGUAGE || "en").trim() || "en";
-    const country = String(process.env.GOOGLE_MERCHANT_TARGET_COUNTRY || "US").trim() || "US";
-    const productId = `online:${lang}:${country}:${oid}`;
-    const url = `https://shoppingcontent.googleapis.com/content/v2.1/${encodeURIComponent(
-      cfg.merchantId
-    )}/products/${encodeURIComponent(productId)}`;
+    const country =
+      String(process.env.GOOGLE_MERCHANT_TARGET_COUNTRY || "US").trim().toUpperCase() || "US";
+
+    let productId;
+    let url;
+    let params;
+    if (cfg.apiMode === "content") {
+      productId = `online:${lang}:${country}:${oid}`;
+      url = `https://shoppingcontent.googleapis.com/content/v2.1/${encodeURIComponent(
+        cfg.merchantId
+      )}/products/${encodeURIComponent(productId)}`;
+      params = undefined;
+    } else {
+      if (!cfg.dataSource) {
+        webflowLog("error", {
+          event: "google_merchant.delete_failed",
+          reason,
+          offerId: oid,
+          message: "GOOGLE_MERCHANT_DATA_SOURCE missing",
+        });
+        return false;
+      }
+      productId = encodeMerchantProductInputId(lang, country, oid);
+      url = `https://merchantapi.googleapis.com/products/v1/accounts/${encodeURIComponent(
+        cfg.merchantId
+      )}/productInputs/${encodeURIComponent(productId)}`;
+      params = { dataSource: cfg.dataSource };
+    }
+
     await axios.delete(url, {
+      params,
       headers: { Authorization: `Bearer ${token}`, accept: "application/json" },
       timeout: 30000,
     });
-    webflowLog("info", { event: "google_merchant.delete_ok", reason, offerId: oid, productId });
+    webflowLog("info", {
+      event: "google_merchant.delete_ok",
+      reason,
+      offerId: oid,
+      productId,
+      apiMode: cfg.apiMode,
+    });
     return true;
   } catch (err) {
     const status = err?.response?.status;

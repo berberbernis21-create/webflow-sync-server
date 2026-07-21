@@ -27,10 +27,12 @@ Dual-pipeline sync: **Luxury / Accessories** and **Furniture & Home**. Each vert
 **Google Merchant (Furniture only, optional)**  
 `GOOGLE_MERCHANT_ENABLED` — `true|false` toggle for Google sync side-effects (default off).  
 `GOOGLE_MERCHANT_ID` — Merchant Center ID.  
+`GOOGLE_MERCHANT_DATA_SOURCE` — **Required for Merchant API** (default). API primary data source ID, or full name `accounts/{merchantId}/dataSources/{id}`. Create under Merchant Center → Settings → Data sources → Add product source → **API**.  
+`GOOGLE_MERCHANT_API` — `merchant` (default, products/v1 productInputs) or `content` (legacy Content API v2.1 rollback until Aug 18, 2026).  
 `GOOGLE_MERCHANT_SERVICE_ACCOUNT_JSON` — Full service account JSON string (preferred), **or** provide split vars below.  
 `GOOGLE_MERCHANT_SERVICE_ACCOUNT_EMAIL` — Service account client email.  
 `GOOGLE_MERCHANT_SERVICE_ACCOUNT_PRIVATE_KEY` — Private key (supports `\n` escapes).  
-`GOOGLE_MERCHANT_TARGET_COUNTRY` — Default `US`.  
+`GOOGLE_MERCHANT_TARGET_COUNTRY` — Default `US` (used as Merchant API `feedLabel`).  
 `GOOGLE_MERCHANT_CONTENT_LANGUAGE` — Default `en`.  
 `GOOGLE_MERCHANT_CURRENCY` — Default `USD`.  
 `GOOGLE_MERCHANT_FURNITURE_CATEGORY` — Default `Home & Garden > Furniture`.  
