@@ -572,6 +572,7 @@ MULTI-PHOTO CTA (INSTAGRAM BUG — HARD BAN):
 
 RULES:
 - Include EVERY item's real name and price from PRODUCT CONTEXT — never invent or skip
+- HARD: even for 6–10 items the ITEM ROSTER is mandatory — never replace it with a vague "collection" blurb that omits names
 - Do NOT overwhelm: no long per-item feature essays; roster stays tight
 - Do NOT write a full solo-product layout for each piece
 - If 4+ items, keep intro + body shorter so the roster stays scannable
@@ -579,11 +580,92 @@ RULES:
 - Same hard bans (no markdown, no em dashes, no hashtags in caption)
 - Exactly 5 hashtags in the JSON array only`;
 
+function formatSetRosterPrice(price) {
+  const p = String(price || "").trim();
+  if (!p) return "";
+  return p.startsWith("$") ? p : `$${p}`;
+}
+
+function buildSetRosterLines(setItems) {
+  return (Array.isArray(setItems) ? setItems : [])
+    .map((it) => {
+      const title = String(it?.listing?.title || it?.itemName || "").trim();
+      if (!title) return "";
+      const price = formatSetRosterPrice(it?.listing?.price);
+      const dims = String(it?.listing?.dimensions || "").trim();
+      const parts = [`✨ ${title}`];
+      if (price) parts.push(`💰 ${price}`);
+      if (dims) parts.push(`📐 ${dims}`);
+      return parts.join(" - ");
+    })
+    .filter(Boolean);
+}
+
+/** True when most item titles already appear in the caption (model included a roster). */
+function captionHasItemRoster(caption, setItems) {
+  const items = Array.isArray(setItems) ? setItems : [];
+  if (items.length < 2) return true;
+  const blob = String(caption || "").toLowerCase();
+  let hits = 0;
+  for (const it of items) {
+    const title = String(it?.listing?.title || it?.itemName || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!title) continue;
+    const tokens = title.split(" ").filter((w) => w.length > 2).slice(0, 5);
+    if (tokens.length >= 2) {
+      const needle = tokens.slice(0, Math.min(4, tokens.length)).join(" ");
+      if (blob.includes(needle) || tokens.filter((tok) => blob.includes(tok)).length >= 3) {
+        hits += 1;
+      }
+    } else if (tokens[0] && blob.includes(tokens[0])) {
+      hits += 1;
+    }
+  }
+  return hits >= Math.ceil(items.length * 0.7);
+}
+
+/**
+ * If the model skipped the name/price roster, inject one from listing facts.
+ * Inserts before Perfect for / Location / CTA so the closer stays at the end.
+ */
+function ensureSetItemRoster(caption, setItems) {
+  const items = Array.isArray(setItems) ? setItems : [];
+  if (items.length < 2) return String(caption || "").trim();
+  if (captionHasItemRoster(caption, items)) return String(caption || "").trim();
+
+  const roster = buildSetRosterLines(items).join("\n");
+  if (!roster) return String(caption || "").trim();
+
+  const blocks = String(caption || "")
+    .trim()
+    .split(/\n{2,}/)
+    .filter((b) => String(b || "").trim());
+
+  const isTail = (block) =>
+    /^(perfect for|📍|👉|for store details|visit us|shop this store|come see|tap to)/i.test(
+      String(block || "").trim()
+    );
+
+  let insertAt = blocks.findIndex(isTail);
+  if (insertAt < 0) {
+    // After hook + short intro (first 1–2 blocks), before leftover body if any.
+    insertAt = Math.min(2, blocks.length);
+  }
+  if (insertAt < 1 && blocks.length > 0) insertAt = 1;
+
+  blocks.splice(insertAt, 0, roster);
+  return blocks.join("\n\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 /**
  * Multi-photo IG bug: never ship "Shop this post". Soften to store / online / in-store.
  * Also fix obvious wrong group-count words in the opening lines.
+ * Force-inject item roster when the model skips names/prices.
  */
-function enforceSetCaptionHygiene(caption, setSize, division = "resale_interiors") {
+function enforceSetCaptionHygiene(caption, setSize, division = "resale_interiors", setItems = []) {
   let t = String(caption || "");
   const n = Math.max(0, Number(setSize) || 0);
   const site =
@@ -629,6 +711,9 @@ function enforceSetCaptionHygiene(caption, setSize, division = "resale_interiors
     .replace(/\bshop this post\b/gi, "shop this store right here")
     .replace(/\bShop the post\b/gi, "Visit us in store")
     .replace(/\bshop the post\b/gi, "visit us in store");
+
+  // Deterministic roster — model often skips this on large sets.
+  t = ensureSetItemRoster(t, setItems);
 
   // If a soft CTA remains but the site URL vanished, append a clean closer line once.
   if (
@@ -942,7 +1027,7 @@ ${listingBits}`;
         stripEmDashes(stripHashtagsFromCaption(String(parsed.caption || "").replace(/\s+$/g, "")))
       );
       const caption = isSetPost
-        ? enforceSetCaptionHygiene(captionRaw, setItems.length, division)
+        ? enforceSetCaptionHygiene(captionRaw, setItems.length, division, setItems)
         : enforceItemAccurateOpening(captionRaw, detectedItemType, itemSourceText);
       const hashtags = ensureHashtags(
         parsed.hashtags,
