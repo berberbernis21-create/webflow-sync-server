@@ -150,7 +150,17 @@ router.post("/freight-quote", freightRateLimit, jsonParser, async (req, res) => 
     const idemKey = buildIdempotencyKey(submission);
     const cached = getIdempotentResponse(idemKey);
     if (cached) {
-      return res.json(cached);
+      console.log("[freight-quote] duplicate submit within a few seconds — skipped second email", {
+        requestId: cached.request_id,
+        email: submission.customer_email.replace(/(.{2}).+(@.+)/, "$1***$2"),
+      });
+      return res.json({
+        ...cached,
+        duplicate: true,
+        message:
+          cached.message ||
+          "Request already received a moment ago — check your email (and spam). Re-submit in about a minute if you need a new copy.",
+      });
     }
 
     const ctx = await buildQuoteContext(submission);
