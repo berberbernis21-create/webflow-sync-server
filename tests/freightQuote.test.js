@@ -26,7 +26,7 @@ test("local pricing: 29 min = $125", () => {
   assert.equal(calculateLocalRouteEstimate(29).estimated_price, 125);
 });
 
-test("SOP small cabinet → 48x40x35 @ 85 lb class 150", () => {
+test("SOP small cabinet → 48x40x35 @ 85 lb (class null until confirmed)", () => {
   const r = palletizeItem({
     title: "Small cabinet",
     width: 24,
@@ -37,8 +37,17 @@ test("SOP small cabinet → 48x40x35 @ 85 lb class 150", () => {
   assert.equal(r.ok, true);
   assert.deepEqual(
     { w: r.pallet.width, d: r.pallet.depth, h: r.pallet.height, wt: r.pallet.weight, c: r.pallet.freight_class },
-    { w: 48, d: 40, h: 35, wt: 85, c: 150 }
+    { w: 48, d: 40, h: 35, wt: 85, c: null }
   );
+  assert.equal(r.pallet.suggested_freight_class, 150);
+});
+
+test("dining table title suggests class 175", () => {
+  assert.equal(inferFreightClass({ title: "Dining table oak" }), 175);
+});
+
+test("standard cabinet title suggests class 150", () => {
+  assert.equal(inferFreightClass({ title: "Small cabinet" }), 150);
 });
 
 test("oversized width rounds width only", () => {
