@@ -383,13 +383,12 @@ This script will run on the published Webflow staging and production sites.
               ? '<p><strong>Additional review is needed:</strong> Stairs, tight access, long carries, special handling, inside placement, or other reported conditions may affect the final price.</p>'
               : '<p>This is a best estimate only. Final pricing and scheduling must be confirmed by Lost &amp; Found Resale.</p>'));
     }else{
+      const buyLinks=payload.items.filter(i=>i.product_url).map(i=>
+        '<li><a href="'+escapeHtml(i.product_url)+'"><strong>'+escapeHtml(i.title||"View item")+'</strong></a></li>'
+      ).join("");
       result.innerHTML='<h2>Your Nationwide Freight Summary</h2><div class="lf-price">Freight-Ready</div><p>Your pallet dimensions, weight, freight class, liftgate, residential/commercial, and non-stackable details are ready for review.</p><p><strong>No fake carrier price is shown.</strong> Lost &amp; Found can provide a confirmed FreightCenter quote and Shipment ID after reviewing the request. FreightCenter can also be reached at 800-716-7608.</p>'+
         '<p><strong>We do not hold items</strong> — we work for our consignors. If you are ready to buy, go ahead and purchase and we can confirm freight rates afterward. If you want rates confirmed before buying, email <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> or call <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>'+
-        (payload.items.filter(i=>i.product_url).map(i=>
-          '<li><a href="'+escapeHtml(i.product_url)+'"><strong>'+escapeHtml(i.title||"View item")+'</strong></a></li>'
-        ).join("")?'<p><strong>Buy your item(s):</strong></p><ul>'+payload.items.filter(i=>i.product_url).map(i=>
-          '<li><a href="'+escapeHtml(i.product_url)+'"><strong>'+escapeHtml(i.title||"View item")+'</strong></a></li>'
-        ).join("")+'</ul>':'');
+        (buyLinks?'<p><strong>Buy your item(s):</strong></p><ul>'+buyLinks+'</ul>':'');
     }
     result.classList.add("show");
   }
