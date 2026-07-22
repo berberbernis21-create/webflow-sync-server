@@ -11,20 +11,20 @@ import { validateFreightQuoteRequest } from "../lib/freightQuoteValidation.js";
 import { buildManualReviewReasons } from "../lib/freightLocalEstimate.js";
 import { isAllowedConsignmentOrigin } from "../lib/consignmentCors.js";
 
-test("local pricing: 20 min = $95", () => {
-  assert.equal(calculateLocalRouteEstimate(20).estimated_price, 95);
+test("local pricing: 17 min = $95", () => {
+  assert.equal(calculateLocalRouteEstimate(17).estimated_price, 95);
 });
 
-test("local pricing: 21 min = $110", () => {
-  assert.equal(calculateLocalRouteEstimate(21).estimated_price, 110);
+test("local pricing: 19 min = $100 (matches Webflow)", () => {
+  assert.equal(calculateLocalRouteEstimate(19).estimated_price, 100);
 });
 
-test("local pricing: 28 min = $110", () => {
-  assert.equal(calculateLocalRouteEstimate(28).estimated_price, 110);
+test("local pricing: 21 min = $105", () => {
+  assert.equal(calculateLocalRouteEstimate(21).estimated_price, 105);
 });
 
-test("local pricing: 29 min = $125", () => {
-  assert.equal(calculateLocalRouteEstimate(29).estimated_price, 125);
+test("local pricing: 25 min = $110", () => {
+  assert.equal(calculateLocalRouteEstimate(25).estimated_price, 110);
 });
 
 test("SOP small cabinet → 48x40x35 @ 85 lb (class null until confirmed)", () => {
