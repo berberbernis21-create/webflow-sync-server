@@ -1,564 +1,524 @@
 <!--
 LOST & FOUND DELIVERY & FREIGHT CALCULATOR
-PART 2 OF 2: PAGE FOOTER JAVASCRIPT (thin client)
+PART 2 OF 2: PAGE FOOTER JAVASCRIPT
 
 Paste this entire block into:
 Page Settings > Custom Code > Before </body>
 
 The visible HTML/CSS from Part 1 must already be on the page.
-Render (webflow-sync-server.onrender.com) is the only calculator.
-
-This script:
-- Collects raw form fields only
-- Calls /api/listing, /api/freight-quote/preview, /api/freight-quote
-- Displays API-returned estimates / freight entries only
-- Does NOT calculate price, pallet dims, weight, class, or accessorials
+This script will run on the published Webflow staging and production sites.
 -->
+
 <script>
-(function () {
+(function(){
   "use strict";
 
-  const API_BASE = "https://webflow-sync-server.onrender.com";
-  const LOOKUP_URL = API_BASE + "/api/listing";
-  const PREVIEW_URL = API_BASE + "/api/freight-quote/preview";
-  const SUBMIT_URL = API_BASE + "/api/freight-quote";
-  const ORIGIN_ADDRESS = "15530 N Greenway Hayden Loop Ste 100, Scottsdale, AZ 85260";
-  const SHOP_ALL_URL = "https://www.lostandfoundresale.com/all-for-sale";
-  const FAQ_URL = "https://www.lostandfoundresale.com/faq";
+  const API_BASE="https://webflow-sync-server.onrender.com";
+  const LOOKUP_URL=API_BASE+"/api/listing";
+  const PREVIEW_URL=API_BASE+"/api/freight-quote/preview";
+  const SUBMIT_URL=API_BASE+"/api/freight-quote";
+  const ORIGIN_ADDRESS="15530 N Greenway Hayden Loop Ste 100, Scottsdale, AZ 85260";
+  const REDIRECT_URL="https://www.lostandfoundresale.com/faq";
+  const REDIRECT_DELAY_MS=4500;
 
-  let step = 1;
-  let itemCounter = 0;
-  let lastPreview = null;
-  let submitting = false;
+  const LOCAL={baseMinutes:17,basePrice:95,referenceMinutes:8,referencePrice:15};
+  let step=1,itemCounter=0,lastPreview=null,submitting=false;
 
-  const $ = (s, r = document) => r.querySelector(s);
-  const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
-  const form = $("#lfForm");
-  const itemsWrap = $("#lfItems");
-  const template = $("#lfItemTemplate");
+  const $=(s,r=document)=>r.querySelector(s);
+  const $$=(s,r=document)=>Array.from(r.querySelectorAll(s));
+  const form=$("#lfForm"),itemsWrap=$("#lfItems"),template=$("#lfItemTemplate");
 
-  function num(v) {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : 0;
+  function money(n){return new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(n)||0)}
+  function num(v){const n=Number(v);return Number.isFinite(n)?n:0}
+  function bool(id){return !!$(id)?.checked}
+  function value(id){return ($(id)?.value||"").trim()}
+  function escapeHtml(v){return String(v??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
+  function roundUp5(n){return Math.ceil(num(n)/5)*5}
+  function compact(obj){Object.keys(obj).forEach(k=>{if(obj[k]===undefined||obj[k]===null||obj[k]==="")delete obj[k]});return obj}
+
+  function classify(title){
+    const t=String(title||"").toLowerCase();
+    const nonstack=/(glass|mirror|artwork|art |wicker|cane|rattan|antique|fragile|marble|stone|sculpture)/.test(t);
+
+    /*
+      Do not guess a final freight class from the product title.
+      Freight class can depend on the confirmed NMFC item, density,
+      packaging, handling, stowability, and liability.
+    */
+    return {freightClass:null,nonStackable:nonstack};
   }
-  function bool(id) {
-    return !!$(id)?.checked;
+
+  function palletize(item){
+    const w=num(item.width),d=num(item.depth),h=num(item.height),wt=num(item.weight);
+    const selectedClass=item.freight_class===null||item.freight_class===""?null:num(item.freight_class);
+
+    return {
+      width:w<=48?48:roundUp5(w),
+      depth:d<=40?40:roundUp5(d),
+      height:Math.ceil(h+5),
+      weight:Math.ceil(wt+30),
+      freight_class:selectedClass,
+      packaging_type:"Pallet(s)",
+      non_stackable:!!item.non_stackable
+    };
   }
-  function value(id) {
-    return ($(id)?.value || "").trim();
+
+  function localEstimate(minutes){
+    if(!Number.isFinite(Number(minutes))||Number(minutes)<=0)return null;
+
+    const m=Math.ceil(Number(minutes));
+    const extraMinutes=Math.max(0,m-LOCAL.baseMinutes);
+    const perMinuteRate=LOCAL.referencePrice/LOCAL.referenceMinutes;
+    const rawEstimate=LOCAL.basePrice+(extraMinutes*perMinuteRate);
+    const roundedEstimate=Math.ceil(rawEstimate/5)*5;
+
+    return {
+      drive_minutes:m,
+      base_minutes:LOCAL.baseMinutes,
+      base_price:LOCAL.basePrice,
+      extra_minutes:extraMinutes,
+      per_minute_rate:perMinuteRate,
+      raw_estimate:rawEstimate,
+      estimated_price:roundedEstimate
+    };
   }
-  function escapeHtml(v) {
-    return String(v ?? "").replace(/[&<>"']/g, (m) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[m])
-    );
+
+  function setStep(next){
+    step=Math.max(1,Math.min(5,next));
+    $$(".lf-step").forEach(el=>el.hidden=Number(el.dataset.step)!==step);
+    $$(".lf-progress div").forEach(el=>el.classList.toggle("active",Number(el.dataset.progress)===step));
+    $("#lfCalc").scrollIntoView({behavior:"smooth",block:"start"});
   }
-  function compact(obj) {
-    Object.keys(obj).forEach((k) => {
-      if (obj[k] === undefined || obj[k] === null || obj[k] === "") delete obj[k];
+
+  function fieldError(input,msg){
+    input.setAttribute("aria-invalid",msg?"true":"false");
+    const holder=input.closest(".lf-field");
+    const error=holder?$(".lf-error",holder):null;
+    if(error)error.textContent=msg||"";
+  }
+
+  function validateStep(n){
+    let valid=true;
+    const scope=$('.lf-step[data-step="'+n+'"]');
+    if(!scope)return true;
+    $$("input[required],select[required],textarea[required]",scope).forEach(input=>{
+      if(input.closest(".lf-conditional")?.hidden)return;
+      let msg="";
+      if(input.type==="checkbox"&&!input.checked)msg="Required.";
+      else if(!String(input.value||"").trim())msg="Required.";
+      else if(input.type==="email"&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.value))msg="Enter a valid email.";
+      else if(input.name==="state"&&!/^[A-Za-z]{2}$/.test(input.value.trim()))msg="Use a two-letter state.";
+      else if(input.name==="zip"&&!/^\d{5}(-\d{4})?$/.test(input.value.trim()))msg="Enter a valid ZIP code.";
+      else if(input.type==="number"&&num(input.value)<=0)msg="Enter a number greater than zero.";
+      fieldError(input,msg);
+      if(msg)valid=false;
     });
-    return obj;
-  }
-  function money(n) {
-    if (n == null || !Number.isFinite(Number(n))) return null;
-    return new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: "USD",
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(Number(n));
-  }
+    if(n===3&&$$(".lf-item",itemsWrap).length===0){valid=false;alert("Add at least one item.");}
+    if(n===4&&bool("#lfStairs")){
+      const flights=num(value("#lfFlights"));
+      const stairNotes=value("#lfStairNotes");
 
-  function setStep(next) {
-    step = Math.max(1, Math.min(5, next));
-    $$(".lf-step").forEach((el) => (el.hidden = Number(el.dataset.step) !== step));
-    $$(".lf-progress div").forEach((el) =>
-      el.classList.toggle("active", Number(el.dataset.progress) === step)
-    );
-    $("#lfCalc").scrollIntoView({ behavior: "smooth", block: "start" });
-  }
-
-  function fieldError(input, msg) {
-    input.setAttribute("aria-invalid", msg ? "true" : "false");
-    const holder = input.closest(".lf-field");
-    const error = holder ? $(".lf-error", holder) : null;
-    if (error) error.textContent = msg || "";
-  }
-
-  function validateStep(n) {
-    let valid = true;
-    const scope = $('.lf-step[data-step="' + n + '"]');
-    if (!scope) return true;
-    $$("input[required],select[required],textarea[required]", scope).forEach((input) => {
-      if (input.closest(".lf-conditional")?.hidden) return;
-      let msg = "";
-      if (input.type === "checkbox" && !input.checked) msg = "Required.";
-      else if (!String(input.value || "").trim()) msg = "Required.";
-      else if (input.type === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.value))
-        msg = "Enter a valid email.";
-      else if (input.name === "state" && !/^[A-Za-z]{2}$/.test(input.value.trim()))
-        msg = "Use a two-letter state.";
-      else if (input.name === "zip" && !/^\d{5}(-\d{4})?$/.test(input.value.trim()))
-        msg = "Enter a valid ZIP code.";
-      else if (input.type === "number" && num(input.value) <= 0)
-        msg = "Enter a number greater than zero.";
-      fieldError(input, msg);
-      if (msg) valid = false;
-    });
-    if (n === 3 && $$(".lf-item", itemsWrap).length === 0) {
-      valid = false;
-      alert("Add at least one item.");
-    }
-    if (n === 4 && bool("#lfStairs")) {
-      const flights = num(value("#lfFlights"));
-      const stairNotes = value("#lfStairNotes");
-      if (flights < 1 && !stairNotes) {
-        valid = false;
-        fieldError($("#lfFlights"), "Enter the number of flights or add a stair note.");
-        fieldError($("#lfStairNotes"), "Enter a stair note or the number of flights.");
-      } else {
-        fieldError($("#lfFlights"), "");
-        fieldError($("#lfStairNotes"), "");
+      if(flights<1&&!stairNotes){
+        valid=false;
+        fieldError($("#lfFlights"),"Enter the number of flights or add a stair note.");
+        fieldError($("#lfStairNotes"),"Enter a stair note or the number of flights.");
+      }else{
+        fieldError($("#lfFlights"),"");
+        fieldError($("#lfStairNotes"),"");
       }
     }
     return valid;
   }
 
-  function updatePathDefaults() {
-    const local = $('input[name="delivery_path"]:checked')?.value === "local_az";
-    if (local && !value("#lfState")) $("#lfState").value = "AZ";
+  function updatePathDefaults(){
+    const local=$('input[name="delivery_path"]:checked')?.value==="local_az";
+    if(local&&!value("#lfState"))$("#lfState").value="AZ";
   }
 
-  function addItem(prefill = {}) {
+  function addItem(prefill={}){
     itemCounter++;
-    const node = template.content.firstElementChild.cloneNode(true);
-    node.dataset.itemId = String(itemCounter);
-    $(".lf-item-number", node).textContent = String($$(".lf-item", itemsWrap).length + 1);
+    const node=template.content.firstElementChild.cloneNode(true);
+    node.dataset.itemId=String(itemCounter);
+    $(".lf-item-number",node).textContent=String($$(".lf-item",itemsWrap).length+1);
 
-    $(".lf-title", node).value = prefill.title || "";
-    $(".lf-width", node).value = prefill.width || "";
-    $(".lf-depth", node).value = prefill.depth || "";
-    $(".lf-height", node).value = prefill.height || "";
-    $(".lf-weight", node).value = prefill.weight || "";
-    $(".lf-quantity", node).value = prefill.quantity || 1;
-    $(".lf-price-input", node).value = prefill.price || "";
-    $(".lf-url", node).value = prefill.product_url || "";
-    $(".lf-source", node).value = prefill.source || "manual";
-    $(".lf-class", node).value =
-      prefill.freight_class != null && prefill.freight_class !== ""
-        ? String(prefill.freight_class)
-        : "";
-    $(".lf-nonstack", node).checked = !!prefill.non_stackable;
+    const title=$(".lf-title",node),w=$(".lf-width",node),d=$(".lf-depth",node),h=$(".lf-height",node),wt=$(".lf-weight",node);
+    title.value=prefill.title||"";w.value=prefill.width||"";d.value=prefill.depth||"";h.value=prefill.height||"";wt.value=prefill.weight||"";
+    $(".lf-quantity",node).value=prefill.quantity||1;
+    $(".lf-price-input",node).value=prefill.price||"";
+    $(".lf-url",node).value=prefill.product_url||"";
+    $(".lf-source",node).value=prefill.source||"manual";
 
-    $(".lf-remove", node).addEventListener("click", () => {
-      node.remove();
-      renumberItems();
-      if (!$$(".lf-item", itemsWrap).length) addItem();
+    const auto=classify(title.value);
+    const initialClass=prefill.freight_class!==undefined&&prefill.freight_class!==null
+      ? String(prefill.freight_class)
+      : "";
+    $(".lf-class",node).value=initialClass;
+    $(".lf-nonstack",node).checked=prefill.non_stackable??auto.nonStackable;
+
+    $(".lf-remove",node).addEventListener("click",()=>{
+      node.remove();renumberItems();
+      if(!$$(".lf-item",itemsWrap).length)addItem();
     });
-    $(".lf-lookup", node).addEventListener("click", () => lookupItem(node));
-    [
-      $(".lf-title", node),
-      $(".lf-width", node),
-      $(".lf-depth", node),
-      $(".lf-height", node),
-      $(".lf-weight", node),
-      $(".lf-class", node),
-      $(".lf-nonstack", node),
-    ].forEach((el) => el.addEventListener("input", () => updatePalletHint(node)));
+
+    $(".lf-lookup",node).addEventListener("click",()=>lookupItem(node));
+    [title,w,d,h,wt,$(".lf-class",node),$(".lf-nonstack",node)].forEach(el=>el.addEventListener("input",()=>updatePallet(node)));
+    title.addEventListener("change",()=>{
+      const c=classify(title.value);
+      $(".lf-nonstack",node).checked=c.nonStackable;
+      updatePallet(node);
+    });
 
     itemsWrap.appendChild(node);
-    updatePalletHint(node);
+    updatePallet(node);
   }
 
-  function renumberItems() {
-    $$(".lf-item", itemsWrap).forEach((el, i) => {
-      $(".lf-item-number", el).textContent = String(i + 1);
-    });
+  function renumberItems(){$$(".lf-item",itemsWrap).forEach((el,i)=>$(".lf-item-number",el).textContent=String(i+1))}
+
+  function itemFromNode(node){
+    const item={
+      source:$(".lf-source",node).value,
+      title:$(".lf-title",node).value.trim(),
+      width:num($(".lf-width",node).value),
+      depth:num($(".lf-depth",node).value),
+      height:num($(".lf-height",node).value),
+      weight:num($(".lf-weight",node).value),
+      quantity:Math.max(1,num($(".lf-quantity",node).value)||1),
+      price:num($(".lf-price-input",node).value),
+      product_url:$(".lf-url",node).value.trim(),
+      freight_class:$(".lf-class",node).value===""?null:num($(".lf-class",node).value),
+      non_stackable:$(".lf-nonstack",node).checked
+    };
+    item.pallet=palletize(item);
+    return item;
   }
 
-  /** Raw item fields only — no client-side pallet/price math. */
-  function itemFromNode(node) {
+  function updatePallet(node){
+    const i=itemFromNode(node),box=$(".lf-pallet",node);
+    if(!i.width||!i.depth||!i.height||!i.weight){box.textContent="Enter dimensions and weight to see the SOP freight entry.";return}
+    const classText=i.pallet.freight_class===null?"Class to be confirmed":"Class "+i.pallet.freight_class;
+    box.innerHTML="<strong>Freight-ready entry:</strong> "+i.pallet.width+'" W × '+i.pallet.depth+'" D × '+i.pallet.height+'" H · '+i.pallet.weight+" lb · "+classText+(i.pallet.non_stackable?" · Non-stackable":"");
+  }
+
+  function extractListing(raw){
+    const d=raw?.listing||raw?.product||raw?.data||raw||{};
+    const dims=d.dimensions||d.dimension||d.size||"";
+    let width=d.width||d.item_width||d.width_in,depth=d.depth||d.item_depth||d.depth_in,height=d.height||d.item_height||d.height_in;
+    if((!width||!depth||!height)&&dims){
+      const m=String(dims).replace(/[″"]/g,"").match(/([\d.]+)\s*[x×]\s*([\d.]+)\s*[x×]\s*([\d.]+)/i);
+      if(m){width=width||m[1];depth=depth||m[2];height=height||m[3]}
+    }
     return {
-      source: $(".lf-source", node).value,
-      title: $(".lf-title", node).value.trim(),
-      width: num($(".lf-width", node).value),
-      depth: num($(".lf-depth", node).value),
-      height: num($(".lf-height", node).value),
-      weight: num($(".lf-weight", node).value),
-      quantity: Math.max(1, num($(".lf-quantity", node).value) || 1),
-      price: num($(".lf-price-input", node).value),
-      product_url: $(".lf-url", node).value.trim(),
-      freight_class: $(".lf-class", node).value === "" ? null : num($(".lf-class", node).value),
-      non_stackable: $(".lf-nonstack", node).checked,
+      title:d.title||d.name||d.product_name||"",
+      width:num(width),depth:num(depth),height:num(height),
+      weight:num(d.weight||d.estimated_weight||d.weight_lbs),
+      price:num(d.price||d.product_price),
+      product_url:d.url||d.link||d.product_url||d.webflow_url||"",
+      freight_class:d.freight_class??d.freightClass??null
     };
   }
 
-  function updatePalletHint(node) {
-    const box = $(".lf-pallet", node);
-    const i = itemFromNode(node);
-    if (!i.width || !i.depth || !i.height || !i.weight) {
-      box.textContent = "Enter dimensions and weight. Freight entry is calculated on the server when you review.";
-      return;
-    }
-    box.innerHTML =
-      "<strong>Ready for server calculation:</strong> " +
-      i.width +
-      '" × ' +
-      i.depth +
-      '" × ' +
-      i.height +
-      '" · ' +
-      i.weight +
-      " lb (pallet rules applied by Render on review)";
-  }
-
-  async function lookupItem(node) {
-    const title = $(".lf-title", node).value.trim();
-    const btn = $(".lf-lookup", node);
-    const msg = $(".lf-lookup-message", node);
-    if (!title) {
-      fieldError($(".lf-title", node), "Enter the exact listing title.");
-      return;
-    }
-    btn.disabled = true;
-    btn.innerHTML = '<span class="lf-spin"></span>Looking Up';
-    msg.className = "lf-lookup-message";
-    try {
-      const res = await fetch(LOOKUP_URL + "?name=" + encodeURIComponent(title), {
-        headers: { Accept: "application/json" },
-      });
-      const raw = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(raw.error || raw.message || "Listing not found.");
-      const d = raw.listing || raw;
-      if (d.title) $(".lf-title", node).value = d.title;
-      if (d.width) $(".lf-width", node).value = d.width;
-      if (d.depth) $(".lf-depth", node).value = d.depth;
-      if (d.height) $(".lf-height", node).value = d.height;
-      if (d.weight) $(".lf-weight", node).value = d.weight;
-      if (d.price) $(".lf-price-input", node).value = d.price;
-      if (d.product_url) $(".lf-url", node).value = d.product_url;
-      $(".lf-source", node).value = "listing";
-      if (d.freight_class != null && d.freight_class !== "")
-        $(".lf-class", node).value = String(d.freight_class);
-      const missing = Array.isArray(d.missing_fields) ? d.missing_fields : [];
-      msg.textContent = missing.length
-        ? "Item found. Please complete: " + missing.join(", ") + "."
-        : "Item found. Please review fields before continuing.";
+  async function lookupItem(node){
+    const title=$(".lf-title",node).value.trim(),btn=$(".lf-lookup",node),msg=$(".lf-lookup-message",node);
+    if(!title){fieldError($(".lf-title",node),"Enter the exact listing title.");return}
+    btn.disabled=true;btn.innerHTML='<span class="lf-spin"></span>Looking Up';
+    msg.className="lf-lookup-message";
+    try{
+      const res=await fetch(LOOKUP_URL+"?name="+encodeURIComponent(title),{headers:{"Accept":"application/json"}});
+      const raw=await res.json().catch(()=>({}));
+      if(!res.ok)throw new Error(raw.error||raw.message||"Listing not found.");
+      const data=extractListing(raw);
+      if(!data.width&&!data.depth&&!data.height&&!data.weight)throw new Error("The listing was found, but dimensions or weight were not returned. Please complete them manually.");
+      if(data.title)$(".lf-title",node).value=data.title;
+      if(data.width)$(".lf-width",node).value=data.width;
+      if(data.depth)$(".lf-depth",node).value=data.depth;
+      if(data.height)$(".lf-height",node).value=data.height;
+      if(data.weight)$(".lf-weight",node).value=data.weight;
+      if(data.price)$(".lf-price-input",node).value=data.price;
+      if(data.product_url)$(".lf-url",node).value=data.product_url;
+      $(".lf-source",node).value="listing";
+      const c=classify(data.title||title);
+      if(data.freight_class!==undefined&&data.freight_class!==null&&data.freight_class!==""){
+        $(".lf-class",node).value=String(data.freight_class);
+      }
+      $(".lf-nonstack",node).checked=c.nonStackable;
+      msg.textContent="Item found. Please review the dimensions, weight, price, and link before continuing.";
       msg.classList.add("show");
-      if (missing.length) msg.classList.add("bad");
-      updatePalletHint(node);
-    } catch (err) {
-      msg.textContent =
-        (err.message || "We could not find an exact match.") +
-        " You can still enter the item manually.";
-      msg.classList.add("show", "bad");
-      $(".lf-source", node).value = "manual";
-    } finally {
-      btn.disabled = false;
-      btn.textContent = "Find Item";
-    }
+      updatePallet(node);
+    }catch(err){
+      msg.textContent=(err.message||"We could not find an exact match.")+" You can still enter the item manually.";
+      msg.classList.add("show","bad");
+      $(".lf-source",node).value="manual";
+    }finally{btn.disabled=false;btn.textContent="Find Item"}
   }
 
-  function buildPayload() {
-    const path = $('input[name="delivery_path"]:checked')?.value || "local_az";
-    const mode = $('input[name="request_mode"]:checked')?.value || "estimate";
-    const destinationType = value("#lfType") || "residential";
-    const dock = bool("#lfDock");
-    const address = compact({
-      street: value("#lfStreet"),
-      unit: value("#lfUnit"),
-      city: value("#lfCity"),
-      state: value("#lfState").toUpperCase(),
-      zip: value("#lfZip"),
+  function buildPayload(){
+    const path=$('input[name="delivery_path"]:checked')?.value||"local_az";
+    const mode=$('input[name="request_mode"]:checked')?.value||"estimate";
+    const destinationType=value("#lfType")||"residential";
+    const dock=bool("#lfDock");
+    const address=compact({
+      street:value("#lfStreet"),unit:value("#lfUnit"),city:value("#lfCity"),
+      state:value("#lfState").toUpperCase(),zip:value("#lfZip")
     });
-    address.full = [address.street, address.unit, address.city, address.state, address.zip]
-      .filter(Boolean)
-      .join(", ");
+    address.full=[address.street,address.unit,address.city,address.state,address.zip].filter(Boolean).join(", ");
+
+    const access={
+      residential:destinationType==="residential",
+      commercial:destinationType==="commercial",
+      dock,
+      freight_elevator:bool("#lfElevator"),
+      freight_elevator_notes:value("#lfElevatorNotes"),
+      stairs:bool("#lfStairs"),
+      stair_flights:bool("#lfStairs")?num(value("#lfFlights")):0,
+      stair_notes:bool("#lfStairs")?value("#lfStairNotes"):"",
+      needs_more_than_two_people:bool("#lfCrew"),
+      crew_review_required:bool("#lfCrew"),
+      tight_turns_or_narrow_halls:bool("#lfTight"),
+      gated_access:bool("#lfGate"),
+      gate_code_or_instructions:value("#lfGateCode"),
+      inside_delivery:bool("#lfInside"),
+      room_placement:bool("#lfRoom"),
+      unpacking_or_debris_removal:bool("#lfUnpack"),
+      disassembly_or_assembly:bool("#lfDisassembly"),
+      long_carry:bool("#lfLongCarry"),
+      parking_or_time_restrictions:bool("#lfParking"),
+      fragile_or_special_handling:bool("#lfFragile"),
+      notes:value("#lfNotes"),
+      liftgate_pickup:true,
+      liftgate_delivery:!dock
+    };
 
     return {
-      request_mode: mode,
-      delivery_path: path,
-      customer_name: value("#lfName"),
-      customer_email: value("#lfEmail"),
-      customer_phone: value("#lfPhone"),
-      destination_type: destinationType,
-      delivery_address: address,
-      street: address.street,
-      unit: address.unit,
-      city: address.city,
-      state: address.state,
-      zip: address.zip,
-      origin_address: ORIGIN_ADDRESS,
-      access: {
-        residential: destinationType === "residential",
-        commercial: destinationType === "commercial",
-        dock,
-        freight_elevator: bool("#lfElevator"),
-        freight_elevator_notes: value("#lfElevatorNotes"),
-        stairs: bool("#lfStairs"),
-        stair_flights: bool("#lfStairs") ? num(value("#lfFlights")) : 0,
-        stair_notes: bool("#lfStairs") ? value("#lfStairNotes") : "",
-        needs_more_than_two_people: bool("#lfCrew"),
-        crew_review_required: bool("#lfCrew"),
-        tight_turns_or_narrow_halls: bool("#lfTight"),
-        gated_access: bool("#lfGate"),
-        gate_code_or_instructions: value("#lfGateCode"),
-        inside_delivery: bool("#lfInside"),
-        room_placement: bool("#lfRoom"),
-        unpacking_or_debris_removal: bool("#lfUnpack"),
-        disassembly_or_assembly: bool("#lfDisassembly"),
-        long_carry: bool("#lfLongCarry"),
-        parking_or_time_restrictions: bool("#lfParking"),
-        fragile_or_special_handling: bool("#lfFragile"),
-        notes: value("#lfNotes"),
-        liftgate_pickup: true,
-        liftgate_delivery: !dock,
-      },
-      items: $$(".lf-item", itemsWrap).map(itemFromNode),
-      page_url: location.href,
-      submitted_at: new Date().toISOString(),
-      company_website: "",
+      request_mode:mode,
+      delivery_path:path,
+      customer_name:value("#lfName"),
+      customer_email:value("#lfEmail"),
+      customer_phone:value("#lfPhone"),
+      destination_type:destinationType,
+      delivery_address:address,
+      street:address.street,unit:address.unit,city:address.city,state:address.state,zip:address.zip,
+      origin_address:ORIGIN_ADDRESS,
+      access,
+      items:$$(".lf-item",itemsWrap).map(itemFromNode),
+      page_url:location.href,
+      submitted_at:new Date().toISOString()
     };
   }
 
-  function renderFromApi(payload, api) {
-    const pathLocal = (api.delivery_path || payload.delivery_path) === "local_az";
-    const items = api.items || payload.items || [];
-    const addr =
-      api.address?.delivery_address?.full ||
-      payload.delivery_address?.full ||
-      "";
+  function accessFlags(a){
+    const flags=[];
+    if(a.stairs){
+      const stairParts=[];
+      if(a.stair_flights>0)stairParts.push(a.stair_flights+" flight(s)");
+      if(a.stair_notes)stairParts.push(a.stair_notes);
+      flags.push(stairParts.length?"stairs: "+stairParts.join(" — "):"stairs");
+    }
+    if(a.needs_more_than_two_people)flags.push("more than two people");
+    if(a.tight_turns_or_narrow_halls)flags.push("tight turns / narrow access");
+    if(a.freight_elevator)flags.push("freight elevator");
+    if(a.gated_access)flags.push("gated access");
+    if(a.inside_delivery)flags.push("inside delivery");
+    if(a.room_placement)flags.push("room placement");
+    if(a.unpacking_or_debris_removal)flags.push("unpacking / debris removal");
+    if(a.disassembly_or_assembly)flags.push("assembly or disassembly");
+    if(a.long_carry)flags.push("long carry");
+    if(a.parking_or_time_restrictions)flags.push("parking or time restrictions");
+    return flags;
+  }
 
-    const itemHtml = items
-      .map((i, idx) => {
-        const p = i.pallet || {};
-        const classText =
-          i.freight_class_display ||
-          (i.freight_class == null ? "To be confirmed" : "Class " + i.freight_class);
-        return (
-          "<li><strong>" +
-          escapeHtml(i.title || "Item " + (idx + 1)) +
-          "</strong>: " +
-          (i.width || "—") +
-          '" × ' +
-          (i.depth || "—") +
-          '" × ' +
-          (i.height || "—") +
-          '" · ' +
-          (i.weight || "—") +
-          " lb · Freight " +
-          (p.width || "—") +
-          '" × ' +
-          (p.depth || "—") +
-          '" × ' +
-          (p.height || "—") +
-          '" · ' +
-          (p.weight || "—") +
-          " lb · " +
-          escapeHtml(classText) +
-          (p.non_stackable || i.non_stackable ? " · Non-stackable" : "") +
-          "</li>"
-        );
-      })
-      .join("");
+  function extractDriveMinutes(data){
+    const options=[
+      data?.drive_minutes,data?.driveMinutes,data?.route?.drive_minutes,data?.route?.driveMinutes,
+      data?.route?.duration_minutes,data?.route?.durationMinutes,
+      data?.local_estimate?.drive_minutes,data?.localEstimate?.driveMinutes,
+      data?.estimate?.drive_minutes,data?.estimate?.driveMinutes
+    ];
+    const found=options.find(v=>Number.isFinite(Number(v))&&Number(v)>0);
+    return found===undefined?null:Number(found);
+  }
 
-    const access = payload.access || {};
-    const flags = [];
-    if (access.stairs) flags.push("stairs");
-    if (access.needs_more_than_two_people) flags.push("more than two people");
-    if (access.tight_turns_or_narrow_halls) flags.push("tight turns / narrow access");
-    if (access.gated_access) flags.push("gated access");
-    if (access.inside_delivery) flags.push("inside delivery");
-    if (access.room_placement) flags.push("room placement");
-    if (access.long_carry) flags.push("long carry");
-    if (access.parking_or_time_restrictions) flags.push("parking or time restrictions");
-    if (access.fragile_or_special_handling) flags.push("fragile / special handling");
+  function renderSummary(payload,preview){
+    const pathLocal=payload.delivery_path==="local_az";
+    const flags=accessFlags(payload.access);
+    const itemHtml=payload.items.map((i,idx)=>{
+      const classText=i.pallet.freight_class===null?"Class to be confirmed":"Class "+i.pallet.freight_class;
+      return '<li><strong>'+escapeHtml(i.title||("Item "+(idx+1)))+'</strong>: '+i.width+'" × '+i.depth+'" × '+i.height+'" · '+i.weight+' lb · Freight '+i.pallet.width+'" × '+i.pallet.depth+'" × '+i.pallet.height+'" · '+i.pallet.weight+' lb · '+classText+(i.pallet.non_stackable?" · Non-stackable":"")+'</li>';
+    }).join("");
 
-    $("#lfSummary").innerHTML =
-      '<div class="lf-summary-card"><h3>Request</h3><p><strong>' +
-      (payload.request_mode === "please_quote" ? "Have Us Quote It" : "Get an Estimate") +
-      "</strong> · " +
-      (pathLocal ? "Local Arizona Delivery" : "Nationwide Freight") +
-      "</p></div>" +
-      '<div class="lf-summary-card"><h3>Delivery</h3><p>' +
-      escapeHtml(addr) +
-      "</p><p>" +
-      escapeHtml(payload.customer_name) +
-      " · " +
-      escapeHtml(payload.customer_email) +
-      (payload.customer_phone ? " · " + escapeHtml(payload.customer_phone) : "") +
-      "</p></div>" +
-      '<div class="lf-summary-card"><h3>Items</h3><ul>' +
-      itemHtml +
-      "</ul></div>" +
-      '<div class="lf-summary-card"><h3>Access</h3><p>' +
-      (flags.length ? escapeHtml(flags.join(", ")) : "No additional access concerns reported.") +
-      "</p><p>Liftgate pickup: Yes · Liftgate delivery: " +
-      (access.liftgate_delivery ? "Yes" : "No — loading dock confirmed") +
-      "</p></div>";
+    $("#lfSummary").innerHTML=
+      '<div class="lf-summary-card"><h3>Request</h3><p><strong>'+(payload.request_mode==="please_quote"?"Have Us Quote It":"Get an Estimate")+'</strong> · '+(pathLocal?"Local Arizona Delivery":"Nationwide Freight")+'</p></div>'+
+      '<div class="lf-summary-card"><h3>Delivery</h3><p>'+escapeHtml(payload.delivery_address.full)+'</p><p>'+escapeHtml(payload.customer_name)+' · '+escapeHtml(payload.customer_email)+(payload.customer_phone?" · "+escapeHtml(payload.customer_phone):"")+'</p></div>'+
+      '<div class="lf-summary-card"><h3>Items</h3><ul>'+itemHtml+'</ul></div>'+
+      '<div class="lf-summary-card"><h3>Access</h3><p>'+(flags.length?escapeHtml(flags.join(", ")):"No additional access concerns reported.")+'</p><p>Liftgate pickup: Yes · Liftgate delivery: '+(payload.access.liftgate_delivery?"Yes":"No — loading dock confirmed")+'</p></div>';
 
-    const result = $("#lfResult");
-    const display = api.display || {};
+    const result=$("#lfResult");
+    if(pathLocal){
+      const minutes=extractDriveMinutes(preview);
+      const est=localEstimate(minutes);
+      const manual=flags.length>0||payload.access.fragile_or_special_handling;
+      const displayedAmount=est?money(est.estimated_price):"$100.00";
+      const priceLabel=payload.access.needs_more_than_two_people
+        ? "Approximate Two-Person Base: "
+        : "Your Preliminary Estimate Is ";
 
-    if (pathLocal) {
-      const amountText =
-        display.display_amount_formatted ||
-        (display.display_amount != null ? money(display.display_amount) : null) ||
-        "—";
-      const label = display.estimate_label || "Your Preliminary Estimate Is";
-      const review =
-        display.requires_manual_review || (api.review_reasons || []).length
-          ? "<p><strong>Additional review is needed:</strong> " +
-            escapeHtml((api.review_reasons || display.review_reasons || []).join("; ") ||
-              "Access or handling conditions may affect the final price.") +
-            "</p>"
-          : "<p>This is a best estimate only. Final pricing and scheduling must be confirmed by Lost &amp; Found Resale.</p>";
-
-      result.innerHTML =
-        "<h2>Your Preliminary Local Delivery Estimate</h2>" +
-        '<div class="lf-price">' +
-        escapeHtml(label) +
-        " " +
-        escapeHtml(amountText) +
-        "</div>" +
-        "<p>Our team will confirm final pricing after you purchase the item. If you would like confirmed pricing before purchasing, please contact Lost &amp; Found Resale at <a href=\"tel:4805887006\"><strong>480-588-7006</strong></a> or <a href=\"mailto:info@lostandfoundresale.com\"><strong>info@lostandfoundresale.com</strong></a>.</p>" +
-        review;
-    } else {
-      const rate = api.nationwide_rate || {};
-      const status = rate.status || display.status || "pending_manual_review";
-      const amount =
-        display.display_amount_formatted ||
-        (rate.amount != null ? money(rate.amount) : null);
-      result.innerHTML =
-        "<h2>" +
-        escapeHtml(display.headline || "Your Nationwide Freight Summary") +
-        "</h2>" +
-        '<div class="lf-price">' +
-        (amount || "Freight-Ready") +
-        "</div>" +
-        "<p>" +
-        escapeHtml(
-          display.message ||
-            rate.message ||
-            "Pallet dimensions and accessorials were prepared on the server. Confirmed carrier pricing follows after review."
-        ) +
-        "</p>" +
-        (status === "pending_manual_review"
-          ? "<p><strong>Status:</strong> Pending manual review — no carrier price is invented by this calculator.</p>"
-          : "");
+      result.innerHTML='<h2>Your Preliminary Local Delivery Estimate</h2>'+
+        '<div class="lf-price">'+priceLabel+displayedAmount+'</div>'+
+        '<p>Our team will confirm final pricing after you purchase the item. If you would like confirmed pricing before purchasing, please contact Lost &amp; Found Resale at <a href="tel:4805887006"><strong>480-588-7006</strong></a> or <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a>.</p>'+
+        '<p>This estimate considers the drive from our Scottsdale showroom to your location and back, loading the item at the showroom, wrapping and securing it for transport, unloading it at your home, and the expected time and labor.</p>'+
+        (payload.access.needs_more_than_two_people
+          ? '<p><strong>Additional crew review required:</strong> The amount above reflects the standard two-person delivery estimate and does not include additional movers or a specialized crew. We will confirm whether extra labor is required and provide an updated estimated range before scheduling.</p>'
+          : (manual
+              ? '<p><strong>Additional review is needed:</strong> Stairs, tight access, long carries, special handling, inside placement, or other reported conditions may affect the final price.</p>'
+              : '<p>This is a best estimate only. Final pricing and scheduling must be confirmed by Lost &amp; Found Resale.</p>'));
+    }else{
+      result.innerHTML='<h2>Your Nationwide Freight Summary</h2><div class="lf-price">Freight-Ready</div><p>Your pallet dimensions, weight, freight class, liftgate, residential/commercial, and non-stackable details are ready for review.</p><p><strong>No fake carrier price is shown.</strong> Lost &amp; Found can provide a confirmed FreightCenter quote and Shipment ID after reviewing the request. FreightCenter can also be reached at 800-716-7608.</p>';
     }
     result.classList.add("show");
   }
 
-  function showReviewAlert(msg) {
-    const a = $("#lfReviewAlert");
-    if (!a) return;
-    a.textContent = msg || "";
-    a.className = msg ? "lf-alert show error" : "lf-alert error";
+  async function refreshPreview(){
+    if(!validateStep(2)||!validateStep(3)||!validateStep(4)){setStep(!validateStep(2)?2:!validateStep(3)?3:4);return}
+    const payload=buildPayload();
+    const result=$("#lfResult");
+    result.innerHTML="<h2>Preparing Your Estimate</h2><p>Please wait while we review the information entered.</p>";
+    result.classList.add("show");
+    try{
+      const res=await fetch(PREVIEW_URL,{method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify(payload)});
+      const data=await res.json().catch(()=>({}));
+      if(!res.ok)throw new Error(data.error||data.message||"Preview could not be completed.");
+      lastPreview=data;
+      renderSummary(payload,data);
+    }catch(err){
+      lastPreview=null;
+      renderSummary(payload,{});
+      showAlert((err.message||"Live preview was unavailable.")+" The request can still be emailed for review.",true);
+    }
   }
 
-  async function reviewEstimateAndEmail() {
-    if (submitting) return;
+  function showAlert(msg,isError){
+    const a=$("#lfAlert");
+    if(!a)return;
+    a.textContent=msg;
+    a.className="lf-alert show "+(isError?"error":"success");
+  }
+
+  function showReviewAlert(msg){
+    const a=$("#lfReviewAlert");
+    if(!a)return;
+    a.textContent=msg||"";
+    a.className=msg?"lf-alert show error":"lf-alert error";
+  }
+
+  async function reviewEstimateAndEmail(){
+    if(submitting)return;
+
     showReviewAlert("");
 
-    if (!validateStep(2)) {
+    /*
+      Validate every section again at the moment of submission.
+      This guarantees that a valid email and complete address are present,
+      even if the customer navigated backward and changed something.
+    */
+    if(!validateStep(2)){
       showReviewAlert("Please enter a valid email and complete delivery address.");
       setStep(2);
       return;
     }
-    if (!validateStep(3)) {
+
+    if(!validateStep(3)){
       showReviewAlert("Please complete the item information before requesting the estimate.");
       setStep(3);
       return;
     }
-    if (!validateStep(4)) {
+
+    if(!validateStep(4)){
       showReviewAlert("Please complete the access and handling information.");
       return;
     }
-    if (!$("#lfReviewAgree").checked) {
+
+    if(!$("#lfReviewAgree").checked){
       showReviewAlert("Please confirm that you understand this is a preliminary estimate.");
       $("#lfReviewAgree").focus();
       return;
     }
 
-    const payload = buildPayload();
-    const btn = $("#lfReviewSubmit");
-    const originalText = btn.textContent;
-    submitting = true;
-    btn.disabled = true;
-    btn.innerHTML = '<span class="lf-spin"></span>Preparing & Sending';
+    const payload=buildPayload();
+    payload.company_website=form.elements.company_website.value;
 
-    let previewData = null;
-    try {
-      const previewResponse = await fetch(PREVIEW_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify(payload),
+    const btn=$("#lfReviewSubmit");
+    const originalText=btn.textContent;
+
+    submitting=true;
+    btn.disabled=true;
+    btn.innerHTML='<span class="lf-spin"></span>Preparing & Sending';
+
+    let previewData=null;
+
+    /*
+      Preview first so the summary page can show the best available result.
+      Preview must not send email.
+    */
+    try{
+      const previewResponse=await fetch(PREVIEW_URL,{
+        method:"POST",
+        headers:{"Content-Type":"application/json","Accept":"application/json"},
+        body:JSON.stringify(payload)
       });
-      const previewJson = await previewResponse.json().catch(() => ({}));
-      if (!previewResponse.ok) {
-        throw new Error(previewJson.error || previewJson.message || "Preview failed.");
+
+      const previewJson=await previewResponse.json().catch(()=>({}));
+
+      if(previewResponse.ok){
+        previewData=previewJson;
+        lastPreview=previewJson;
       }
-      previewData = previewJson;
-      lastPreview = previewJson;
-    } catch (err) {
-      showReviewAlert(err.message || "Preview failed. Please try again.");
-      btn.disabled = false;
-      btn.textContent = originalText;
-      submitting = false;
-      return;
+    }catch(previewError){
+      previewData=null;
+      lastPreview=null;
     }
 
-    try {
-      const submitResponse = await fetch(SUBMIT_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify(payload),
+    payload.preview=previewData||undefined;
+
+    /*
+      Final submission sends the internal notification and customer receipt.
+    */
+    try{
+      const submitResponse=await fetch(SUBMIT_URL,{
+        method:"POST",
+        headers:{"Content-Type":"application/json","Accept":"application/json"},
+        body:JSON.stringify(payload)
       });
-      const submitJson = await submitResponse.json().catch(() => ({}));
-      if (!submitResponse.ok) {
-        throw new Error(submitJson.error || submitJson.message || "Submit failed.");
+
+      const submitJson=await submitResponse.json().catch(()=>({}));
+
+      if(!submitResponse.ok){
+        throw new Error(submitJson.error||submitJson.message||"The estimate request could not be submitted.");
       }
 
-      $("#lfReceiptEmail").textContent = payload.customer_email;
-      renderFromApi(payload, submitJson.display ? submitJson : previewData || submitJson);
+      $("#lfReceiptEmail").textContent=payload.customer_email;
+      renderSummary(payload,previewData||submitJson||{});
       setStep(5);
-      btn.textContent = "Sent";
 
-      const shop = document.querySelector('.lf-link-btn[href*="all-for-sale"]');
-      const faq = document.querySelector('.lf-link-btn[href*="faq"]');
-      if (shop) shop.href = submitJson.redirect_shop_all || SHOP_ALL_URL;
-      if (faq) faq.href = submitJson.redirect_faq || FAQ_URL;
-    } catch (err) {
-      showReviewAlert(err.message || "Something went wrong. Please try again or call 480-588-7006.");
-      btn.disabled = false;
-      btn.textContent = originalText;
-      submitting = false;
+      btn.textContent="Sent";
+    }catch(err){
+      showReviewAlert(err.message||"Something went wrong. Please try again or call 480-588-7006.");
+      btn.disabled=false;
+      btn.textContent=originalText;
+      submitting=false;
     }
   }
 
-  $$("[data-next]").forEach((btn) =>
-    btn.addEventListener("click", () => {
-      if (validateStep(step)) {
-        updatePathDefaults();
-        setStep(step + 1);
-      }
-    })
-  );
-  $$("[data-back]").forEach((btn) => btn.addEventListener("click", () => setStep(step - 1)));
-  $("#lfAddItem").addEventListener("click", () => addItem());
-  $("#lfReviewSubmit").addEventListener("click", reviewEstimateAndEmail);
-  form.addEventListener("submit", (e) => e.preventDefault());
-  $("#lfStairs").addEventListener("change", (e) => ($("#lfStairDetails").hidden = !e.target.checked));
-  $("#lfElevator").addEventListener(
-    "change",
-    (e) => ($("#lfElevatorDetails").hidden = !e.target.checked)
-  );
-  $("#lfGate").addEventListener("change", (e) => ($("#lfGateDetails").hidden = !e.target.checked));
-  $$('input[name="delivery_path"]').forEach((el) =>
-    el.addEventListener("change", () => {
-      if ($('input[name="delivery_path"]:checked').value === "local_az") $("#lfState").value = "AZ";
-    })
-  );
+  $$("[data-next]").forEach(btn=>btn.addEventListener("click",()=>{if(validateStep(step)){updatePathDefaults();setStep(step+1)}}));
+  $$("[data-back]").forEach(btn=>btn.addEventListener("click",()=>setStep(step-1)));
+  $("#lfAddItem").addEventListener("click",()=>addItem());
+  $("#lfReviewSubmit").addEventListener("click",reviewEstimateAndEmail);
+  form.addEventListener("submit",e=>e.preventDefault());
+  $("#lfStairs").addEventListener("change",e=>$("#lfStairDetails").hidden=!e.target.checked);
+  $("#lfElevator").addEventListener("change",e=>$("#lfElevatorDetails").hidden=!e.target.checked);
+  $("#lfGate").addEventListener("change",e=>$("#lfGateDetails").hidden=!e.target.checked);
+  $$('input[name="delivery_path"]').forEach(el=>el.addEventListener("change",()=>{
+    const local=$('input[name="delivery_path"]:checked').value==="local_az";
+    if(local)$("#lfState").value="AZ";
+  }));
 
   addItem();
 })();

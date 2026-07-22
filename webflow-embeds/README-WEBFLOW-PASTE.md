@@ -1,22 +1,11 @@
-# Delivery & Freight Calculator — Webflow paste guide
+# Delivery & Freight Calculator — Webflow paste
 
-## Part 1 — Embed (HTML + CSS only)
+Source of truth: the customer's Part 1 + Part 2 (look, copy, payload, summary).
 
-1. Open the Delivery & Freight Calculator page in Webflow.
-2. Select the Embed element.
-3. Paste the full contents of `PART1-embed-html-css.html`.
-4. Do **not** put JavaScript in this embed (keeps the Designer preview visible).
+## Part 1
+Paste `PART1-embed-html-css.html` into the Embed element.
 
-## Part 2 — Before `</body>` (JavaScript only)
+## Part 2
+Paste `PART2-before-body-js.html` into Page Settings → Custom Code → Before `</body>`.
 
-1. Page Settings → Custom Code → **Before `</body>`**.
-2. Paste the full contents of `PART2-before-body-js.html`.
-3. Publish staging and production.
-
-## Behavior (aligned with Render)
-
-- Webflow collects raw fields only.
-- `POST /api/freight-quote/preview` → calculate + display (no emails).
-- `POST /api/freight-quote` → recalculate + 1 customer email + 1 internal email.
-- Price, pallet dims, freight class confirmation, and nationwide rate status come from Render `display` / `items[].pallet` only.
-- Staging and production both use: `https://webflow-sync-server.onrender.com`
+Do not redesign. Backend must accept this payload and return drive minutes / route so Part 2 `renderSummary` can show the estimate.
