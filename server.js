@@ -11653,6 +11653,7 @@ app.get("/api/listing", async (req, res) => {
       weight: weight ?? null,
       price: priceNum ?? null,
       product_url: listing.productUrl || listing.shopifyOnlineUrl || "",
+      image_url: Array.isArray(listing.images) && listing.images[0] ? String(listing.images[0]) : null,
       estimated_weight: weight ?? null,
       weight_lbs: weight ?? null,
       freight_class: freightClass,

@@ -270,6 +270,7 @@ This script will run on the published Webflow staging and production sites.
       quantity:Math.max(1,num($(".lf-quantity",node).value)||1),
       price:num($(".lf-price-input",node).value),
       product_url:$(".lf-url",node).value.trim(),
+      image_url:($(".lf-image-url",node)?.value||"").trim(),
       freight_class:$(".lf-class",node).value===""?null:num($(".lf-class",node).value),
       non_stackable:$(".lf-nonstack",node).checked
     };
@@ -306,7 +307,8 @@ This script will run on the published Webflow staging and production sites.
       width:num(width),depth:num(depth),height:num(height),
       weight:num(d.weight||d.estimated_weight||d.weight_lbs),
       price:num(d.price||d.product_price),
-      product_url:d.url||d.link||d.product_url||d.webflow_url||"",
+      product_url:d.url||d.link||d.product_url||d.webflow_url||raw?.productUrl||"",
+      image_url:d.image_url||d.image||d.primary_image||(Array.isArray(raw?.images)&&raw.images[0])||"",
       freight_class:d.freight_class??d.freightClass??null
     };
   }
@@ -329,6 +331,7 @@ This script will run on the published Webflow staging and production sites.
       if(data.weight)$(".lf-weight",node).value=data.weight;
       if(data.price)$(".lf-price-input",node).value=data.price;
       if(data.product_url)$(".lf-url",node).value=data.product_url;
+      if($(".lf-image-url",node))$(".lf-image-url",node).value=data.image_url||"";
       $(".lf-source",node).value="listing";
       const c=classify(data.title||title);
       if(data.freight_class!==undefined&&data.freight_class!==null&&data.freight_class!==""){
