@@ -288,9 +288,18 @@ This script will run on the published Webflow staging and production sites.
     const d=raw?.listing||raw?.product||raw?.data||raw||{};
     const dims=d.dimensions||d.dimension||d.size||"";
     let width=d.width||d.item_width||d.width_in,depth=d.depth||d.item_depth||d.depth_in,height=d.height||d.item_height||d.height_in;
+    const dimNum="(\\d*\\.\\d+|\\d+)";
+    const parseThree=(text)=>{
+      const m=String(text||"").replace(/[″"]/g,"").match(new RegExp(dimNum+"\\s*[x×X]\\s*"+dimNum+"\\s*[x×X]\\s*"+dimNum,"i"));
+      return m?{width:m[1],depth:m[2],height:m[3]}:null;
+    };
     if((!width||!depth||!height)&&dims){
-      const m=String(dims).replace(/[″"]/g,"").match(/([\d.]+)\s*[x×]\s*([\d.]+)\s*[x×]\s*([\d.]+)/i);
-      if(m){width=width||m[1];depth=depth||m[2];height=height||m[3]}
+      const p=parseThree(dims);
+      if(p){width=width||p.width;depth=depth||p.depth;height=height||p.height}
+    }
+    if((!width||!depth||!height)&&(d.title||d.name)){
+      const p=parseThree(d.title||d.name);
+      if(p){width=width||p.width;depth=depth||p.depth;height=height||p.height}
     }
     return {
       title:d.title||d.name||d.product_name||"",

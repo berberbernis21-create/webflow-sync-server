@@ -39,7 +39,7 @@ import {
   createConsignmentCorsMiddleware,
   isAllowedConsignmentOrigin,
 } from "./lib/consignmentCors.js";
-import { parseSetCountFromTitle, parseDimsFromTitle } from "./lib/freightPalletize.js";
+import { parseSetCountFromTitle, parseDimsFromTitle, parseDimsFromDescription } from "./lib/freightPalletize.js";
 import consignmentRouter from "./routes/consignmentSubmission.js";
 import freightQuoteRouter from "./routes/freightQuote.js";
 import { recoverStaleConsignmentIntakes } from "./lib/consignmentIntakeRecovery.js";
@@ -11594,6 +11594,15 @@ app.get("/api/listing", async (req, res) => {
       width = width ?? freightTitleDims.width;
       depth = depth ?? freightTitleDims.depth;
       height = height ?? freightTitleDims.height;
+    }
+    // Description "Width: … Depth: … Height: …" when CMS fields + title parse are empty.
+    if (width == null || depth == null || height == null) {
+      const descDims = parseDimsFromDescription(listing.description || "");
+      if (descDims) {
+        width = width ?? descDims.width;
+        depth = depth ?? descDims.depth;
+        height = height ?? descDims.height;
+      }
     }
     // If CMS stored the broken package height=1 for a 2-part …H title, prefer title parse.
     if (
