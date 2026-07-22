@@ -214,7 +214,7 @@ router.options("/freight-quote/map", (req, res) => {
 });
 
 /**
- * GET /api/freight-quote/map — signed Static Maps proxy (no API key in emails/pages).
+ * GET /api/freight-quote/map | signed Static Maps proxy (no API key in emails/pages).
  */
 router.get("/freight-quote/map", async (req, res) => {
   try {
@@ -237,7 +237,7 @@ router.get("/freight-quote/map", async (req, res) => {
 });
 
 /**
- * POST /api/freight-quote/preview — validate + calculate only (no email, no booking).
+ * POST /api/freight-quote/preview | validate + calculate only (no email, no booking).
  */
 router.post("/freight-quote/preview", freightRateLimit, jsonParser, async (req, res) => {
   try {
@@ -269,7 +269,7 @@ router.post("/freight-quote/preview", freightRateLimit, jsonParser, async (req, 
 });
 
 /**
- * POST /api/freight-quote — recalculate + exactly one customer + one internal email.
+ * POST /api/freight-quote | recalculate + exactly one customer + one internal email.
  */
 router.post("/freight-quote", freightRateLimit, jsonParser, async (req, res) => {
   try {
@@ -284,7 +284,7 @@ router.post("/freight-quote", freightRateLimit, jsonParser, async (req, res) => 
     const validation = validateFreightQuoteRequest(req.body || {});
     if (!validation.ok) {
       if (validation.honeypot) {
-        console.warn("[freight-quote] honeypot filled — rejecting");
+        console.warn("[freight-quote] honeypot filled | rejecting");
         return res.status(400).json({
           success: false,
           error: "Submission blocked by spam filter. Please try again.",
@@ -300,7 +300,7 @@ router.post("/freight-quote", freightRateLimit, jsonParser, async (req, res) => 
     const idemKey = buildIdempotencyKey(submission);
     const cached = getIdempotentResponse(idemKey);
     if (cached) {
-      console.log("[freight-quote] duplicate submit within a few seconds — skipped second email", {
+      console.log("[freight-quote] duplicate submit within a few seconds | skipped second email", {
         requestId: cached.request_id,
         email: submission.customer_email.replace(/(.{2}).+(@.+)/, "$1***$2"),
       });
