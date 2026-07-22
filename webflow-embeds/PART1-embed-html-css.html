@@ -88,6 +88,10 @@ to remain visible inside the Webflow Designer.
 .lf-result.show{display:block}
 .lf-result h2{margin:0 0 7px;color:var(--lf-green);font-size:19px}
 .lf-price{margin:7px 0;color:var(--lf-navy);font-size:27px;font-weight:800}
+.lf-route-map{margin:12px 0;border:1px solid var(--lf-border);border-radius:8px;overflow:hidden;background:#fff}
+.lf-route-map img{display:block;width:100%;height:auto;max-height:280px;object-fit:cover}
+.lf-route-map a{display:inline-block;margin-top:8px;font-size:12px;font-weight:700;color:var(--lf-navy)}
+.lf-drive-stats{margin:6px 0 10px;font-size:13px;font-weight:700;color:var(--lf-navy)}
 .lf-alert{display:none;margin-top:12px;padding:10px 11px;border-radius:5px;font-size:11px;font-weight:700}
 .lf-alert.show{display:block}
 .lf-alert.error{border:1px solid #d5b4b4;background:#fff7f7;color:var(--lf-red)}
@@ -439,8 +443,8 @@ to remain visible inside the Webflow Designer.
       <div class="lf-head"><h2>What do you need?</h2><p>Choose delivery, consignor pickup, or nationwide freight.</p></div>
 
       <div class="lf-choice-grid lf-path-grid">
-        <div class="lf-choice"><input id="lfLocal" type="radio" name="delivery_path" value="local_az" checked><label for="lfLocal"><strong>Local Arizona Delivery</strong><span>We deliver from our Scottsdale showroom to you. Preliminary estimates start at $95 for the first 17 minutes of drive time.</span></label></div>
-        <div class="lf-choice"><input id="lfPickup" type="radio" name="delivery_path" value="pickup_az"><label for="lfPickup"><strong>Consignor Pickup</strong><span>We drive from our Scottsdale showroom to your Arizona location and back with the item. Same local pricing — $95 for the first 17 minutes of drive time.</span></label></div>
+        <div class="lf-choice"><input id="lfLocal" type="radio" name="delivery_path" value="local_az" checked><label for="lfLocal"><strong>Local Arizona Delivery</strong><span>We deliver from our Scottsdale showroom to you. Preliminary estimates start at $95 for the first 15 minutes of drive time.</span></label></div>
+        <div class="lf-choice"><input id="lfPickup" type="radio" name="delivery_path" value="pickup_az"><label for="lfPickup"><strong>Consignor Pickup</strong><span>We drive from our Scottsdale showroom to your Arizona location and back with the item. Same local pricing — $95 for the first 15 minutes of drive time.</span></label></div>
         <div class="lf-choice"><input id="lfNational" type="radio" name="delivery_path" value="nationwide"><label for="lfNational"><strong>Nationwide Freight</strong><span>We prepare the pallet, freight class, and accessorial details needed for a FreightCenter quote.</span></label></div>
       </div>
 

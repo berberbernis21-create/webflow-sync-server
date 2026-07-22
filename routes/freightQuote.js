@@ -13,6 +13,7 @@ import {
   getIdempotentResponse,
   setIdempotentResponse,
 } from "../lib/freightQuoteSecurity.js";
+import { verifyMapRequest, fetchStaticMapBytes } from "../lib/freightRouteMap.js";
 
 const router = express.Router();
 const jsonParser = express.json({ limit: "1mb" });
@@ -63,6 +64,8 @@ function buildLocalDisplay(submission, local) {
     headline: amount != null ? `${label} ${money(amount)}` : label,
     drive_minutes: local.route?.drive_minutes ?? local.local_estimate?.drive_minutes ?? null,
     distance_miles: local.route?.distance_miles ?? null,
+    map_image_url: local.route?.map_image_url ?? null,
+    directions_url: local.route?.directions_url ?? null,
     currency: "USD",
     path: submission.delivery_path,
     is_pickup: isPickup,
@@ -143,6 +146,8 @@ async function buildQuoteContext(submission) {
         ? {
             distance_miles: nationwide_rate.route.distance_miles,
             drive_minutes: nationwide_rate.route.drive_minutes ?? null,
+            map_image_url: nationwide_rate.route.map_image_url ?? null,
+            directions_url: nationwide_rate.route.directions_url ?? null,
           }
         : null,
       items,
@@ -163,6 +168,8 @@ async function buildQuoteContext(submission) {
         range_high: high,
         distance_miles: nationwide_rate.distance_miles ?? nationwide_rate.route?.distance_miles ?? null,
         distance_measured: Boolean(nationwide_rate.distance_measured),
+        map_image_url: nationwide_rate.route?.map_image_url ?? null,
+        directions_url: nationwide_rate.route?.directions_url ?? null,
         status: nationwide_rate.status,
         message: nationwide_rate.message,
         follow_up: nationwide_rate.follow_up,
@@ -199,6 +206,34 @@ router.options("/freight-quote", (req, res) => {
 router.options("/freight-quote/preview", (req, res) => {
   applyConsignmentCorsHeaders(req, res);
   res.sendStatus(204);
+});
+
+router.options("/freight-quote/map", (req, res) => {
+  applyConsignmentCorsHeaders(req, res);
+  res.sendStatus(204);
+});
+
+/**
+ * GET /api/freight-quote/map — signed Static Maps proxy (no API key in emails/pages).
+ */
+router.get("/freight-quote/map", async (req, res) => {
+  try {
+    applyConsignmentCorsHeaders(req, res);
+    const verified = verifyMapRequest(req.query || {});
+    if (!verified.ok) {
+      return res.status(verified.status || 400).send(verified.error || "bad_request");
+    }
+    const image = await fetchStaticMapBytes(verified);
+    if (!image.ok) {
+      return res.status(image.status || 502).send(image.error || "map_failed");
+    }
+    res.setHeader("Content-Type", image.contentType);
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    return res.send(image.buf);
+  } catch (err) {
+    console.error("[freight-quote] map proxy failed:", err?.message || err);
+    return res.status(500).send("map_failed");
+  }
 });
 
 /**

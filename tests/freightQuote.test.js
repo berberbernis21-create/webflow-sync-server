@@ -16,20 +16,24 @@ import {
   NATIONWIDE_FLOOR_USD,
 } from "../lib/freightNationwideRate.js";
 
-test("local pricing: 17 min = $95", () => {
-  assert.equal(calculateLocalRouteEstimate(17).estimated_price, 95);
+test("local pricing: 15 min = $95", () => {
+  assert.equal(calculateLocalRouteEstimate(15).estimated_price, 95);
 });
 
-test("local pricing: 19 min = $100 (matches Webflow)", () => {
-  assert.equal(calculateLocalRouteEstimate(19).estimated_price, 100);
+test("local pricing: 17 min = $100", () => {
+  assert.equal(calculateLocalRouteEstimate(17).estimated_price, 100);
 });
 
-test("local pricing: 21 min = $105", () => {
-  assert.equal(calculateLocalRouteEstimate(21).estimated_price, 105);
+test("local pricing: 19 min = $105", () => {
+  assert.equal(calculateLocalRouteEstimate(19).estimated_price, 105);
 });
 
-test("local pricing: 25 min = $110", () => {
-  assert.equal(calculateLocalRouteEstimate(25).estimated_price, 110);
+test("local pricing: 21 min = $110", () => {
+  assert.equal(calculateLocalRouteEstimate(21).estimated_price, 110);
+});
+
+test("local pricing: 25 min = $115", () => {
+  assert.equal(calculateLocalRouteEstimate(25).estimated_price, 115);
 });
 
 test("Webflow payload: trust client pallet + entered dims (no title invent)", () => {
