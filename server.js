@@ -10146,6 +10146,91 @@ function extractGoogleWeightFromText(text) {
   return { value: String(m[1]), unit: "lb" };
 }
 
+/** Coerce CMS/API weight values to a positive number of pounds (never a "85 lbs" string). */
+function coerceWeightToLbNumber(value) {
+  if (value == null || value === "") return null;
+  if (typeof value === "object") {
+    if (value.value != null) return coerceWeightToLbNumber(value.value);
+    if (value.weight != null) return coerceWeightToLbNumber(value.weight);
+    return null;
+  }
+  const raw = String(value).trim();
+  const m = raw.match(/([\d]+(?:\.\d+)?)/);
+  if (!m) return null;
+  let n = parseFloat(m[1]);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const lower = raw.toLowerCase();
+  if (/\bkg\b/.test(lower)) n *= 2.20462262;
+  else if (/\boz\b/.test(lower)) n /= 16;
+  else if (/\bg\b/.test(lower) && !/\bkg\b/.test(lower) && !/\blbs?\b/.test(lower)) n /= 453.59237;
+  // Cap absurd values (likely grams stored without unit).
+  if (n > 10000) return null;
+  return Math.round(n * 100) / 100;
+}
+
+/** Pull weight from description / title text ("Weight: 75 lb.", "75 lbs", etc.). */
+function extractWeightLbNumberFromText(text) {
+  const plain = String(text || "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\s+/g, " ");
+  if (!plain.trim()) return null;
+  const patterns = [
+    /Weight:\s*([\d]+(?:\.\d+)?)\s*(?:lb|lbs|pounds?)?\.?/i,
+    /Estimated\s+weight:\s*([\d]+(?:\.\d+)?)\s*(?:lb|lbs|pounds?)?\.?/i,
+    /Shipping\s+weight:\s*([\d]+(?:\.\d+)?)\s*(?:lb|lbs|pounds?)?\.?/i,
+    /\b([\d]+(?:\.\d+)?)\s*(?:lb|lbs|pounds?)\b/i,
+  ];
+  for (const re of patterns) {
+    const m = plain.match(re);
+    if (!m) continue;
+    const n = coerceWeightToLbNumber(m[1]);
+    if (n != null) return n;
+  }
+  return null;
+}
+
+/**
+ * Normalize listing weight for the freight calculator /api/listing response.
+ * Prefers structured fields, then tags, then description text.
+ */
+function resolveListingWeightLb(listing = {}, extraSources = {}) {
+  const bag = {
+    ...extraSources,
+    ...(listing && typeof listing === "object" ? listing : {}),
+  };
+  const candidates = [
+    bag.weight,
+    bag.weight_lbs,
+    bag.weightLbs,
+    bag.estimated_weight,
+    bag.estimatedWeight,
+    bag.item_weight,
+    bag.itemWeight,
+    bag.shipping_weight,
+    bag.shippingWeight,
+    bag.shipping_weight_lb,
+    bag.skuWeight,
+    bag.sku_weight,
+    bag.fieldData?.weight,
+    bag.skuFd?.weight,
+  ];
+  for (const c of candidates) {
+    const n = coerceWeightToLbNumber(c);
+    if (n != null) return n;
+  }
+  const fromTags = parseDimensionsFromTags({ tags: bag.tags || listing.tags || [] });
+  if (fromTags.weight != null) {
+    const n = coerceWeightToLbNumber(fromTags.weight);
+    if (n != null) return n;
+  }
+  return (
+    extractWeightLbNumberFromText(bag.description || listing.description || "") ||
+    extractWeightLbNumberFromText(bag.title || listing.title || "") ||
+    null
+  );
+}
+
 function extractGoogleDimsFromText(text) {
   if (!text) return {};
   const out = {};
@@ -11283,6 +11368,16 @@ function mapLuxuryListingSearchHit(hit) {
   const productUrl = slug ? `${base}/${slug}` : null;
   const vendor = String(fd.brand || itemFd.brand || "").trim();
   const luxuryGoodsCategory = luxuryGoodsCategoryFromWebflowLuxuryFd(fd);
+  const weight = resolveListingWeightLb(
+    { description, title, tags: [] },
+    {
+      weight: fd.weight ?? itemFd.weight,
+      weight_lbs: fd.weight_lbs ?? fd["weight-lbs"],
+      estimated_weight: fd.estimated_weight ?? fd["estimated-weight"],
+      shipping_weight: fd.shipping_weight ?? fd["shipping-weight"],
+      fieldData: fd,
+    }
+  );
   return {
     title,
     price,
@@ -11294,6 +11389,7 @@ function mapLuxuryListingSearchHit(hit) {
     vertical: "luxury",
     vendor: vendor || null,
     luxuryGoodsCategory,
+    weight,
   };
 }
 
@@ -11316,6 +11412,16 @@ async function mapFurnitureListingSearchHit(hit, config) {
   const cents = webflowSkuMoneyFieldToCents(skuFd?.price);
   const price = formatSkuCentsAsListingPrice(cents);
   const vendor = String(fd.brand || "").trim();
+  const weight = resolveListingWeightLb(
+    { description, title, tags: [] },
+    {
+      weight: skuFd?.weight,
+      shipping_weight: skuFd?.["shipping-weight"] ?? skuFd?.shippingWeight,
+      estimated_weight: fd.estimated_weight ?? fd["estimated-weight"],
+      skuFd,
+      fieldData: fd,
+    }
+  );
   return {
     title,
     price,
@@ -11327,6 +11433,7 @@ async function mapFurnitureListingSearchHit(hit, config) {
     vertical: "furniture",
     vendor: vendor || null,
     luxuryGoodsCategory: null,
+    weight,
   };
 }
 
@@ -11470,10 +11577,16 @@ app.get("/api/listing", async (req, res) => {
       depth = dimsFromTitle[1];
       height = dimsFromTitle[2];
     }
-    const weight =
-      listing.weight != null && Number.isFinite(Number(listing.weight))
-        ? Number(listing.weight)
-        : null;
+    const weight = resolveListingWeightLb(listing, {
+      weight: listing.weight,
+      weight_lbs: listing.weight_lbs,
+      estimated_weight: listing.estimated_weight ?? listing.estimatedWeight,
+      item_weight: listing.item_weight ?? listing.itemWeight,
+      shipping_weight: listing.shipping_weight ?? listing.shippingWeight,
+      tags: listing.tags,
+      description: listing.description,
+      title: listing.title,
+    });
     let priceNum = null;
     if (listing.price != null) {
       const cleaned = String(listing.price).replace(/[^0-9.]/g, "");
@@ -11489,6 +11602,9 @@ app.get("/api/listing", async (req, res) => {
       weight: weight ?? null,
       price: priceNum ?? null,
       product_url: listing.productUrl || listing.shopifyOnlineUrl || "",
+      // Aliases the Webflow calculator also checks
+      estimated_weight: weight ?? null,
+      weight_lbs: weight ?? null,
     };
 
     return res.json({
