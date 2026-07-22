@@ -577,6 +577,11 @@ This script will run on the published Webflow staging and production sites.
       }
 
       $("#lfReceiptEmail").textContent=payload.customer_email;
+      const pickup=payload.delivery_path==="pickup_az";
+      const buyerCopy=$("#lfSocialBuyerCopy");
+      const pickupCopy=$("#lfSocialPickupCopy");
+      if(buyerCopy)buyerCopy.hidden=pickup;
+      if(pickupCopy)pickupCopy.hidden=!pickup;
       renderSummary(payload,Object.assign({},previewData||{},submitJson||{}));
       setStep(5);
 

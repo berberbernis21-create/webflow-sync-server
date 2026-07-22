@@ -92,6 +92,16 @@ to remain visible inside the Webflow Designer.
 .lf-route-map img{display:block;width:100%;height:auto;max-height:280px;object-fit:cover}
 .lf-route-map a{display:inline-block;margin-top:8px;font-size:12px;font-weight:700;color:var(--lf-navy)}
 .lf-drive-stats{margin:6px 0 10px;font-size:13px;font-weight:700;color:var(--lf-navy)}
+.lf-social-follow{margin:16px 0;padding:16px;border-radius:10px;background:var(--lf-navy);color:#fff}
+.lf-social-follow h3{margin:0 0 8px;font-size:14px;letter-spacing:.04em;text-transform:uppercase;color:#c9d0ff}
+.lf-social-follow p{margin:0 0 10px;font-size:12px;line-height:1.5;color:#e8ebff}
+.lf-social-luxury-label{margin:14px 0 4px!important;font-size:13px!important;font-weight:800;color:#fff!important}
+.lf-social-luxury-help{margin:0 0 10px!important}
+.lf-social-links{display:flex;flex-wrap:wrap;gap:8px}
+.lf-social-btn{display:inline-block;padding:9px 12px;border-radius:6px;background:#fff;color:var(--lf-navy);font-size:11px;font-weight:800;text-decoration:none}
+.lf-social-btn.lf-social-fb{background:#3b5998;color:#fff}
+.lf-social-btn.lf-social-ig{background:#c13584;color:#fff}
+.lf-social-btn.lf-social-light{background:#fff;color:var(--lf-navy)}
 .lf-alert{display:none;margin-top:12px;padding:10px 11px;border-radius:5px;font-size:11px;font-weight:700}
 .lf-alert.show{display:block}
 .lf-alert.error{border:1px solid #d5b4b4;background:#fff7f7;color:var(--lf-red)}
@@ -468,7 +478,7 @@ to remain visible inside the Webflow Designer.
       <div class="lf-subtitle">How would you like to continue?</div>
       <div class="lf-choice-grid">
         <div class="lf-choice"><input id="lfEstimate" type="radio" name="request_mode" value="estimate" checked><label for="lfEstimate"><strong>Get an Estimate</strong><span>See a preliminary result and email a copy of the request to yourself and our team.</span></label></div>
-        <div class="lf-choice"><input id="lfQuote" type="radio" name="request_mode" value="please_quote"><label for="lfQuote"><strong>Have Us Quote It</strong><span>Send everything to our team so we can review it and follow up with confirmed pricing.</span></label></div>
+        <div class="lf-choice"><input id="lfQuote" type="radio" name="request_mode" value="please_quote"><label for="lfQuote"><strong>Have Us Quote It</strong><span>Send everything to our team for review and confirmed pricing. You still get an email receipt with your request summary.</span></label></div>
       </div>
 
       <div class="lf-actions"><div></div><button class="lf-btn" type="button" data-next>Continue</button></div>
@@ -591,12 +601,12 @@ to remain visible inside the Webflow Designer.
       </label>
 
       <p class="lf-fine lf-review-email-note">
-        When you continue, your completed estimate summary will be emailed to you and Lost &amp; Found Resale.
+        When you continue, your completed request summary will be emailed to you and Lost &amp; Found Resale (whether you chose Get an Estimate or Have Us Quote It).
       </p>
 
       <div class="lf-actions">
         <button class="lf-btn secondary" type="button" data-back>Back</button>
-        <button class="lf-btn" id="lfReviewSubmit" type="button">Review My Estimate &amp; Email Receipt</button>
+        <button class="lf-btn" id="lfReviewSubmit" type="button">Submit &amp; Email My Receipt</button>
       </div>
     </section>
 
@@ -604,15 +614,31 @@ to remain visible inside the Webflow Designer.
       <div class="lf-confirmation-head">
         <div class="lf-confirmation-icon" aria-hidden="true">✓</div>
         <div>
-          <h2>Your Estimate Request Has Been Sent</h2>
+          <h2>Your Request Has Been Sent</h2>
           <p>
-            Your preliminary estimate appears directly below. We also emailed a receipt to
+            Your summary appears directly below. We also emailed a receipt to
             <strong id="lfReceiptEmail"></strong>, and Lost &amp; Found received the complete request for review.
           </p>
         </div>
       </div>
 
       <div class="lf-result" id="lfResult"></div>
+
+      <div class="lf-social-follow" id="lfSocialFollow">
+        <h3>Follow Lost &amp; Found</h3>
+        <p class="lf-social-buyer" id="lfSocialBuyerCopy">Stay in the loop. Lots of new pieces and items show up and get featured here, and we post multiple times a day.</p>
+        <p class="lf-social-pickup" id="lfSocialPickupCopy" hidden>Once your item is priced and live, it will be featured on our pages and across many of our other sales channels. Follow, like, subscribe, and share so you catch it when it goes live.</p>
+        <div class="lf-social-links">
+          <a class="lf-social-btn" href="https://www.facebook.com/LostAndFoundResale/" target="_blank" rel="noopener">Facebook</a>
+        </div>
+        <p class="lf-social-luxury-label">Also check out our luxury division</p>
+        <p class="lf-social-luxury-help">Designer handbags and accessories at Lost &amp; Found Handbags.</p>
+        <div class="lf-social-links">
+          <a class="lf-social-btn lf-social-light" href="https://www.lostandfoundhandbags.com/" target="_blank" rel="noopener">Shop Luxury</a>
+          <a class="lf-social-btn lf-social-fb" href="https://www.facebook.com/people/Lost-and-Found-Luxury-Resale/61584002517357/" target="_blank" rel="noopener">Luxury Facebook</a>
+          <a class="lf-social-btn lf-social-ig" href="https://www.instagram.com/lostandfoundhandbags/" target="_blank" rel="noopener">Luxury Instagram</a>
+        </div>
+      </div>
 
       <div class="lf-request-details-heading">
         <h2>Here Was Your Request Summary</h2>
