@@ -406,8 +406,8 @@ This script will run on the published Webflow staging and production sites.
         ? '<div class="lf-route-map"><img src="'+escapeHtml(mapUrl)+'" alt="Route map" loading="lazy">'+(dirUrl?'<a href="'+escapeHtml(dirUrl)+'" target="_blank" rel="noopener">Open in Google Maps →</a>':'')+"</div>"
         : (dirUrl?'<p><a href="'+escapeHtml(dirUrl)+'" target="_blank" rel="noopener">Open route in Google Maps →</a></p>':"");
       const laborText=isPickup
-        ?"Includes loading at your location, return to showroom, unloading, and standard labor."
-        :"Includes wrapping/securing, loading, unloading, and standard labor.";
+        ?"Total time is calculated as a round trip, not one way. The estimate also covers preparing the freight, loading and securing it on the truck, return to the showroom, offloading, and placement."
+        :"Total time is calculated as a round trip, not one way. The estimate also covers wrapping and preparing the freight, loading and securing it on the truck, offloading, and placement.";
       const policyText=isPickup
         ?'<p>Consignor pickup estimate. We will confirm scheduling and final pricing. Questions? <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> · <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>'
         :'<p><strong>We do not hold items</strong> — we work for our consignors. Ready to buy? Purchase now and we can confirm delivery after. Want rates first? <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> · <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>';
