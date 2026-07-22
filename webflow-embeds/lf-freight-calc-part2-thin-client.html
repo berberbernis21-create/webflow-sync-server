@@ -411,6 +411,18 @@ This script will run on the published Webflow staging and production sites.
     return flags;
   }
 
+  function routeMapHtml(mapUrl,dirUrl){
+    if(!mapUrl&&!dirUrl)return "";
+    if(!mapUrl){
+      return '<p><a href="'+escapeHtml(dirUrl)+'" target="_blank" rel="noopener">Open route in Google Maps</a></p>';
+    }
+    return '<div class="lf-route-map">'+
+      '<img src="'+escapeHtml(mapUrl)+'" alt="Route map" loading="lazy" onerror="this.closest(\'.lf-route-map\').classList.add(\'is-fallback\')">'+
+      '<div class="lf-route-map-fallback">Map preview unavailable right now.'+(dirUrl?' <a href="'+escapeHtml(dirUrl)+'" target="_blank" rel="noopener">Open the full route in Google Maps</a>.':'')+'</div>'+
+      (dirUrl?'<a href="'+escapeHtml(dirUrl)+'" target="_blank" rel="noopener">Open in Google Maps</a>':'')+
+      '</div>';
+  }
+
   function extractDriveMinutes(data){
     const options=[
       data?.drive_minutes,data?.driveMinutes,
@@ -455,15 +467,13 @@ This script will run on the published Webflow staging and production sites.
         : "Your Preliminary Estimate Is ";
       const oneWay=est?est.drive_minutes:(minutes?Math.ceil(minutes):null);
       const miles=Number(preview?.route?.distance_miles??preview?.display?.distance_miles);
-      const milesText=Number.isFinite(miles)&&miles>0?" · "+miles+" mi":"";
+      const milesText=Number.isFinite(miles)&&miles>0?" | "+miles+" mi":"";
       const driveStats=oneWay
-        ? '<p class="lf-drive-stats">'+oneWay+" min one way · "+(oneWay*2)+" min round trip"+milesText+"</p>"
+        ? '<p class="lf-drive-stats">'+oneWay+" min one way | "+(oneWay*2)+" min round trip"+milesText+"</p>"
         : "";
       const mapUrl=preview?.route?.map_image_url||preview?.display?.map_image_url||"";
       const dirUrl=preview?.route?.directions_url||preview?.display?.directions_url||"";
-      const mapHtml=mapUrl
-        ? '<div class="lf-route-map"><img src="'+escapeHtml(mapUrl)+'" alt="Route map" loading="lazy">'+(dirUrl?'<a href="'+escapeHtml(dirUrl)+'" target="_blank" rel="noopener">Open in Google Maps →</a>':'')+"</div>"
-        : (dirUrl?'<p><a href="'+escapeHtml(dirUrl)+'" target="_blank" rel="noopener">Open route in Google Maps →</a></p>':"");
+      const mapHtml=routeMapHtml(mapUrl,dirUrl);
       const laborText=isPickup
         ?"Total time is calculated as a round trip, not one way. The estimate also covers preparing the freight, loading and securing it on the truck, return to the showroom, offloading, and placement."
         :"Total time is calculated as a round trip, not one way. The estimate also covers wrapping and preparing the freight, loading and securing it on the truck, offloading, and placement.";
@@ -498,9 +508,7 @@ This script will run on the published Webflow staging and production sites.
         : '<p>Distance confirmed on review.</p>';
       const mapUrl=preview?.route?.map_image_url||display?.map_image_url||rate?.route?.map_image_url||"";
       const dirUrl=preview?.route?.directions_url||display?.directions_url||rate?.route?.directions_url||"";
-      const mapHtml=mapUrl
-        ? '<div class="lf-route-map"><img src="'+escapeHtml(mapUrl)+'" alt="Route map" loading="lazy">'+(dirUrl?'<a href="'+escapeHtml(dirUrl)+'" target="_blank" rel="noopener">Open in Google Maps →</a>':'')+"</div>"
-        : (dirUrl?'<p><a href="'+escapeHtml(dirUrl)+'" target="_blank" rel="noopener">Open route in Google Maps →</a></p>':"");
+      const mapHtml=routeMapHtml(mapUrl,dirUrl);
       const rangeText=hasRange?money(low)+" - "+money(high):"Freight-Ready";
       const buyLinks=payload.items.filter(i=>i.product_url).map(i=>
         '<li><a href="'+escapeHtml(i.product_url)+'"><strong>'+escapeHtml(i.title||"View item")+'</strong></a></li>'

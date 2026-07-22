@@ -90,18 +90,21 @@ to remain visible inside the Webflow Designer.
 .lf-price{margin:7px 0;color:var(--lf-navy);font-size:27px;font-weight:800}
 .lf-route-map{margin:12px 0;border:1px solid var(--lf-border);border-radius:8px;overflow:hidden;background:#fff}
 .lf-route-map img{display:block;width:100%;height:auto;max-height:280px;object-fit:cover}
-.lf-route-map a{display:inline-block;margin-top:8px;font-size:12px;font-weight:700;color:var(--lf-navy)}
+.lf-route-map a{display:inline-block;margin:10px 12px 12px;font-size:12px;font-weight:700;color:var(--lf-navy)}
+.lf-route-map-fallback{display:none;margin:0;padding:18px 14px;background:var(--lf-cream);color:var(--lf-text);font-size:12px;line-height:1.5}
+.lf-route-map.is-fallback .lf-route-map-fallback{display:block}
+.lf-route-map.is-fallback img{display:none}
 .lf-drive-stats{margin:6px 0 10px;font-size:13px;font-weight:700;color:var(--lf-navy)}
-.lf-social-follow{margin:16px 0;padding:16px;border-radius:10px;background:var(--lf-navy);color:#fff}
-.lf-social-follow h3{margin:0 0 8px;font-size:14px;letter-spacing:.04em;text-transform:uppercase;color:#c9d0ff}
-.lf-social-follow p{margin:0 0 10px;font-size:12px;line-height:1.5;color:#e8ebff}
-.lf-social-luxury-label{margin:14px 0 4px!important;font-size:13px!important;font-weight:800;color:#fff!important}
+.lf-social-follow{margin:16px 0;padding:16px;border:1px solid var(--lf-border);border-radius:10px;background:var(--lf-cream);color:var(--lf-text)}
+.lf-social-follow h3{margin:0 0 8px;font-size:13px;letter-spacing:.04em;text-transform:uppercase;color:var(--lf-navy)}
+.lf-social-follow p{margin:0 0 10px;font-size:12px;line-height:1.5;color:#383838}
+.lf-social-luxury-label{margin:14px 0 4px!important;font-size:13px!important;font-weight:800;color:var(--lf-navy)!important}
 .lf-social-luxury-help{margin:0 0 10px!important}
 .lf-social-links{display:flex;flex-wrap:wrap;gap:8px}
-.lf-social-btn{display:inline-block;padding:9px 12px;border-radius:6px;background:#fff;color:var(--lf-navy);font-size:11px;font-weight:800;text-decoration:none}
-.lf-social-btn.lf-social-fb{background:#3b5998;color:#fff}
-.lf-social-btn.lf-social-ig{background:#c13584;color:#fff}
-.lf-social-btn.lf-social-light{background:#fff;color:var(--lf-navy)}
+.lf-social-btn{display:inline-block;padding:9px 12px;border:1px solid var(--lf-navy);border-radius:6px;background:#fff;color:var(--lf-navy);font-size:11px;font-weight:800;text-decoration:none}
+.lf-social-btn.lf-social-fb{border-color:#3b5998;background:#3b5998;color:#fff}
+.lf-social-btn.lf-social-ig{border-color:#c13584;background:#c13584;color:#fff}
+.lf-social-btn.lf-social-light{border-color:var(--lf-navy);background:#fff;color:var(--lf-navy)}
 .lf-alert{display:none;margin-top:12px;padding:10px 11px;border-radius:5px;font-size:11px;font-weight:700}
 .lf-alert.show{display:block}
 .lf-alert.error{border:1px solid #d5b4b4;background:#fff7f7;color:var(--lf-red)}
