@@ -447,8 +447,8 @@ This script will run on the published Webflow staging and production sites.
     }).join("");
 
     const liftgateLine=isPickup
-      ? ("Liftgate at pickup: "+(payload.access.liftgate_pickup?"Yes":"No | loading dock confirmed"))
-      : ("Liftgate pickup: Yes · Liftgate delivery: "+(payload.access.liftgate_delivery?"Yes":"No | loading dock confirmed"));
+      ? ("Liftgate at pickup: "+(payload.access.liftgate_pickup?"Yes":"No — loading dock confirmed"))
+      : ("Liftgate pickup: Yes · Liftgate delivery: "+(payload.access.liftgate_delivery?"Yes":"No — loading dock confirmed"));
 
     $("#lfSummary").innerHTML=
       '<div class="lf-summary-card"><h3>Request</h3><p><strong>'+(payload.request_mode==="please_quote"?"Have Us Quote It":"Get an Estimate")+'</strong> · '+pathLabel(path)+'</p></div>'+
@@ -467,9 +467,9 @@ This script will run on the published Webflow staging and production sites.
         : "Your Preliminary Estimate Is ";
       const oneWay=est?est.drive_minutes:(minutes?Math.ceil(minutes):null);
       const miles=Number(preview?.route?.distance_miles??preview?.display?.distance_miles);
-      const milesText=Number.isFinite(miles)&&miles>0?" | "+miles+" mi":"";
+      const milesText=Number.isFinite(miles)&&miles>0?" — "+miles+" mi":"";
       const driveStats=oneWay
-        ? '<p class="lf-drive-stats">'+oneWay+" min one way | "+(oneWay*2)+" min round trip"+milesText+"</p>"
+        ? '<p class="lf-drive-stats">'+oneWay+" min one way — "+(oneWay*2)+" min round trip"+milesText+"</p>"
         : "";
       const mapUrl=preview?.route?.map_image_url||preview?.display?.map_image_url||"";
       const dirUrl=preview?.route?.directions_url||preview?.display?.directions_url||"";
@@ -479,7 +479,7 @@ This script will run on the published Webflow staging and production sites.
         :"Total time is calculated as a round trip, not one way. The estimate also covers wrapping and preparing the freight, loading and securing it on the truck, offloading, and placement.";
       const policyText=isPickup
         ?'<p>Final pricing will need to be confirmed directly with the driver team. If you need final confirmed pricing, please email <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> or call <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>'
-        :'<p><strong>We do not hold items</strong> | we work for our consignors. Ready to buy? Purchase now and we can confirm delivery after. Want rates first? <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> | <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>';
+        :'<p><strong>We do not hold items</strong> — we work for our consignors. Ready to buy? Purchase now and we can confirm delivery after. Want rates first? <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> — <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>';
       const buyLinks=!isPickup?payload.items.filter(i=>i.product_url).map(i=>
         '<li><a href="'+escapeHtml(i.product_url)+'"><strong>'+escapeHtml(i.title||"View item")+'</strong></a></li>'
       ).join(""):"";
@@ -517,9 +517,9 @@ This script will run on the published Webflow staging and production sites.
         '<div class="lf-price">'+rangeText+'</div>'+
         milesLine+
         mapHtml+
-        '<p>Based on distance, pallet size/weight, and access. <strong>Final price depends on carrier and service</strong> | can be lower; white-glove can raise it.</p>'+
+        '<p>Based on distance, pallet size/weight, and access. <strong>Final price depends on carrier and service</strong> — can be lower; white-glove can raise it.</p>'+
         '<p>We will follow up with better rates after partner review. FreightCenter: <a href="tel:8007167608"><strong>800-716-7608</strong></a>.</p>'+
-        '<p><strong>We do not hold items</strong> | ready to buy? Purchase now and confirm freight after. Want rates first? <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> · <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>'+
+        '<p><strong>We do not hold items</strong> — ready to buy? Purchase now and confirm freight after. Want rates first? <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> · <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>'+
         (buyLinks?'<p><strong>Buy your item(s):</strong></p><ul>'+buyLinks+'</ul>':'');
     }
     result.classList.add("show");
