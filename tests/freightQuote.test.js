@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   palletizeItem,
+  palletizeItems,
   calculateLocalRouteEstimate,
   inferFreightClass,
   shouldMarkNonStackable,
@@ -25,6 +26,41 @@ test("local pricing: 21 min = $105", () => {
 
 test("local pricing: 25 min = $110", () => {
   assert.equal(calculateLocalRouteEstimate(25).estimated_price, 110);
+});
+
+test("Webflow payload: trust client pallet + entered dims (no title invent)", () => {
+  const rows = palletizeItems(
+    [
+      {
+        title: "Dessin Fournir Round Dining Table- 60X30H (No Leaf)",
+        width: 60,
+        depth: 30,
+        height: 30,
+        weight: 149,
+        quantity: 1,
+        freight_class: null,
+        non_stackable: false,
+        pallet: {
+          width: 60,
+          depth: 40,
+          height: 35,
+          weight: 179,
+          freight_class: null,
+          packaging_type: "Pallet(s)",
+          non_stackable: false,
+        },
+      },
+    ],
+    { allowTitleDimFallback: false, preferClientPallet: true }
+  );
+  assert.equal(rows[0].width, 60);
+  assert.equal(rows[0].depth, 30);
+  assert.equal(rows[0].height, 30);
+  assert.equal(rows[0].weight, 149);
+  assert.equal(rows[0].pallet.width, 60);
+  assert.equal(rows[0].pallet.depth, 40);
+  assert.equal(rows[0].pallet.height, 35);
+  assert.equal(rows[0].pallet.weight, 179);
 });
 
 test("SOP small cabinet → 48x40x35 @ 85 lb (class null until confirmed)", () => {
@@ -251,19 +287,37 @@ test("stairs flights review reason", () => {
   assert.ok(reasons.some((r) => /More than two movers/i.test(r)));
 });
 
-test("honeypot rejected", () => {
-  const v = validateFreightQuoteRequest({
+test("honeypot alone rejected; autofill ignored for real form", () => {
+  const spamOnly = validateFreightQuoteRequest({
     company_website: "http://spam.test",
-    customer_name: "Bot",
-    customer_email: "bot@x.com",
-    street: "1",
-    city: "Phoenix",
-    state: "AZ",
-    zip: "85001",
-    items: [{ title: "X", width: 10, depth: 10, height: 10, weight: 10 }],
   });
-  assert.equal(v.ok, false);
-  assert.equal(v.honeypot, true);
+  assert.equal(spamOnly.ok, false);
+  assert.equal(spamOnly.honeypot, true);
+
+  const autofill = validateFreightQuoteRequest({
+    company_website: "http://autofill.example",
+    customer_name: "Bernis Berber",
+    customer_email: "bernis.berber@icloud.com",
+    street: "7167 E Rancho Vista Dr",
+    city: "Scottsdale",
+    state: "AZ",
+    zip: "85251",
+    delivery_path: "local_az",
+    request_mode: "estimate",
+    items: [
+      {
+        title: "Table",
+        width: 60,
+        depth: 30,
+        height: 30,
+        weight: 149,
+        pallet: { width: 60, depth: 40, height: 35, weight: 179 },
+      },
+    ],
+  });
+  assert.equal(autofill.ok, true);
+  assert.equal(autofill.submission.items[0].height, 30);
+  assert.equal(autofill.submission.items[0].pallet.height, 35);
 });
 
 test("invalid email rejected", () => {

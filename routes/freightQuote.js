@@ -137,8 +137,14 @@ router.post("/freight-quote", freightRateLimit, jsonParser, async (req, res) => 
 
     const validation = validateFreightQuoteRequest(req.body || {});
     if (!validation.ok) {
+      // Never fake success on honeypot — browsers often autofill company_website.
+      // That used to return 200 with no email and looked like "live data is broken."
       if (validation.honeypot) {
-        return res.json({ success: true, message: "Request received." });
+        console.warn("[freight-quote] honeypot filled — rejecting (likely autofill)");
+        return res.status(400).json({
+          success: false,
+          error: "Submission blocked by spam filter. Clear the hidden website field and try again.",
+        });
       }
       return res.status(validation.status || 400).json({
         success: false,

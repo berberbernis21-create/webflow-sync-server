@@ -34,7 +34,7 @@ import {
   createConsignmentCorsMiddleware,
   isAllowedConsignmentOrigin,
 } from "./lib/consignmentCors.js";
-import { parseSetCountFromTitle } from "./lib/freightPalletize.js";
+import { parseSetCountFromTitle, parseDimsFromTitle } from "./lib/freightPalletize.js";
 import consignmentRouter from "./routes/consignmentSubmission.js";
 import freightQuoteRouter from "./routes/freightQuote.js";
 import { recoverStaleConsignmentIntakes } from "./lib/consignmentIntakeRecovery.js";
@@ -11568,15 +11568,36 @@ app.get("/api/listing", async (req, res) => {
       return res.status(404).json({ error: "No products found", listing: null });
     }
 
-    const dimsFromTitle = parsePackageDimensionsFromTitle(listing.title) || null;
-    let width = null;
-    let depth = null;
-    let height = null;
-    if (dimsFromTitle && dimsFromTitle.length === 3) {
-      // Title pattern is typically W x D x H
-      width = dimsFromTitle[0];
-      depth = dimsFromTitle[1];
-      height = dimsFromTitle[2];
+    // Freight calculator dims: prefer CMS/structured fields, then furniture title parse
+    // (60X30H → diameter×height). Do NOT use package-shipping's old "…H → height 1" hack.
+    const numDim = (v) => {
+      const n = Number(v);
+      return Number.isFinite(n) && n > 0 ? n : null;
+    };
+    let width = numDim(listing.width ?? listing.item_width ?? listing.width_in);
+    let depth = numDim(
+      listing.depth ?? listing.length ?? listing.item_depth ?? listing.depth_in ?? listing.length_in
+    );
+    let height = numDim(listing.height ?? listing.item_height ?? listing.height_in);
+    const freightTitleDims = parseDimsFromTitle(listing.title || "");
+    if (freightTitleDims) {
+      width = width ?? freightTitleDims.width;
+      depth = depth ?? freightTitleDims.depth;
+      height = height ?? freightTitleDims.height;
+    }
+    // If CMS stored the broken package height=1 for a 2-part …H title, prefer title parse.
+    if (
+      freightTitleDims &&
+      height === 1 &&
+      freightTitleDims.height > 1 &&
+      /(\d+(?:\.\d+)?)\s*[xX×]\s*(\d+(?:\.\d+)?)\s*H\b/i.test(String(listing.title || "")) &&
+      !/(\d+(?:\.\d+)?)\s*[xX×]\s*(\d+(?:\.\d+)?)\s*[xX×]\s*(\d+(?:\.\d+)?)/i.test(
+        String(listing.title || "")
+      )
+    ) {
+      width = freightTitleDims.width;
+      depth = freightTitleDims.depth;
+      height = freightTitleDims.height;
     }
     const weight = resolveListingWeightLb(listing, {
       weight: listing.weight,
@@ -11665,7 +11686,11 @@ function parsePackageDimensionsFromTitle(title) {
   if (m) {
     const a = parseFloat(m[1]);
     const b = parseFloat(m[2]);
-    if (Number.isFinite(a) && a > 0 && Number.isFinite(b) && b > 0) return [a, b, 1];
+    if (Number.isFinite(a) && a > 0 && Number.isFinite(b) && b > 0) {
+      // Furniture title convention: 60X30H = footprint × height (NOT thickness=1).
+      // Round/square: use diameter/side for W and D; second number is height.
+      return [a, Math.min(a, b) < a * 0.85 ? Math.min(a, b) : a, b];
+    }
   }
   return null;
 }
