@@ -328,7 +328,9 @@ This script will run on the published Webflow staging and production sites.
 
   function extractDriveMinutes(data){
     const options=[
-      data?.drive_minutes,data?.driveMinutes,data?.route?.drive_minutes,data?.route?.driveMinutes,
+      data?.drive_minutes,data?.driveMinutes,
+      data?.display?.drive_minutes,data?.display?.driveMinutes,
+      data?.route?.drive_minutes,data?.route?.driveMinutes,
       data?.route?.duration_minutes,data?.route?.durationMinutes,
       data?.local_estimate?.drive_minutes,data?.localEstimate?.driveMinutes,
       data?.estimate?.drive_minutes,data?.estimate?.driveMinutes
@@ -360,11 +362,15 @@ This script will run on the published Webflow staging and production sites.
       const priceLabel=payload.access.needs_more_than_two_people
         ? "Approximate Two-Person Base: "
         : "Your Preliminary Estimate Is ";
+      const oneWay=est?est.drive_minutes:(minutes?Math.ceil(minutes):null);
+      const driveText=oneWay
+        ? oneWay+" minutes one way ("+(oneWay*2)+" minutes round trip) from our Scottsdale showroom to your location and back"
+        : "the drive from our Scottsdale showroom to your location and back";
 
       result.innerHTML='<h2>Your Preliminary Local Delivery Estimate</h2>'+
         '<div class="lf-price">'+priceLabel+displayedAmount+'</div>'+
         '<p>Our team will confirm final pricing after you purchase the item. If you would like confirmed pricing before purchasing, please contact Lost &amp; Found Resale at <a href="tel:4805887006"><strong>480-588-7006</strong></a> or <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a>.</p>'+
-        '<p>This estimate considers the drive from our Scottsdale showroom to your location and back, loading the item at the showroom, wrapping and securing it for transport, unloading it at your home, and the expected time and labor.</p>'+
+        '<p>This estimate considers '+driveText+', wrapping and securing for transport, loading the item, unloading, and the expected time and labor.</p>'+
         (payload.access.needs_more_than_two_people
           ? '<p><strong>Additional crew review required:</strong> The amount above reflects the standard two-person delivery estimate and does not include additional movers or a specialized crew. We will confirm whether extra labor is required and provide an updated estimated range before scheduling.</p>'
           : (manual
