@@ -541,9 +541,10 @@ to remain visible inside the Webflow Designer.
           </div>
 
           <label class="lf-check"><input id="lfTight" type="checkbox"> Tight turns, narrow halls, or narrow doorways</label>
-          <label class="lf-check"><input id="lfInside" type="checkbox"> Inside delivery requested</label>
-          <label class="lf-check"><input id="lfRoom" type="checkbox"> Room placement requested</label>
-          <label class="lf-check"><input id="lfUnpack" type="checkbox"> Unpacking or debris removal requested</label>
+          <label class="lf-check" id="lfInsideWrap"><input id="lfInside" type="checkbox"> <span id="lfInsideLabel">Inside delivery requested</span></label>
+          <label class="lf-check lf-delivery-only" id="lfRoomWrap"><input id="lfRoom" type="checkbox"> Room placement requested</label>
+          <label class="lf-check lf-delivery-only" id="lfUnpackWrap"><input id="lfUnpack" type="checkbox"> Unpacking or debris removal requested</label>
+          <label class="lf-check lf-pickup-only" id="lfCarryOutWrap" hidden><input id="lfCarryOut" type="checkbox"> Item needs to be carried out from inside the home or a specific room</label>
         </div>
 
         <div class="lf-access-card">
@@ -565,26 +566,26 @@ to remain visible inside the Webflow Designer.
             </div>
           </div>
 
-          <label class="lf-check"><input id="lfDock" type="checkbox"> Confirmed loading dock at delivery</label>
+          <label class="lf-check" id="lfDockWrap"><input id="lfDock" type="checkbox"> <span id="lfDockLabel">Confirmed loading dock at delivery</span></label>
         </div>
 
         <div class="lf-access-card">
           <h3>Labor &amp; Item Handling</h3>
           <label class="lf-check"><input id="lfCrew" type="checkbox"> This item may require more than two people</label>
-          <div class="lf-help" style="margin:-2px 4px 8px 4px;">
+          <div class="lf-help" id="lfCrewHelp" style="margin:-2px 4px 8px 4px;">
             Lost &amp; Found will review the item, weight, size, and access conditions. If more than two movers or a specialized delivery crew is required, the delivery price will increase and we will provide an updated estimated range for approval before scheduling.
           </div>
           <label class="lf-check"><input id="lfFragile" type="checkbox"> Fragile, antique, glass, artwork, wicker, cane, rattan, or high-end item</label>
-          <label class="lf-check"><input id="lfDisassembly" type="checkbox"> Disassembly or assembly may be required</label>
-          <label class="lf-check"><input id="lfLongCarry" type="checkbox"> Long carry from truck to entrance</label>
-          <div class="lf-help" style="margin:-2px 4px 8px 4px;">
+          <label class="lf-check" id="lfDisassemblyWrap"><input id="lfDisassembly" type="checkbox"> <span id="lfDisassemblyLabel">Disassembly or assembly may be required</span></label>
+          <label class="lf-check" id="lfLongCarryWrap"><input id="lfLongCarry" type="checkbox"> <span id="lfLongCarryLabel">Long carry from truck to entrance</span></label>
+          <div class="lf-help" id="lfLongCarryHelp" style="margin:-2px 4px 8px 4px;">
             A long carry means the movers must carry the item an extended distance, generally about 75 feet or more, from where the truck can park to the entrance, elevator, or delivery area.
           </div>
         </div>
 
         <div class="lf-access-card">
           <h3>Parking &amp; Other Restrictions</h3>
-          <label class="lf-check"><input id="lfParking" type="checkbox"> Limited truck parking, low clearance, or restricted delivery hours</label>
+          <label class="lf-check" id="lfParkingWrap"><input id="lfParking" type="checkbox"> <span id="lfParkingLabel">Limited truck parking, low clearance, or restricted delivery hours</span></label>
           <div class="lf-field" style="margin-top:9px">
             <label for="lfNotes">Other access notes</label>
             <textarea id="lfNotes" placeholder="Share anything else the delivery team or carrier should know."></textarea>
@@ -592,12 +593,12 @@ to remain visible inside the Webflow Designer.
         </div>
       </div>
 
-      <div class="lf-notice" style="margin-top:12px"><strong>Smart defaults:</strong> Residential delivery and liftgate service are assumed. Liftgate delivery is removed only when a confirmed loading dock is available.</div>
+      <div class="lf-notice" id="lfSmartDefaults" style="margin-top:12px"><strong>Smart defaults:</strong> Residential delivery and liftgate service are assumed. Liftgate delivery is removed only when a confirmed loading dock is available.</div>
       <div class="lf-alert error" id="lfReviewAlert"></div>
 
       <label class="lf-check lf-estimate-confirmation" style="margin-top:14px;">
         <input id="lfReviewAgree" type="checkbox">
-        I understand this is a preliminary estimate and final pricing must be confirmed before delivery or freight is scheduled.
+        <span id="lfAgreeLabel">I understand this is a preliminary estimate and final pricing must be confirmed before delivery or freight is scheduled.</span>
       </label>
 
       <p class="lf-fine lf-review-email-note">
@@ -642,7 +643,7 @@ to remain visible inside the Webflow Designer.
 
       <div class="lf-request-details-heading">
         <h2>Here Was Your Request Summary</h2>
-        <p>Below are the delivery address, item information, and access details you submitted.</p>
+        <p id="lfSummaryHelp">Below are the delivery address, item information, and access details you submitted.</p>
       </div>
 
       <div class="lf-summary" id="lfSummary"></div>
