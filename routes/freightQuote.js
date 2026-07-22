@@ -1,5 +1,5 @@
 import express from "express";
-import { isResendConfigured } from "../emailService.js";
+import { isResendConfigured, parseRecipients } from "../emailService.js";
 import { applyConsignmentCorsHeaders } from "../lib/consignmentCors.js";
 import { validateFreightQuoteRequest } from "../lib/freightQuoteValidation.js";
 import { sendFreightQuoteEmails } from "../lib/freightQuoteEmail.js";
@@ -270,12 +270,12 @@ router.post("/freight-quote", freightRateLimit, jsonParser, async (req, res) => 
     const submittedAt = formatSubmittedAt();
 
     let emails = {
-      customer: { sent: false, to: submission.customer_email, error: null },
-      internal: { sent: false, to: "INTERNAL_NOTIFY_EMAIL", error: null },
+      customer: { sent: false, to: submission.customer_email },
+      internal: { sent: false, to: parseRecipients(process.env.INTERNAL_NOTIFY_EMAIL) },
     };
 
     try {
-      await sendFreightQuoteEmails(submission, {
+      const mailResult = await sendFreightQuoteEmails(submission, {
         requestId,
         submittedAt,
         route: ctx.route || null,
@@ -283,9 +283,26 @@ router.post("/freight-quote", freightRateLimit, jsonParser, async (req, res) => 
         reviewReasons: ctx.review_reasons || [],
       });
       emails = {
-        customer: { sent: true, to: submission.customer_email, error: null },
-        internal: { sent: true, to: "INTERNAL_NOTIFY_EMAIL", error: null },
+        customer: {
+          sent: true,
+          to: submission.customer_email,
+          resend_id: mailResult.customer.resend_id,
+        },
+        internal: {
+          sent: true,
+          to: mailResult.internal.to,
+          resend_id: mailResult.internal.resend_id,
+        },
       };
+      console.log("[freight-quote] emails accepted by Resend", {
+        requestId,
+        customer_resend_id: mailResult.customer.resend_id,
+        internal_resend_id: mailResult.internal.resend_id,
+        customer_to: submission.customer_email.replace(/(.{2}).+(@.+)/, "$1***$2"),
+        internal_to: (mailResult.internal.to || []).map((e) =>
+          String(e).replace(/(.{2}).+(@.+)/, "$1***$2")
+        ),
+      });
     } catch (mailErr) {
       console.error("[freight-quote] email failed:", mailErr?.message || mailErr);
       return res.status(500).json({
@@ -293,8 +310,8 @@ router.post("/freight-quote", freightRateLimit, jsonParser, async (req, res) => 
         error: "Estimate calculated but email failed. Please try again or call 480-588-7006.",
         request_id: requestId,
         emails: {
-          customer: { sent: false, to: submission.customer_email, error: String(mailErr?.message || mailErr) },
-          internal: { sent: false, error: String(mailErr?.message || mailErr) },
+          customer: { sent: false, to: submission.customer_email, fail: String(mailErr?.message || mailErr) },
+          internal: { sent: false, fail: String(mailErr?.message || mailErr) },
         },
       });
     }
@@ -320,7 +337,8 @@ router.post("/freight-quote", freightRateLimit, jsonParser, async (req, res) => 
       mode: submission.request_mode,
       items: submission.items.length,
       email: submission.customer_email.replace(/(.{2}).+(@.+)/, "$1***$2"),
-      emails,
+      customer_resend_id: emails.customer.resend_id,
+      internal_resend_id: emails.internal.resend_id,
     });
 
     return res.json(responseBody);

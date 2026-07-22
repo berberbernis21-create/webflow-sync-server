@@ -27,6 +27,7 @@ export function isResendConfigured() {
 
 /**
  * @param {{ to: string | string[], subject: string, html?: string, text?: string, replyTo?: string }} opts
+ * @returns {Promise<{ id: string, to: string[] }>}
  */
 export async function sendEmail({ to, subject, html, text, replyTo }) {
   if (!process.env.FROM_EMAIL) {
@@ -51,7 +52,11 @@ export async function sendEmail({ to, subject, html, text, replyTo }) {
   if (result.error) {
     throw new Error(result.error.message || "Resend send failed");
   }
-  return result;
+  const id = result.data?.id || result.id;
+  if (!id) {
+    throw new Error("Resend accepted the request but returned no message id");
+  }
+  return { id: String(id), to: recipients };
 }
 
 /**
