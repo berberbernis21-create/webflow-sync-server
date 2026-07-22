@@ -1,4 +1,4 @@
-# Delivery & Freight Calculator — Webflow paste
+# Delivery & Freight Calculator | Webflow paste
 
 Source of truth: the customer's Part 1 + Part 2 (look, copy, payload, summary).
 
