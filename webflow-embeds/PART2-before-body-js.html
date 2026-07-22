@@ -383,10 +383,21 @@ This script will run on the published Webflow staging and production sites.
               ? '<p><strong>Additional review is needed:</strong> Stairs, tight access, long carries, special handling, inside placement, or other reported conditions may affect the final price.</p>'
               : '<p>This is a best estimate only. Final pricing and scheduling must be confirmed by Lost &amp; Found Resale.</p>'));
     }else{
+      const rate=preview?.nationwide_rate||{};
+      const display=preview?.display||{};
+      const low=Number(rate.range_low??display.range_low);
+      const high=Number(rate.range_high??display.range_high);
+      const hasRange=Number.isFinite(low)&&Number.isFinite(high)&&low>0&&high>=low;
+      const miles=Number(rate.distance_miles??rate.route?.distance_miles??display.distance_miles??preview?.route?.distance_miles);
+      const milesText=Number.isFinite(miles)&&miles>0?" about "+miles+" miles from our Scottsdale showroom,":"";
+      const rangeText=hasRange?money(low)+" – "+money(high):"Freight-Ready";
       const buyLinks=payload.items.filter(i=>i.product_url).map(i=>
         '<li><a href="'+escapeHtml(i.product_url)+'"><strong>'+escapeHtml(i.title||"View item")+'</strong></a></li>'
       ).join("");
-      result.innerHTML='<h2>Your Nationwide Freight Summary</h2><div class="lf-price">Freight-Ready</div><p>Your pallet dimensions, weight, freight class, liftgate, residential/commercial, and non-stackable details are ready for review.</p><p><strong>No fake carrier price is shown.</strong> Lost &amp; Found can provide a confirmed FreightCenter quote and Shipment ID after reviewing the request. FreightCenter can also be reached at 800-716-7608.</p>'+
+      result.innerHTML='<h2>Your Preliminary Nationwide Freight Range</h2>'+
+        '<div class="lf-price">'+rangeText+'</div>'+
+        '<p>This preliminary range accounts for pallet dimensions and weight,'+milesText+' residential/commercial delivery, liftgate, and handling needs. Nationwide freight is never quoted below <strong>$350.00</strong>; white-glove services (inside delivery, room placement, unpacking, assembly, or extra crew) can increase the upper end.</p>'+
+        '<p><strong>This is an estimate only.</strong> We will follow up with a direct quote and contact our freight partners to give you an exact quote as well. Confirmed carrier pricing and the Shipment ID come after that review. FreightCenter can also be reached at 800-716-7608.</p>'+
         '<p><strong>We do not hold items</strong> — we work for our consignors. If you are ready to buy, go ahead and purchase and we can confirm freight rates afterward. If you want rates confirmed before buying, email <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> or call <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>'+
         (buyLinks?'<p><strong>Buy your item(s):</strong></p><ul>'+buyLinks+'</ul>':'');
     }

@@ -124,7 +124,10 @@ async function buildQuoteContext(submission) {
 
   if (submission.delivery_path === "nationwide") {
     const nationwide_rate = await fetchNationwideLiveRate(submission);
-    const pending = nationwide_rate.status !== "quoted";
+    const low = nationwide_rate.range_low;
+    const high = nationwide_rate.range_high;
+    const rangeFormatted =
+      low != null && high != null ? `${money(low)} – ${money(high)}` : null;
     return {
       delivery_path: "nationwide",
       freight_ready: true,
@@ -133,23 +136,32 @@ async function buildQuoteContext(submission) {
         provider: addrResult.provider,
         delivery_address: submission.delivery_address,
       },
+      route: nationwide_rate.route?.distance_miles != null
+        ? {
+            distance_miles: nationwide_rate.route.distance_miles,
+            drive_minutes: nationwide_rate.route.drive_minutes ?? null,
+          }
+        : null,
       items,
       accessorials,
       nationwide_rate,
       requires_confirmed_quote: true,
-      requires_manual_review: pending || Boolean(nationwide_rate.status === "pending_manual_review"),
-      review_reasons: pending
-        ? ["Nationwide carrier rate pending FreightCenter / staff confirmation"]
-        : [],
+      requires_manual_review: true,
+      review_reasons: [
+        "Nationwide preliminary range only — confirm exact quote with freight partners",
+      ],
       multi_item_note: submission.multi_item_note || undefined,
       display: {
-        headline: pending ? "Freight-Ready — Rate Pending Review" : "Nationwide Freight Quote",
-        estimate_label: null,
-        display_amount: nationwide_rate.amount,
-        display_amount_formatted:
-          nationwide_rate.amount != null ? money(nationwide_rate.amount) : null,
+        headline: "Your Preliminary Nationwide Freight Range",
+        estimate_label: "Estimated freight range",
+        display_amount: null,
+        display_amount_formatted: rangeFormatted,
+        range_low: low,
+        range_high: high,
+        distance_miles: nationwide_rate.distance_miles ?? nationwide_rate.route?.distance_miles ?? null,
         status: nationwide_rate.status,
         message: nationwide_rate.message,
+        white_glove_likely: Boolean(nationwide_rate.white_glove_likely),
       },
       message: nationwide_rate.message,
     };
@@ -280,6 +292,7 @@ router.post("/freight-quote", freightRateLimit, jsonParser, async (req, res) => 
         submittedAt,
         route: ctx.route || null,
         localEstimate: ctx.local_estimate || null,
+        nationwideRate: ctx.nationwide_rate || null,
         reviewReasons: ctx.review_reasons || [],
       });
       emails = {

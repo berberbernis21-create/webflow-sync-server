@@ -11,6 +11,10 @@ import {
 import { validateFreightQuoteRequest } from "../lib/freightQuoteValidation.js";
 import { buildManualReviewReasons } from "../lib/freightLocalEstimate.js";
 import { isAllowedConsignmentOrigin } from "../lib/consignmentCors.js";
+import {
+  estimateNationwideRange,
+  NATIONWIDE_FLOOR_USD,
+} from "../lib/freightNationwideRate.js";
 
 test("local pricing: 17 min = $95", () => {
   assert.equal(calculateLocalRouteEstimate(17).estimated_price, 95);
@@ -358,4 +362,37 @@ test("CORS allows production + webflow.io + localhost", () => {
   assert.equal(isAllowedConsignmentOrigin("https://lf-freight.webflow.io"), true);
   assert.equal(isAllowedConsignmentOrigin("http://localhost:3000"), true);
   assert.equal(isAllowedConsignmentOrigin("https://evil.example"), false);
+});
+
+test("nationwide range never below $350", () => {
+  const short = estimateNationwideRange({
+    miles: 50,
+    items: [{ weight: 40, pallet: { weight: 70 } }],
+    access: { residential: true, liftgate_delivery: true },
+  });
+  assert.equal(short.status, "estimated_range");
+  assert.ok(short.range_low >= NATIONWIDE_FLOOR_USD);
+  assert.ok(short.range_high >= short.range_low);
+});
+
+test("nationwide white-glove access pushes high end up", () => {
+  const base = estimateNationwideRange({
+    miles: 1800,
+    items: [{ weight: 172, pallet: { weight: 202 } }],
+    access: { residential: true, liftgate_delivery: true },
+  });
+  const glove = estimateNationwideRange({
+    miles: 1800,
+    items: [{ weight: 172, pallet: { weight: 202 } }],
+    access: {
+      residential: true,
+      liftgate_delivery: true,
+      inside_delivery: true,
+      room_placement: true,
+      unpacking_or_debris_removal: true,
+    },
+  });
+  assert.ok(glove.range_high > base.range_high);
+  assert.equal(glove.white_glove_likely, true);
+  assert.ok(glove.range_low >= NATIONWIDE_FLOOR_USD);
 });
