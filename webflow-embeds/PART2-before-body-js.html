@@ -131,8 +131,38 @@ This script will run on the published Webflow staging and production sites.
   }
 
   function updatePathDefaults(){
-    const local=$('input[name="delivery_path"]:checked')?.value==="local_az";
-    if(local&&!value("#lfState"))$("#lfState").value="AZ";
+    const path=$('input[name="delivery_path"]:checked')?.value||"local_az";
+    if((path==="local_az"||path==="pickup_az")&&!value("#lfState"))$("#lfState").value="AZ";
+    updateAddressCopy(path);
+  }
+
+  function updateAddressCopy(path){
+    const p=path||$('input[name="delivery_path"]:checked')?.value||"local_az";
+    const head=$("#lfAddressHead h2");
+    const help=$("#lfAddressHelp");
+    const typeLabel=$("#lfTypeLabel");
+    const streetLabel=$("#lfStreetLabel");
+    if(p==="pickup_az"){
+      if(head)head.innerHTML="Contact &amp; Pickup Address";
+      if(help)help.textContent="A valid email and complete pickup address are required. Pickup must be in Arizona.";
+      if(typeLabel)typeLabel.innerHTML='Pickup location <span class="lf-required">*</span>';
+      if(streetLabel)streetLabel.innerHTML='Pickup street address <span class="lf-required">*</span>';
+    }else{
+      if(head)head.innerHTML="Contact &amp; Delivery Address";
+      if(help)help.textContent="A valid email and complete delivery address are required.";
+      if(typeLabel)typeLabel.innerHTML='Delivery location <span class="lf-required">*</span>';
+      if(streetLabel)streetLabel.innerHTML='Street address <span class="lf-required">*</span>';
+    }
+  }
+
+  function pathLabel(path){
+    if(path==="pickup_az")return "Consignor Pickup";
+    if(path==="nationwide")return "Nationwide Freight";
+    return "Local Arizona Delivery";
+  }
+
+  function isLocalStylePath(path){
+    return path==="local_az"||path==="pickup_az";
   }
 
   function addItem(prefill={}){
@@ -340,7 +370,9 @@ This script will run on the published Webflow staging and production sites.
   }
 
   function renderSummary(payload,preview){
-    const pathLocal=payload.delivery_path==="local_az";
+    const path=payload.delivery_path||"local_az";
+    const pathLocal=isLocalStylePath(path);
+    const isPickup=path==="pickup_az";
     const flags=accessFlags(payload.access);
     const itemHtml=payload.items.map((i,idx)=>{
       const classText=i.pallet.freight_class===null?"Class to be confirmed":"Class "+i.pallet.freight_class;
@@ -348,8 +380,8 @@ This script will run on the published Webflow staging and production sites.
     }).join("");
 
     $("#lfSummary").innerHTML=
-      '<div class="lf-summary-card"><h3>Request</h3><p><strong>'+(payload.request_mode==="please_quote"?"Have Us Quote It":"Get an Estimate")+'</strong> · '+(pathLocal?"Local Arizona Delivery":"Nationwide Freight")+'</p></div>'+
-      '<div class="lf-summary-card"><h3>Delivery</h3><p>'+escapeHtml(payload.delivery_address.full)+'</p><p>'+escapeHtml(payload.customer_name)+' · '+escapeHtml(payload.customer_email)+(payload.customer_phone?" · "+escapeHtml(payload.customer_phone):"")+'</p></div>'+
+      '<div class="lf-summary-card"><h3>Request</h3><p><strong>'+(payload.request_mode==="please_quote"?"Have Us Quote It":"Get an Estimate")+'</strong> · '+pathLabel(path)+'</p></div>'+
+      '<div class="lf-summary-card"><h3>'+(isPickup?"Pickup":"Delivery")+'</h3><p>'+escapeHtml(payload.delivery_address.full)+'</p><p>'+escapeHtml(payload.customer_name)+' · '+escapeHtml(payload.customer_email)+(payload.customer_phone?" · "+escapeHtml(payload.customer_phone):"")+'</p></div>'+
       '<div class="lf-summary-card"><h3>Items</h3><ul>'+itemHtml+'</ul></div>'+
       '<div class="lf-summary-card"><h3>Access</h3><p>'+(flags.length?escapeHtml(flags.join(", ")):"No additional access concerns reported.")+'</p><p>Liftgate pickup: Yes · Liftgate delivery: '+(payload.access.liftgate_delivery?"Yes":"No — loading dock confirmed")+'</p></div>';
 
@@ -358,7 +390,7 @@ This script will run on the published Webflow staging and production sites.
       const minutes=extractDriveMinutes(preview);
       const est=localEstimate(minutes);
       const manual=flags.length>0||payload.access.fragile_or_special_handling;
-      const displayedAmount=est?money(est.estimated_price):"$100.00";
+      const displayedAmount=est?money(est.estimated_price):"$95.00";
       const priceLabel=payload.access.needs_more_than_two_people
         ? "Approximate Two-Person Base: "
         : "Your Preliminary Estimate Is ";
@@ -366,21 +398,31 @@ This script will run on the published Webflow staging and production sites.
       const miles=Number(preview?.route?.distance_miles??preview?.display?.distance_miles);
       const milesText=Number.isFinite(miles)&&miles>0?" · about "+miles+" miles":"";
       const driveText=oneWay
-        ? oneWay+" minutes one way ("+(oneWay*2)+" minutes round trip)"+milesText+" from our Scottsdale showroom to your location and back"
-        : "the drive from our Scottsdale showroom to your location and back";
-      const buyLinks=payload.items.filter(i=>i.product_url).map(i=>
+        ? oneWay+" minutes one way ("+(oneWay*2)+" minutes round trip)"+milesText+(isPickup
+            ?" from your pickup location to our Scottsdale showroom and back"
+            :" from our Scottsdale showroom to your location and back")
+        : (isPickup
+            ?"the drive from your pickup location to our Scottsdale showroom and back"
+            :"the drive from our Scottsdale showroom to your location and back");
+      const laborText=isPickup
+        ?"loading the item at your location, securing it for transport, unloading it at our showroom, and the expected time and labor"
+        :"wrapping and securing for transport, loading the item, unloading, and the expected time and labor";
+      const policyText=isPickup
+        ?'<p>This is a consignor pickup estimate. After you submit, our team will confirm scheduling and final pricing. Questions? Email <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> or call <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>'
+        :'<p><strong>We do not hold items</strong> — we work for our consignors. If you are ready to buy, go ahead and purchase and we can confirm delivery rates afterward. If you want rates confirmed before buying, email <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> or call <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>';
+      const buyLinks=!isPickup?payload.items.filter(i=>i.product_url).map(i=>
         '<li><a href="'+escapeHtml(i.product_url)+'"><strong>'+escapeHtml(i.title||"View item")+'</strong></a></li>'
-      ).join("");
+      ).join(""):"";
 
-      result.innerHTML='<h2>Your Preliminary Local Delivery Estimate</h2>'+
+      result.innerHTML='<h2>'+(isPickup?"Your Preliminary Consignor Pickup Estimate":"Your Preliminary Local Delivery Estimate")+'</h2>'+
         '<div class="lf-price">'+priceLabel+displayedAmount+'</div>'+
-        '<p>This estimate considers '+driveText+', wrapping and securing for transport, loading the item, unloading, and the expected time and labor.</p>'+
-        '<p><strong>We do not hold items</strong> — we work for our consignors. If you are ready to buy, go ahead and purchase and we can confirm delivery rates afterward. If you want rates confirmed before buying, email <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> or call <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>'+
+        '<p>This estimate considers '+driveText+', '+laborText+'.</p>'+
+        policyText+
         (buyLinks?'<p><strong>Buy your item(s):</strong></p><ul>'+buyLinks+'</ul>':'')+
         (payload.access.needs_more_than_two_people
-          ? '<p><strong>Additional crew review required:</strong> The amount above reflects the standard two-person delivery estimate and does not include additional movers or a specialized crew. We will confirm whether extra labor is required and provide an updated estimated range before scheduling.</p>'
+          ? '<p><strong>Additional crew review required:</strong> The amount above reflects the standard two-person estimate and does not include additional movers or a specialized crew. We will confirm whether extra labor is required and provide an updated estimated range before scheduling.</p>'
           : (manual
-              ? '<p><strong>Additional review is needed:</strong> Stairs, tight access, long carries, special handling, inside placement, or other reported conditions may affect the final price.</p>'
+              ? '<p><strong>Additional review is needed:</strong> Stairs, tight access, long carries, special handling, or other reported conditions may affect the final price.</p>'
               : '<p>This is a best estimate only. Final pricing and scheduling must be confirmed by Lost &amp; Found Resale.</p>'));
     }else{
       const rate=preview?.nationwide_rate||{};
@@ -549,10 +591,12 @@ This script will run on the published Webflow staging and production sites.
   $("#lfElevator").addEventListener("change",e=>$("#lfElevatorDetails").hidden=!e.target.checked);
   $("#lfGate").addEventListener("change",e=>$("#lfGateDetails").hidden=!e.target.checked);
   $$('input[name="delivery_path"]').forEach(el=>el.addEventListener("change",()=>{
-    const local=$('input[name="delivery_path"]:checked').value==="local_az";
-    if(local)$("#lfState").value="AZ";
+    const path=$('input[name="delivery_path"]:checked').value;
+    if(path==="local_az"||path==="pickup_az")$("#lfState").value="AZ";
+    updateAddressCopy(path);
   }));
 
+  updateAddressCopy();
   addItem();
 })();
 </script>

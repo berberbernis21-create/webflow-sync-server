@@ -51,6 +51,7 @@ function accessorialsFromAccess(access = {}) {
 
 function buildLocalDisplay(submission, local) {
   const extraCrew = Boolean(submission.access?.needs_more_than_two_people);
+  const isPickup = submission.delivery_path === "pickup_az";
   const amount = local.local_estimate?.estimated_price ?? null;
   const label = extraCrew
     ? "Approximate Two-Person Base:"
@@ -63,6 +64,8 @@ function buildLocalDisplay(submission, local) {
     drive_minutes: local.route?.drive_minutes ?? local.local_estimate?.drive_minutes ?? null,
     distance_miles: local.route?.distance_miles ?? null,
     currency: "USD",
+    path: submission.delivery_path,
+    is_pickup: isPickup,
     requires_manual_review: Boolean(local.requires_manual_review),
     review_reasons: local.review_reasons || [],
     extra_crew: extraCrew,
@@ -171,7 +174,7 @@ async function buildQuoteContext(submission) {
 
   const display = buildLocalDisplay(submission, local);
   return {
-    delivery_path: "local_az",
+    delivery_path: submission.delivery_path || local.delivery_path || "local_az",
     address: {
       standardized: Boolean(addrResult.standardized),
       provider: addrResult.provider,

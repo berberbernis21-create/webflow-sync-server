@@ -396,3 +396,51 @@ test("nationwide white-glove access pushes high end up", () => {
   assert.equal(glove.white_glove_likely, true);
   assert.ok(glove.range_low >= NATIONWIDE_FLOOR_USD);
 });
+
+test("consignor pickup_az accepted for Arizona address", () => {
+  const v = validateFreightQuoteRequest({
+    customer_name: "Consignor",
+    customer_email: "c@x.com",
+    street: "123 Main St",
+    city: "Phoenix",
+    state: "AZ",
+    zip: "85001",
+    delivery_path: "pickup_az",
+    access: {
+      residential: true,
+      dock: false,
+      forklift: false,
+      freight_elevator: false,
+      stairs: false,
+      needs_more_than_two_people: false,
+      tight_turns_or_narrow_halls: false,
+    },
+    items: [{ title: "Console", width: 48, depth: 18, height: 30, weight: 80 }],
+  });
+  assert.equal(v.ok, true);
+  assert.equal(v.submission.delivery_path, "pickup_az");
+});
+
+test("consignor pickup_az rejected outside Arizona", () => {
+  const v = validateFreightQuoteRequest({
+    customer_name: "Consignor",
+    customer_email: "c@x.com",
+    street: "1 Main",
+    city: "Denver",
+    state: "CO",
+    zip: "80202",
+    delivery_path: "pickup_az",
+    access: {
+      residential: true,
+      dock: false,
+      forklift: false,
+      freight_elevator: false,
+      stairs: false,
+      needs_more_than_two_people: false,
+      tight_turns_or_narrow_halls: false,
+    },
+    items: [{ title: "Table", width: 40, depth: 20, height: 30, weight: 50 }],
+  });
+  assert.equal(v.ok, false);
+  assert.match(v.error, /Arizona/i);
+});

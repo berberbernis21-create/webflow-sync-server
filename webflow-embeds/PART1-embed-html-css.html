@@ -43,6 +43,8 @@ to remain visible inside the Webflow Designer.
 .lf-error{min-height:13px;margin-top:3px;color:var(--lf-red);font-size:10px;font-weight:700}
 .lf-required{color:var(--lf-red)}
 .lf-choice-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.lf-path-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+@media(max-width:900px){.lf-path-grid{grid-template-columns:1fr}}
 .lf-choice{position:relative}
 .lf-choice input{position:absolute;opacity:0}
 .lf-choice label{display:block;height:100%;min-height:104px;padding:14px;border:1px solid var(--lf-border);border-radius:7px;background:var(--lf-cream);cursor:pointer;transition:.15s}
@@ -160,6 +162,17 @@ to remain visible inside the Webflow Designer.
 #lfLocal:checked + label::after {
   border-color: var(--lf-green);
   background: var(--lf-green);
+}
+
+#lfPickup:checked + label {
+  border-color: var(--lf-olive);
+  background: #f3f5ef;
+  box-shadow: 0 0 0 4px rgba(81, 96, 68, .11);
+}
+
+#lfPickup:checked + label::after {
+  border-color: var(--lf-olive);
+  background: var(--lf-olive);
 }
 
 #lfNational:checked + label {
@@ -405,9 +418,9 @@ to remain visible inside the Webflow Designer.
 
 <div class="lf-calc" id="lfCalc">
   <div class="lf-hero">
-    <span class="lf-kicker">Local Arizona + Nationwide</span>
-    <h1>Delivery &amp; Freight Calculator</h1>
-    <p>For items without automatic shipping at checkout, enter the product and delivery details below for a preliminary local estimate or a freight-ready nationwide request.</p>
+    <span class="lf-kicker">Local Delivery · Consignor Pickup · Nationwide</span>
+    <h1>Delivery, Pickup &amp; Freight Calculator</h1>
+    <p>For items without automatic shipping at checkout — or for consignor pickups — enter the details below for a preliminary local estimate or a freight-ready nationwide request.</p>
     <div class="lf-notice"><strong>Best estimate only:</strong> Final pricing can change after item measurements, actual travel time, stairs, access, labor, carrier pricing, packaging, insurance, and special handling are confirmed. Contact Lost &amp; Found Resale for the most accurate pricing.</div>
   </div>
 
@@ -423,10 +436,11 @@ to remain visible inside the Webflow Designer.
     <div class="lf-hidden" aria-hidden="true"><label>Leave blank<input name="company_website" tabindex="-1" autocomplete="off"></label></div>
 
     <section class="lf-step" data-step="1">
-      <div class="lf-head"><h2>What do you need?</h2><p>Choose the delivery path and how you would like us to help.</p></div>
+      <div class="lf-head"><h2>What do you need?</h2><p>Choose delivery, consignor pickup, or nationwide freight.</p></div>
 
-      <div class="lf-choice-grid">
-        <div class="lf-choice"><input id="lfLocal" type="radio" name="delivery_path" value="local_az" checked><label for="lfLocal"><strong>Local Arizona Delivery</strong><span>Delivery from our Scottsdale showroom is typically approximately $100.00. Final pricing is confirmed by our team based on the complete delivery details.</span></label></div>
+      <div class="lf-choice-grid lf-path-grid">
+        <div class="lf-choice"><input id="lfLocal" type="radio" name="delivery_path" value="local_az" checked><label for="lfLocal"><strong>Local Arizona Delivery</strong><span>We deliver from our Scottsdale showroom to you. Preliminary estimates start at $95 for the first 17 minutes of drive time.</span></label></div>
+        <div class="lf-choice"><input id="lfPickup" type="radio" name="delivery_path" value="pickup_az"><label for="lfPickup"><strong>Consignor Pickup</strong><span>We pick up from your Arizona location and bring the item to our Scottsdale showroom. Same local pricing — $95 for the first 17 minutes.</span></label></div>
         <div class="lf-choice"><input id="lfNational" type="radio" name="delivery_path" value="nationwide"><label for="lfNational"><strong>Nationwide Freight</strong><span>We prepare the pallet, freight class, and accessorial details needed for a FreightCenter quote.</span></label></div>
       </div>
 
@@ -440,7 +454,7 @@ to remain visible inside the Webflow Designer.
     </section>
 
     <section class="lf-step" data-step="2" hidden>
-      <div class="lf-head"><h2>Contact &amp; Delivery Address</h2><p>A valid email and complete delivery address are required.</p></div>
+      <div class="lf-head" id="lfAddressHead"><h2>Contact &amp; Delivery Address</h2><p id="lfAddressHelp">A valid email and complete delivery address are required.</p></div>
       <div class="lf-grid">
         <div class="lf-field"><label for="lfName">Full name <span class="lf-required">*</span></label><input id="lfName" name="customer_name" autocomplete="name" required><div class="lf-error"></div></div>
         <div class="lf-field">
@@ -450,8 +464,8 @@ to remain visible inside the Webflow Designer.
           <div class="lf-error"></div>
         </div>
         <div class="lf-field"><label for="lfPhone">Phone</label><input id="lfPhone" name="customer_phone" type="tel" autocomplete="tel"><div class="lf-error"></div></div>
-        <div class="lf-field"><label for="lfType">Delivery location <span class="lf-required">*</span></label><select id="lfType" name="destination_type" required><option value="residential" selected>Residential</option><option value="commercial">Commercial</option></select><div class="lf-error"></div></div>
-        <div class="lf-field lf-span"><label for="lfStreet">Street address <span class="lf-required">*</span></label><input id="lfStreet" name="street" autocomplete="street-address" required><div class="lf-error"></div></div>
+        <div class="lf-field"><label for="lfType" id="lfTypeLabel">Delivery location <span class="lf-required">*</span></label><select id="lfType" name="destination_type" required><option value="residential" selected>Residential</option><option value="commercial">Commercial</option></select><div class="lf-error"></div></div>
+        <div class="lf-field lf-span"><label for="lfStreet" id="lfStreetLabel">Street address <span class="lf-required">*</span></label><input id="lfStreet" name="street" autocomplete="street-address" required><div class="lf-error"></div></div>
         <div class="lf-field"><label for="lfUnit">Unit, suite, building</label><input id="lfUnit" name="unit" autocomplete="address-line2"><div class="lf-error"></div></div>
         <div class="lf-field"><label for="lfCity">City <span class="lf-required">*</span></label><input id="lfCity" name="city" autocomplete="address-level2" required><div class="lf-error"></div></div>
         <div class="lf-field"><label for="lfState">State <span class="lf-required">*</span></label><input id="lfState" name="state" maxlength="2" value="AZ" autocomplete="address-level1" required><div class="lf-help">Use the two-letter state abbreviation.</div><div class="lf-error"></div></div>
