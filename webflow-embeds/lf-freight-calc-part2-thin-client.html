@@ -183,7 +183,7 @@ This script will run on the published Webflow staging and production sites.
       setText("#lfLongCarryLabel","Long carry from entrance to the truck");
       setText("#lfLongCarryHelp","A long carry means the movers must carry the item an extended distance, generally about 75 feet or more, from the entrance, elevator, or pickup area to where the truck can park.");
       setText("#lfParkingLabel","Limited truck parking, low clearance, or restricted pickup hours");
-      setText("#lfSmartDefaults","<strong>Smart defaults:</strong> Residential pickup and liftgate service are assumed. Liftgate is removed only when a confirmed loading dock is available.",true);
+      setText("#lfSmartDefaults","<strong>Note:</strong> Residential pickup is the default. Check any stairs, access, or handling items that apply so we can price the job accurately.",true);
       setText("#lfAgreeLabel","I understand this is a preliminary estimate and final pricing must be confirmed before pickup is scheduled.");
       const notes=$("#lfNotes");
       if(notes)notes.placeholder="Share anything else the pickup team should know.";
@@ -199,7 +199,7 @@ This script will run on the published Webflow staging and production sites.
       setText("#lfLongCarryLabel","Long carry from truck to entrance");
       setText("#lfLongCarryHelp","A long carry means the movers must carry the item an extended distance, generally about 75 feet or more, from where the truck can park to the entrance, elevator, or delivery area.");
       setText("#lfParkingLabel","Limited truck parking, low clearance, or restricted delivery hours");
-      setText("#lfSmartDefaults","<strong>Smart defaults:</strong> Residential delivery and liftgate service are assumed. Liftgate delivery is removed only when a confirmed loading dock is available.",true);
+      setText("#lfSmartDefaults","<strong>Note:</strong> Residential delivery is the default. Check any stairs, access, or handling items that apply so we can price the job accurately.",true);
       setText("#lfAgreeLabel","I understand this is a preliminary estimate and final pricing must be confirmed before delivery or freight is scheduled.");
       const notes=$("#lfNotes");
       if(notes)notes.placeholder="Share anything else the delivery team or carrier should know.";
@@ -378,8 +378,8 @@ This script will run on the published Webflow staging and production sites.
       parking_or_time_restrictions:bool("#lfParking"),
       fragile_or_special_handling:bool("#lfFragile"),
       notes:value("#lfNotes"),
-      liftgate_pickup:path==="pickup_az"?!dock:true,
-      liftgate_delivery:path==="pickup_az"?false:!dock
+      liftgate_pickup:path==="nationwide"?true:(path==="pickup_az"?!dock:false),
+      liftgate_delivery:path==="nationwide"?!dock:false
     };
 
     return {
@@ -455,15 +455,15 @@ This script will run on the published Webflow staging and production sites.
       return '<li><strong>'+escapeHtml(i.title||("Item "+(idx+1)))+'</strong>: '+i.width+'" × '+i.depth+'" × '+i.height+'" · '+i.weight+' lb · Freight '+i.pallet.width+'" × '+i.pallet.depth+'" × '+i.pallet.height+'" · '+i.pallet.weight+' lb · '+classText+(i.pallet.non_stackable?" · Non-stackable":"")+'</li>';
     }).join("");
 
-    const liftgateLine=isPickup
-      ? ("Liftgate at pickup: "+(payload.access.liftgate_pickup?"Yes":"No — loading dock confirmed"))
-      : ("Liftgate pickup: Yes · Liftgate delivery: "+(payload.access.liftgate_delivery?"Yes":"No — loading dock confirmed"));
+    const liftgateLine=path==="nationwide"
+      ? ("Liftgate pickup: Yes · Liftgate delivery: "+(payload.access.liftgate_delivery?"Yes":"No — loading dock confirmed"))
+      : "";
 
     $("#lfSummary").innerHTML=
       '<div class="lf-summary-card"><h3>Request</h3><p><strong>'+(payload.request_mode==="please_quote"?"Have Us Quote It":"Get an Estimate")+'</strong> · '+pathLabel(path)+'</p></div>'+
       '<div class="lf-summary-card"><h3>'+(isPickup?"Pickup":"Delivery")+'</h3><p>'+escapeHtml(payload.delivery_address.full)+'</p><p>'+escapeHtml(payload.customer_name)+' · '+escapeHtml(payload.customer_email)+(payload.customer_phone?" · "+escapeHtml(payload.customer_phone):"")+'</p></div>'+
       '<div class="lf-summary-card"><h3>Items</h3><ul>'+itemHtml+'</ul></div>'+
-      '<div class="lf-summary-card"><h3>Access</h3><p>'+(flags.length?escapeHtml(flags.join(", ")):"No additional access concerns reported.")+'</p><p>'+liftgateLine+'</p></div>';
+      '<div class="lf-summary-card"><h3>Access</h3><p>'+(flags.length?escapeHtml(flags.join(", ")):"No additional access concerns reported.")+'</p>'+(liftgateLine?'<p>'+liftgateLine+'</p>':'')+'</div>';
 
     const result=$("#lfResult");
     if(pathLocal){
