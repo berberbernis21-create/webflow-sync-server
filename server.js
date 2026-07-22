@@ -3,7 +3,12 @@ import axios from "axios";
 import crypto from "crypto";
 import dotenv from "dotenv";
 import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
 import twilio from "twilio";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 import {
   isMissingFieldsEmailGroupConfigured,
   isResendConfigured,
@@ -555,6 +560,11 @@ async function removeFurnitureWebflowItem(config, itemId) {
 const app = express();
 
 app.use(createConsignmentCorsMiddleware());
+
+app.use("/brand", express.static(path.join(__dirname, "public", "brand"), {
+  maxAge: "7d",
+  fallthrough: true,
+}));
 
 app.use("/api", consignmentRouter);
 app.use("/api", freightQuoteRouter);

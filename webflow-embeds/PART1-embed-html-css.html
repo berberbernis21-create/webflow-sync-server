@@ -105,6 +105,12 @@ to remain visible inside the Webflow Designer.
 .lf-social-btn.lf-social-fb{border-color:#3b5998;background:#3b5998;color:#fff}
 .lf-social-btn.lf-social-ig{border-color:#c13584;background:#c13584;color:#fff}
 .lf-social-btn.lf-social-light{border-color:var(--lf-navy);background:#fff;color:var(--lf-navy)}
+.lf-showroom-strip{margin:16px 0;padding:14px;border:1px solid var(--lf-border);border-radius:10px;background:var(--lf-cream)}
+.lf-showroom-strip h3{margin:0 0 8px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#111}
+.lf-showroom-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.lf-showroom-grid img{display:block;width:100%;height:120px;object-fit:cover;border-radius:6px;border:1px solid var(--lf-border);background:#fff}
+.lf-showroom-strip p{margin:8px 0 0;font-size:11px;color:var(--lf-muted)}
+@media(max-width:767px){.lf-showroom-grid{grid-template-columns:1fr}}
 .lf-alert{display:none;margin-top:12px;padding:10px 11px;border-radius:5px;font-size:11px;font-weight:700}
 .lf-alert.show{display:block}
 .lf-alert.error{border:1px solid #d5b4b4;background:#fff7f7;color:var(--lf-red)}
@@ -642,6 +648,15 @@ to remain visible inside the Webflow Designer.
           <a class="lf-social-btn lf-social-fb" href="https://www.facebook.com/people/Lost-and-Found-Luxury-Resale/61584002517357/" target="_blank" rel="noopener">Luxury Facebook</a>
           <a class="lf-social-btn lf-social-ig" href="https://www.instagram.com/lostandfoundhandbags/" target="_blank" rel="noopener">Luxury Instagram</a>
         </div>
+      </div>
+
+      <div class="lf-showroom-strip">
+        <h3>Visit our Scottsdale showroom</h3>
+        <div class="lf-showroom-grid">
+          <img src="https://webflow-sync-server.onrender.com/brand/showroom-exterior.png" alt="Lost + Found showroom exterior" loading="lazy">
+          <img src="https://webflow-sync-server.onrender.com/brand/showroom-interior.png" alt="Lost + Found showroom interior" loading="lazy">
+        </div>
+        <p>15530 N Greenway Hayden Loop Ste 100, Scottsdale | Mon-Sat 10-5, Sun 12-4</p>
       </div>
 
       <div class="lf-request-details-heading">

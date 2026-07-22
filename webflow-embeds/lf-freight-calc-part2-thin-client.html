@@ -478,8 +478,8 @@ This script will run on the published Webflow staging and production sites.
         ?"Total time is calculated as a round trip, not one way. The estimate also covers preparing the freight, loading and securing it on the truck, return to the showroom, offloading, and placement."
         :"Total time is calculated as a round trip, not one way. The estimate also covers wrapping and preparing the freight, loading and securing it on the truck, offloading, and placement.";
       const policyText=isPickup
-        ?'<p>Consignor pickup estimate. We will confirm scheduling and final pricing. Questions? <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> · <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>'
-        :'<p><strong>We do not hold items</strong> | we work for our consignors. Ready to buy? Purchase now and we can confirm delivery after. Want rates first? <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> · <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>';
+        ?'<p>Final pricing will need to be confirmed directly with the driver team. If you need final confirmed pricing, please email <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> or call <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>'
+        :'<p><strong>We do not hold items</strong> | we work for our consignors. Ready to buy? Purchase now and we can confirm delivery after. Want rates first? <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> | <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>';
       const buyLinks=!isPickup?payload.items.filter(i=>i.product_url).map(i=>
         '<li><a href="'+escapeHtml(i.product_url)+'"><strong>'+escapeHtml(i.title||"View item")+'</strong></a></li>'
       ).join(""):"";
