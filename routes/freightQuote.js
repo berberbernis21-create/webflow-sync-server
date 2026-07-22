@@ -133,7 +133,7 @@ async function buildQuoteContext(submission) {
     const low = nationwide_rate.range_low;
     const high = nationwide_rate.range_high;
     const rangeFormatted =
-      low != null && high != null ? `${money(low)} – ${money(high)}` : null;
+      low != null && high != null ? `${money(low)} - ${money(high)}` : null;
     return {
       delivery_path: "nationwide",
       freight_ready: true,
@@ -156,7 +156,7 @@ async function buildQuoteContext(submission) {
       requires_confirmed_quote: true,
       requires_manual_review: true,
       review_reasons: [
-        "Nationwide preliminary range only — confirm exact quote with freight partners",
+        "Nationwide preliminary range only | confirm exact quote with freight partners",
       ],
       multi_item_note: submission.multi_item_note || undefined,
       display: {
@@ -373,7 +373,7 @@ router.post("/freight-quote", freightRateLimit, jsonParser, async (req, res) => 
       success: true,
       message:
         submission.request_mode === "please_quote"
-          ? "Request received. Check your email for a summary — our team will follow up."
+          ? "Request received. Check your email for a summary | our team will follow up."
           : "Estimate request received. Check your email for a summary.",
       request_id: requestId,
       emails,
