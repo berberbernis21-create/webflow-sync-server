@@ -363,21 +363,33 @@ This script will run on the published Webflow staging and production sites.
         ? "Approximate Two-Person Base: "
         : "Your Preliminary Estimate Is ";
       const oneWay=est?est.drive_minutes:(minutes?Math.ceil(minutes):null);
+      const miles=Number(preview?.route?.distance_miles??preview?.display?.distance_miles);
+      const milesText=Number.isFinite(miles)&&miles>0?" · about "+miles+" miles":"";
       const driveText=oneWay
-        ? oneWay+" minutes one way ("+(oneWay*2)+" minutes round trip) from our Scottsdale showroom to your location and back"
+        ? oneWay+" minutes one way ("+(oneWay*2)+" minutes round trip)"+milesText+" from our Scottsdale showroom to your location and back"
         : "the drive from our Scottsdale showroom to your location and back";
+      const buyLinks=payload.items.filter(i=>i.product_url).map(i=>
+        '<li><a href="'+escapeHtml(i.product_url)+'"><strong>'+escapeHtml(i.title||"View item")+'</strong></a></li>'
+      ).join("");
 
       result.innerHTML='<h2>Your Preliminary Local Delivery Estimate</h2>'+
         '<div class="lf-price">'+priceLabel+displayedAmount+'</div>'+
-        '<p>Our team will confirm final pricing after you purchase the item. If you would like confirmed pricing before purchasing, please contact Lost &amp; Found Resale at <a href="tel:4805887006"><strong>480-588-7006</strong></a> or <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a>.</p>'+
         '<p>This estimate considers '+driveText+', wrapping and securing for transport, loading the item, unloading, and the expected time and labor.</p>'+
+        '<p><strong>We do not hold items</strong> — we work for our consignors. If you are ready to buy, go ahead and purchase and we can confirm delivery rates afterward. If you want rates confirmed before buying, email <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> or call <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>'+
+        (buyLinks?'<p><strong>Buy your item(s):</strong></p><ul>'+buyLinks+'</ul>':'')+
         (payload.access.needs_more_than_two_people
           ? '<p><strong>Additional crew review required:</strong> The amount above reflects the standard two-person delivery estimate and does not include additional movers or a specialized crew. We will confirm whether extra labor is required and provide an updated estimated range before scheduling.</p>'
           : (manual
               ? '<p><strong>Additional review is needed:</strong> Stairs, tight access, long carries, special handling, inside placement, or other reported conditions may affect the final price.</p>'
               : '<p>This is a best estimate only. Final pricing and scheduling must be confirmed by Lost &amp; Found Resale.</p>'));
     }else{
-      result.innerHTML='<h2>Your Nationwide Freight Summary</h2><div class="lf-price">Freight-Ready</div><p>Your pallet dimensions, weight, freight class, liftgate, residential/commercial, and non-stackable details are ready for review.</p><p><strong>No fake carrier price is shown.</strong> Lost &amp; Found can provide a confirmed FreightCenter quote and Shipment ID after reviewing the request. FreightCenter can also be reached at 800-716-7608.</p>';
+      result.innerHTML='<h2>Your Nationwide Freight Summary</h2><div class="lf-price">Freight-Ready</div><p>Your pallet dimensions, weight, freight class, liftgate, residential/commercial, and non-stackable details are ready for review.</p><p><strong>No fake carrier price is shown.</strong> Lost &amp; Found can provide a confirmed FreightCenter quote and Shipment ID after reviewing the request. FreightCenter can also be reached at 800-716-7608.</p>'+
+        '<p><strong>We do not hold items</strong> — we work for our consignors. If you are ready to buy, go ahead and purchase and we can confirm freight rates afterward. If you want rates confirmed before buying, email <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> or call <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>'+
+        (payload.items.filter(i=>i.product_url).map(i=>
+          '<li><a href="'+escapeHtml(i.product_url)+'"><strong>'+escapeHtml(i.title||"View item")+'</strong></a></li>'
+        ).join("")?'<p><strong>Buy your item(s):</strong></p><ul>'+payload.items.filter(i=>i.product_url).map(i=>
+          '<li><a href="'+escapeHtml(i.product_url)+'"><strong>'+escapeHtml(i.title||"View item")+'</strong></a></li>'
+        ).join("")+'</ul>':'');
     }
     result.classList.add("show");
   }
