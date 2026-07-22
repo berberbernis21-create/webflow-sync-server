@@ -3,9 +3,17 @@ import { isResendConfigured } from "../emailService.js";
 import { applyConsignmentCorsHeaders } from "../lib/consignmentCors.js";
 import { validateFreightQuoteRequest } from "../lib/freightQuoteValidation.js";
 import { sendFreightQuoteEmails } from "../lib/freightQuoteEmail.js";
-import { LOCAL_AZ_HOURLY_RATE, palletizeItems } from "../lib/freightPalletize.js";
+import { buildLocalEstimateForDestination } from "../lib/freightLocalEstimate.js";
+import {
+  freightRateLimit,
+  makeRequestId,
+  buildIdempotencyKey,
+  getIdempotentResponse,
+  setIdempotentResponse,
+} from "../lib/freightQuoteSecurity.js";
 
 const router = express.Router();
+const jsonParser = express.json({ limit: "1mb" });
 
 router.use((req, res, next) => {
   applyConsignmentCorsHeaders(req, res);
@@ -20,6 +28,59 @@ function formatSubmittedAt(date = new Date()) {
   });
 }
 
+function accessorialsFromAccess(access = {}) {
+  return {
+    liftgate_pickup: Boolean(access.liftgate_pickup),
+    liftgate_delivery: Boolean(access.liftgate_delivery),
+    residential_delivery: Boolean(access.residential),
+  };
+}
+
+async function buildQuoteContext(submission) {
+  const local = await buildLocalEstimateForDestination({
+    deliveryPath: submission.delivery_path,
+    state: submission.state,
+    zip: submission.zip,
+    destinationFull: submission.delivery_address.full,
+    access: submission.access,
+  });
+
+  if (local.ok === false) {
+    return { error: local };
+  }
+
+  if (submission.delivery_path === "nationwide") {
+    return {
+      delivery_path: "nationwide",
+      freight_ready: true,
+      items: submission.items.map((it) => ({
+        title: it.title,
+        pallet: it.pallet,
+        missing: it.missing,
+        ok: it.ok,
+      })),
+      accessorials: accessorialsFromAccess(submission.access),
+      requires_confirmed_quote: true,
+      requires_manual_review: false,
+      review_reasons: [],
+      message:
+        "Lost & Found will review the shipment and provide confirmed FreightCenter pricing.",
+      multi_item_note: submission.multi_item_note || undefined,
+    };
+  }
+
+  return {
+    delivery_path: "local_az",
+    route: local.route,
+    local_estimate: local.local_estimate,
+    requires_manual_review: Boolean(local.requires_manual_review),
+    review_reasons: local.review_reasons || [],
+    items: submission.items,
+    accessorials: accessorialsFromAccess(submission.access),
+    multi_item_note: submission.multi_item_note || undefined,
+  };
+}
+
 router.options("/freight-quote", (req, res) => {
   applyConsignmentCorsHeaders(req, res);
   res.sendStatus(204);
@@ -31,24 +92,29 @@ router.options("/freight-quote/preview", (req, res) => {
 });
 
 /**
- * POST /api/freight-quote/preview
- * Palletize + path label only (no email). Useful for Webflow estimate UI.
+ * POST /api/freight-quote/preview — validate + calculate only (no email).
  */
-router.post("/freight-quote/preview", express.json({ limit: "1mb" }), (req, res) => {
+router.post("/freight-quote/preview", freightRateLimit, jsonParser, async (req, res) => {
   try {
     const validation = validateFreightQuoteRequest(req.body || {});
     if (!validation.ok) {
-      return res.status(400).json({ success: false, error: validation.error });
+      return res.status(validation.status || 400).json({
+        success: false,
+        error: validation.error,
+      });
     }
-    const { submission } = validation;
+
+    const ctx = await buildQuoteContext(validation.submission);
+    if (ctx.error) {
+      return res.status(ctx.error.status || 400).json({
+        success: false,
+        error: ctx.error.error,
+      });
+    }
+
     return res.json({
       success: true,
-      mode: submission.mode,
-      isLocalAz: submission.isLocalAz,
-      localHourlyRate: submission.isLocalAz ? LOCAL_AZ_HOURLY_RATE : null,
-      path: submission.isLocalAz ? "local_arizona" : "nationwide_freight",
-      items: submission.palletized,
-      access: submission.access,
+      ...ctx,
     });
   } catch (err) {
     console.error("[freight-quote] preview failed:", err?.message || err);
@@ -57,14 +123,9 @@ router.post("/freight-quote/preview", express.json({ limit: "1mb" }), (req, res)
 });
 
 /**
- * POST /api/freight-quote
- * JSON body from Webflow freight calculator / contact-for-quote form.
- * Emails INTERNAL_NOTIFY_EMAIL + customer summary (requires valid email + full address + access Qs).
- *
- * Item lookup: Webflow should call GET /api/listing?name=Exact+Title first, then include
- * width/depth/height/weight/price/productUrl on each item (or item_N_* form fields).
+ * POST /api/freight-quote — recalculate + email internal + customer.
  */
-router.post("/freight-quote", express.json({ limit: "1mb" }), async (req, res) => {
+router.post("/freight-quote", freightRateLimit, jsonParser, async (req, res) => {
   try {
     if (!isResendConfigured()) {
       console.error("[freight-quote] Resend not configured");
@@ -76,26 +137,68 @@ router.post("/freight-quote", express.json({ limit: "1mb" }), async (req, res) =
 
     const validation = validateFreightQuoteRequest(req.body || {});
     if (!validation.ok) {
-      return res.status(400).json({ success: false, error: validation.error });
+      if (validation.honeypot) {
+        return res.json({ success: true, message: "Request received." });
+      }
+      return res.status(validation.status || 400).json({
+        success: false,
+        error: validation.error,
+      });
     }
 
-    const { submission } = validation;
+    const submission = validation.submission;
+    const idemKey = buildIdempotencyKey(submission);
+    const cached = getIdempotentResponse(idemKey);
+    if (cached) {
+      return res.json(cached);
+    }
+
+    const ctx = await buildQuoteContext(submission);
+    if (ctx.error) {
+      return res.status(ctx.error.status || 400).json({
+        success: false,
+        error: ctx.error.error,
+      });
+    }
+
+    const requestId = makeRequestId();
     const submittedAt = formatSubmittedAt();
 
-    await sendFreightQuoteEmails(submission, { submittedAt });
+    await sendFreightQuoteEmails(submission, {
+      requestId,
+      submittedAt,
+      route: ctx.route || null,
+      localEstimate: ctx.local_estimate || null,
+      reviewReasons: ctx.review_reasons || [],
+    });
 
-    return res.json({
+    const responseBody = {
       success: true,
       message:
-        submission.mode === "please_quote"
+        submission.request_mode === "please_quote"
           ? "Request received. Check your email for a summary — our team will follow up."
           : "Estimate request received. Check your email for a summary.",
-      mode: submission.mode,
-      isLocalAz: submission.isLocalAz,
-      path: submission.isLocalAz ? "local_arizona" : "nationwide_freight",
-      localHourlyRate: submission.isLocalAz ? LOCAL_AZ_HOURLY_RATE : null,
-      itemCount: submission.palletized.length,
+      request_id: requestId,
+      delivery_path: ctx.delivery_path,
+      route: ctx.route || undefined,
+      local_estimate: ctx.local_estimate || undefined,
+      freight_ready: ctx.freight_ready || undefined,
+      requires_confirmed_quote: ctx.requires_confirmed_quote || undefined,
+      requires_manual_review: ctx.requires_manual_review || false,
+      review_reasons: ctx.review_reasons || [],
+      redirect_faq: "https://www.lostandfoundresale.com/faq",
+    };
+
+    setIdempotentResponse(idemKey, responseBody);
+    console.log("[freight-quote] submitted", {
+      requestId,
+      path: submission.delivery_path,
+      mode: submission.request_mode,
+      items: submission.items.length,
+      email: submission.customer_email.replace(/(.{2}).+(@.+)/, "$1***$2"),
     });
+
+    return res.json(responseBody);
   } catch (err) {
     console.error("[freight-quote] submission failed:", err?.message || err);
     return res.status(500).json({
@@ -103,12 +206,6 @@ router.post("/freight-quote", express.json({ limit: "1mb" }), async (req, res) =
       error: "Submission failed. Please try again.",
     });
   }
-});
-
-/** Lightweight palletize helper without access validation (debug / tools). */
-router.post("/freight-quote/palletize", express.json({ limit: "500kb" }), (req, res) => {
-  const items = Array.isArray(req.body?.items) ? req.body.items : [];
-  return res.json({ success: true, items: palletizeItems(items) });
 });
 
 export default router;

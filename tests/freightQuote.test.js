@@ -1,0 +1,245 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  palletizeItem,
+  calculateLocalRouteEstimate,
+  inferFreightClass,
+  shouldMarkNonStackable,
+} from "../lib/freightPalletize.js";
+import { validateFreightQuoteRequest } from "../lib/freightQuoteValidation.js";
+import { buildManualReviewReasons } from "../lib/freightLocalEstimate.js";
+import { isAllowedConsignmentOrigin } from "../lib/consignmentCors.js";
+
+test("local pricing: 20 min = $95", () => {
+  assert.equal(calculateLocalRouteEstimate(20).estimated_price, 95);
+});
+
+test("local pricing: 21 min = $110", () => {
+  assert.equal(calculateLocalRouteEstimate(21).estimated_price, 110);
+});
+
+test("local pricing: 28 min = $110", () => {
+  assert.equal(calculateLocalRouteEstimate(28).estimated_price, 110);
+});
+
+test("local pricing: 29 min = $125", () => {
+  assert.equal(calculateLocalRouteEstimate(29).estimated_price, 125);
+});
+
+test("SOP small cabinet → 48x40x35 @ 85 lb class 150", () => {
+  const r = palletizeItem({
+    title: "Small cabinet",
+    width: 24,
+    depth: 19,
+    height: 30,
+    weight: 55,
+  });
+  assert.equal(r.ok, true);
+  assert.deepEqual(
+    { w: r.pallet.width, d: r.pallet.depth, h: r.pallet.height, wt: r.pallet.weight, c: r.pallet.freight_class },
+    { w: 48, d: 40, h: 35, wt: 85, c: 150 }
+  );
+});
+
+test("oversized width rounds width only", () => {
+  const r = palletizeItem({ title: "Wood desk", width: 55.6, depth: 29, height: 31, weight: 85 });
+  assert.equal(r.pallet.width, 56);
+  assert.equal(r.pallet.depth, 40);
+  assert.equal(r.pallet.height, 36);
+  assert.equal(r.pallet.weight, 115);
+});
+
+test("oversized depth rounds depth only", () => {
+  const r = palletizeItem({ title: "Deep piece", width: 40, depth: 45.2, height: 30, weight: 50 });
+  assert.equal(r.pallet.width, 48);
+  assert.equal(r.pallet.depth, 46);
+});
+
+test("dining table class 175", () => {
+  assert.equal(inferFreightClass({ title: "Dining table oak" }), 175);
+});
+
+test("standard cabinet class 150", () => {
+  assert.equal(inferFreightClass({ title: "Small cabinet" }), 150);
+});
+
+test("fragile mirror non-stackable", () => {
+  assert.equal(shouldMarkNonStackable({ title: "Antique wall mirror" }), true);
+});
+
+test("out-of-state as local_az rejected", () => {
+  const v = validateFreightQuoteRequest({
+    request_mode: "estimate",
+    delivery_path: "local_az",
+    customer_name: "Test",
+    customer_email: "a@b.com",
+    street: "1 Main",
+    city: "Austin",
+    state: "TX",
+    zip: "78701",
+    access: {
+      residential: true,
+      dock: false,
+      forklift: false,
+      freight_elevator: false,
+      stairs: false,
+      needs_more_than_two_people: false,
+      tight_turns_or_narrow_halls: false,
+    },
+    items: [{ title: "Desk", width: 48, depth: 24, height: 30, weight: 80 }],
+  });
+  assert.equal(v.ok, false);
+  assert.match(v.error, /nationwide freight/i);
+});
+
+test("nationwide residential payload accepted", () => {
+  const v = validateFreightQuoteRequest({
+    request_mode: "please_quote",
+    delivery_path: "nationwide",
+    customer_name: "Test",
+    customer_email: "a@b.com",
+    customer_phone: "4805551212",
+    destination_type: "residential",
+    delivery_address: {
+      street: "1 Main",
+      city: "Denver",
+      state: "CO",
+      zip: "80202",
+      full: "1 Main, Denver, CO 80202",
+    },
+    access: {
+      residential: true,
+      commercial: false,
+      dock: false,
+      forklift: false,
+      freight_elevator: false,
+      stairs: true,
+      stair_flights: 1,
+      needs_more_than_two_people: false,
+      tight_turns_or_narrow_halls: true,
+      liftgate_pickup: true,
+      liftgate_delivery: true,
+    },
+    items: [
+      {
+        source: "manual",
+        title: "Dining table",
+        width: 72,
+        depth: 42,
+        height: 30,
+        weight: 120,
+        quantity: 1,
+        freight_class: 175,
+      },
+    ],
+  });
+  assert.equal(v.ok, true);
+  assert.equal(v.submission.delivery_path, "nationwide");
+  assert.equal(v.submission.access.liftgate_pickup, true);
+  assert.equal(v.submission.items[0].pallet.freight_class, 175);
+  assert.equal(v.submission.items[0].pallet.width, 72);
+  assert.equal(v.submission.items[0].pallet.depth, 42);
+});
+
+test("commercial dock clears default liftgate delivery unless forced", () => {
+  const v = validateFreightQuoteRequest({
+    request_mode: "please_quote",
+    delivery_path: "nationwide",
+    customer_name: "Biz",
+    customer_email: "ops@example.com",
+    street: "100 Industrial",
+    city: "Dallas",
+    state: "TX",
+    zip: "75201",
+    destination_type: "commercial",
+    access: {
+      residential: false,
+      commercial: true,
+      dock: true,
+      forklift: true,
+      freight_elevator: false,
+      stairs: false,
+      needs_more_than_two_people: false,
+      tight_turns_or_narrow_halls: false,
+    },
+    items: [{ title: "Cabinet", width: 30, depth: 20, height: 40, weight: 70 }],
+  });
+  assert.equal(v.ok, true);
+  assert.equal(v.submission.access.liftgate_pickup, true);
+  assert.equal(v.submission.access.liftgate_delivery, false);
+});
+
+test("stairs flights review reason", () => {
+  const reasons = buildManualReviewReasons({
+    stairs: true,
+    stair_flights: 2,
+    needs_more_than_two_people: true,
+    tight_turns_or_narrow_halls: true,
+  });
+  assert.ok(reasons.some((r) => /2 flights/i.test(r)));
+  assert.ok(reasons.some((r) => /More than two movers/i.test(r)));
+});
+
+test("honeypot rejected", () => {
+  const v = validateFreightQuoteRequest({
+    company_website: "http://spam.test",
+    customer_name: "Bot",
+    customer_email: "bot@x.com",
+    street: "1",
+    city: "Phoenix",
+    state: "AZ",
+    zip: "85001",
+    items: [{ title: "X", width: 10, depth: 10, height: 10, weight: 10 }],
+  });
+  assert.equal(v.ok, false);
+  assert.equal(v.honeypot, true);
+});
+
+test("invalid email rejected", () => {
+  const v = validateFreightQuoteRequest({
+    customer_name: "T",
+    customer_email: "not-an-email",
+    street: "1",
+    city: "Phoenix",
+    state: "AZ",
+    zip: "85001",
+    items: [{ title: "X", width: 10, depth: 10, height: 10, weight: 10 }],
+  });
+  assert.equal(v.ok, false);
+});
+
+test("multiple items stay separate pallet entries", () => {
+  const v = validateFreightQuoteRequest({
+    customer_name: "T",
+    customer_email: "t@x.com",
+    street: "1",
+    city: "Phoenix",
+    state: "AZ",
+    zip: "85001",
+    delivery_path: "local_az",
+    access: {
+      residential: true,
+      dock: false,
+      forklift: false,
+      freight_elevator: false,
+      stairs: false,
+      needs_more_than_two_people: false,
+      tight_turns_or_narrow_halls: false,
+    },
+    items: [
+      { title: "A", width: 24, depth: 20, height: 30, weight: 40 },
+      { title: "B", width: 24, depth: 20, height: 30, weight: 40 },
+    ],
+  });
+  assert.equal(v.ok, true);
+  assert.equal(v.submission.items.length, 2);
+  assert.ok(v.submission.multi_item_note);
+});
+
+test("CORS allows production + webflow.io + localhost", () => {
+  assert.equal(isAllowedConsignmentOrigin("https://www.lostandfoundresale.com"), true);
+  assert.equal(isAllowedConsignmentOrigin("https://lostandfoundresale.com"), true);
+  assert.equal(isAllowedConsignmentOrigin("https://lf-freight.webflow.io"), true);
+  assert.equal(isAllowedConsignmentOrigin("http://localhost:3000"), true);
+  assert.equal(isAllowedConsignmentOrigin("https://evil.example"), false);
+});

@@ -11415,8 +11415,13 @@ app.get("/api/listing", async (req, res) => {
     return res.status(400).json({ error: "Missing required query param: name" });
   }
   const source = String(req.query.source || "webflow").trim().toLowerCase();
+  const exactOnly =
+    String(req.query.exact || req.query.match || "").trim().toLowerCase() === "1" ||
+    String(req.query.exact || req.query.match || "").trim().toLowerCase() === "exact" ||
+    String(req.query.exact || "").trim().toLowerCase() === "true";
   try {
     let listing = null;
+    let matchScore = null;
     if (source === "shopify") {
       listing = await searchShopifyProducts(String(name));
       if (!listing) {
@@ -11436,9 +11441,65 @@ app.get("/api/listing", async (req, res) => {
       }
     }
     if (!listing) {
-      return res.status(404).json({ error: "No products found" });
+      return res.status(404).json({ error: "No products found", listing: null });
     }
+
+    // Exact-title gate for freight calculator (and when ?exact=1).
+    const qNorm = normalizeProductNameForIndex(String(name));
+    const tNorm = normalizeProductNameForIndex(String(listing.title || ""));
+    const isExact = Boolean(qNorm && tNorm && qNorm === tNorm);
+    matchScore = listingTitleSearchScore(String(name), String(listing.title || ""));
+    if (exactOnly && !isExact && matchScore < 1000) {
+      return res.status(404).json({
+        error: "No exact listing title match",
+        listing: null,
+      });
+    }
+    // Freight clients often omit exact=1 but type the full title — still reject weak fuzzy hits.
+    if (!exactOnly && matchScore < getListingSearchMinScore()) {
+      return res.status(404).json({ error: "No products found", listing: null });
+    }
+
+    const dimsFromTitle = parsePackageDimensionsFromTitle(listing.title) || null;
+    let width = null;
+    let depth = null;
+    let height = null;
+    if (dimsFromTitle && dimsFromTitle.length === 3) {
+      // Title pattern is typically W x D x H
+      width = dimsFromTitle[0];
+      depth = dimsFromTitle[1];
+      height = dimsFromTitle[2];
+    }
+    const weight =
+      listing.weight != null && Number.isFinite(Number(listing.weight))
+        ? Number(listing.weight)
+        : null;
+    let priceNum = null;
+    if (listing.price != null) {
+      const cleaned = String(listing.price).replace(/[^0-9.]/g, "");
+      const n = parseFloat(cleaned);
+      if (Number.isFinite(n)) priceNum = n;
+    }
+
+    const freightListing = {
+      title: listing.title || "",
+      width: width ?? 0,
+      depth: depth ?? 0,
+      height: height ?? 0,
+      weight: weight ?? 0,
+      price: priceNum ?? 0,
+      product_url: listing.productUrl || listing.shopifyOnlineUrl || "",
+      // Keep nulls discoverable for manual completion when missing
+      width_missing: width == null,
+      depth_missing: depth == null,
+      height_missing: height == null,
+      weight_missing: weight == null,
+    };
+
     return res.json({
+      // Freight calculator shape
+      listing: freightListing,
+      // Backward-compatible flat fields (Social Media / Chrome listing helpers)
       title: listing.title,
       shopifyProductId: listing.shopifyProductId ?? null,
       price: listing.price,
@@ -11458,13 +11519,19 @@ app.get("/api/listing", async (req, res) => {
           ? String(listing.productType).trim()
           : null,
       tags: Array.isArray(listing.tags) ? listing.tags : [],
-      weight: listing.weight != null && Number.isFinite(Number(listing.weight)) ? Number(listing.weight) : null,
+      weight: weight,
+      width,
+      depth,
+      height,
       metafields: Array.isArray(listing.metafields) ? listing.metafields : [],
+      exactMatch: isExact,
+      matchScore,
     });
   } catch (err) {
     webflowLog("error", { event: "api.listing", message: err?.message, source });
     return res.status(500).json({
       error: err?.message || (source === "shopify" ? "Shopify request failed" : "Webflow request failed"),
+      listing: null,
     });
   }
 });
