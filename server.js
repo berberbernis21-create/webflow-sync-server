@@ -11617,6 +11617,14 @@ app.get("/api/listing", async (req, res) => {
     }
 
     const setCount = parseSetCountFromTitle(listing.title || "");
+    const freightClass =
+      listing.freight_class ?? listing.freightClass ?? null;
+    const missing_fields = [];
+    if (width == null) missing_fields.push("width");
+    if (depth == null) missing_fields.push("depth");
+    if (height == null) missing_fields.push("height");
+    if (weight == null) missing_fields.push("weight");
+    if (freightClass == null || freightClass === "") missing_fields.push("freight_class");
 
     const freightListing = {
       title: listing.title || "",
@@ -11628,10 +11636,12 @@ app.get("/api/listing", async (req, res) => {
       product_url: listing.productUrl || listing.shopifyOnlineUrl || "",
       estimated_weight: weight ?? null,
       weight_lbs: weight ?? null,
+      freight_class: freightClass,
       set_count: setCount,
       quantity: 1,
       dims_are: setCount > 1 ? "per_piece" : "as_listed",
       weight_is: setCount > 1 ? "total_for_set" : "as_listed",
+      missing_fields,
     };
 
     return res.json({

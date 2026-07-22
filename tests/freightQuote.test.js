@@ -40,18 +40,9 @@ test("Webflow payload: trust client pallet + entered dims (no title invent)", ()
         quantity: 1,
         freight_class: null,
         non_stackable: false,
-        pallet: {
-          width: 60,
-          depth: 40,
-          height: 35,
-          weight: 179,
-          freight_class: null,
-          packaging_type: "Pallet(s)",
-          non_stackable: false,
-        },
       },
     ],
-    { allowTitleDimFallback: false, preferClientPallet: true }
+    { allowTitleDimFallback: false, useWebflowCalculator: true }
   );
   assert.equal(rows[0].width, 60);
   assert.equal(rows[0].depth, 30);

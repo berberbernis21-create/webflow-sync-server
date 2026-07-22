@@ -4,6 +4,8 @@ import { applyConsignmentCorsHeaders } from "../lib/consignmentCors.js";
 import { validateFreightQuoteRequest } from "../lib/freightQuoteValidation.js";
 import { sendFreightQuoteEmails } from "../lib/freightQuoteEmail.js";
 import { buildLocalEstimateForDestination } from "../lib/freightLocalEstimate.js";
+import { validateAndStandardizeAddress } from "../lib/freightAddressValidation.js";
+import { fetchNationwideLiveRate } from "../lib/freightNationwideRate.js";
 import {
   freightRateLimit,
   makeRequestId,
@@ -28,6 +30,17 @@ function formatSubmittedAt(date = new Date()) {
   });
 }
 
+function money(n) {
+  const num = Number(n);
+  if (!Number.isFinite(num)) return null;
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(num);
+}
+
 function accessorialsFromAccess(access = {}) {
   return {
     liftgate_pickup: Boolean(access.liftgate_pickup),
@@ -36,7 +49,64 @@ function accessorialsFromAccess(access = {}) {
   };
 }
 
+function buildLocalDisplay(submission, local) {
+  const extraCrew = Boolean(submission.access?.needs_more_than_two_people);
+  const amount = local.local_estimate?.estimated_price ?? null;
+  const label = extraCrew
+    ? "Approximate Two-Person Base:"
+    : "Your Preliminary Estimate Is";
+  return {
+    estimate_label: label,
+    display_amount: amount,
+    display_amount_formatted: amount != null ? money(amount) : null,
+    headline: amount != null ? `${label} ${money(amount)}` : label,
+    drive_minutes: local.route?.drive_minutes ?? local.local_estimate?.drive_minutes ?? null,
+    distance_miles: local.route?.distance_miles ?? null,
+    currency: "USD",
+    requires_manual_review: Boolean(local.requires_manual_review),
+    review_reasons: local.review_reasons || [],
+    extra_crew: extraCrew,
+  };
+}
+
+function mapItemsForClient(items = []) {
+  return items.map((it) => ({
+    index: it.index,
+    source: it.source,
+    title: it.title,
+    width: it.width,
+    depth: it.depth,
+    height: it.height,
+    weight: it.weight,
+    quantity: it.quantity,
+    price: it.price,
+    product_url: it.product_url,
+    freight_class: it.freight_class,
+    freight_class_display:
+      it.freight_class == null || it.freight_class === ""
+        ? "To be confirmed"
+        : String(it.freight_class),
+    non_stackable: it.non_stackable,
+    pallet: it.pallet,
+    ok: it.ok,
+    missing: it.missing,
+  }));
+}
+
+/**
+ * Sole calculator context: address standardize → path rules → palletize → price/rate.
+ */
 async function buildQuoteContext(submission) {
+  const addrResult = await validateAndStandardizeAddress(submission.delivery_address || {});
+  if (addrResult.delivery_address) {
+    submission.delivery_address = addrResult.delivery_address;
+    submission.street = addrResult.delivery_address.street;
+    submission.unit = addrResult.delivery_address.unit;
+    submission.city = addrResult.delivery_address.city;
+    submission.state = addrResult.delivery_address.state;
+    submission.zip = addrResult.delivery_address.zip;
+  }
+
   const local = await buildLocalEstimateForDestination({
     deliveryPath: submission.delivery_path,
     state: submission.state,
@@ -49,44 +119,58 @@ async function buildQuoteContext(submission) {
     return { error: local };
   }
 
+  const items = mapItemsForClient(submission.items);
+  const accessorials = accessorialsFromAccess(submission.access);
+
   if (submission.delivery_path === "nationwide") {
+    const nationwide_rate = await fetchNationwideLiveRate(submission);
+    const pending = nationwide_rate.status !== "quoted";
     return {
       delivery_path: "nationwide",
       freight_ready: true,
-      items: submission.items.map((it) => ({
-        title: it.title,
-        pallet: it.pallet,
-        missing: it.missing,
-        ok: it.ok,
-      })),
-      accessorials: accessorialsFromAccess(submission.access),
+      address: {
+        standardized: Boolean(addrResult.standardized),
+        provider: addrResult.provider,
+        delivery_address: submission.delivery_address,
+      },
+      items,
+      accessorials,
+      nationwide_rate,
       requires_confirmed_quote: true,
-      requires_manual_review: false,
-      review_reasons: [],
-      message:
-        "Lost & Found will review the shipment and provide confirmed FreightCenter pricing.",
+      requires_manual_review: pending || Boolean(nationwide_rate.status === "pending_manual_review"),
+      review_reasons: pending
+        ? ["Nationwide carrier rate pending FreightCenter / staff confirmation"]
+        : [],
       multi_item_note: submission.multi_item_note || undefined,
+      display: {
+        headline: pending ? "Freight-Ready — Rate Pending Review" : "Nationwide Freight Quote",
+        estimate_label: null,
+        display_amount: nationwide_rate.amount,
+        display_amount_formatted:
+          nationwide_rate.amount != null ? money(nationwide_rate.amount) : null,
+        status: nationwide_rate.status,
+        message: nationwide_rate.message,
+      },
+      message: nationwide_rate.message,
     };
   }
 
+  const display = buildLocalDisplay(submission, local);
   return {
     delivery_path: "local_az",
+    address: {
+      standardized: Boolean(addrResult.standardized),
+      provider: addrResult.provider,
+      delivery_address: submission.delivery_address,
+    },
     route: local.route,
     local_estimate: local.local_estimate,
-    requires_manual_review: Boolean(local.requires_manual_review),
-    review_reasons: local.review_reasons || [],
-    items: submission.items,
-    accessorials: accessorialsFromAccess(submission.access),
+    requires_manual_review: display.requires_manual_review,
+    review_reasons: display.review_reasons,
+    items,
+    accessorials,
     multi_item_note: submission.multi_item_note || undefined,
-    // Convenience for Webflow UI — one true calculator display fields
-    display: {
-      estimated_price: local.local_estimate?.estimated_price ?? null,
-      drive_minutes: local.route?.drive_minutes ?? local.local_estimate?.drive_minutes ?? null,
-      distance_miles: local.route?.distance_miles ?? null,
-      currency: "USD",
-      pricing_note:
-        "$95 through 17 minutes one-way, then +$15/8 per extra minute, rounded up to the next $5",
-    },
+    display,
   };
 }
 
@@ -101,7 +185,7 @@ router.options("/freight-quote/preview", (req, res) => {
 });
 
 /**
- * POST /api/freight-quote/preview — validate + calculate only (no email).
+ * POST /api/freight-quote/preview — validate + calculate only (no email, no booking).
  */
 router.post("/freight-quote/preview", freightRateLimit, jsonParser, async (req, res) => {
   try {
@@ -123,6 +207,7 @@ router.post("/freight-quote/preview", freightRateLimit, jsonParser, async (req, 
 
     return res.json({
       success: true,
+      emails_sent: false,
       ...ctx,
     });
   } catch (err) {
@@ -132,7 +217,7 @@ router.post("/freight-quote/preview", freightRateLimit, jsonParser, async (req, 
 });
 
 /**
- * POST /api/freight-quote — recalculate + email internal + customer.
+ * POST /api/freight-quote — recalculate + exactly one customer + one internal email.
  */
 router.post("/freight-quote", freightRateLimit, jsonParser, async (req, res) => {
   try {
@@ -146,13 +231,11 @@ router.post("/freight-quote", freightRateLimit, jsonParser, async (req, res) => 
 
     const validation = validateFreightQuoteRequest(req.body || {});
     if (!validation.ok) {
-      // Never fake success on honeypot — browsers often autofill company_website.
-      // That used to return 200 with no email and looked like "live data is broken."
       if (validation.honeypot) {
-        console.warn("[freight-quote] honeypot filled — rejecting (likely autofill)");
+        console.warn("[freight-quote] honeypot filled — rejecting");
         return res.status(400).json({
           success: false,
-          error: "Submission blocked by spam filter. Clear the hidden website field and try again.",
+          error: "Submission blocked by spam filter. Please try again.",
         });
       }
       return res.status(validation.status || 400).json({
@@ -172,9 +255,6 @@ router.post("/freight-quote", freightRateLimit, jsonParser, async (req, res) => 
       return res.json({
         ...cached,
         duplicate: true,
-        message:
-          cached.message ||
-          "Request already received a moment ago — check your email (and spam). Re-submit in about a minute if you need a new copy.",
       });
     }
 
@@ -189,13 +269,35 @@ router.post("/freight-quote", freightRateLimit, jsonParser, async (req, res) => 
     const requestId = makeRequestId();
     const submittedAt = formatSubmittedAt();
 
-    await sendFreightQuoteEmails(submission, {
-      requestId,
-      submittedAt,
-      route: ctx.route || null,
-      localEstimate: ctx.local_estimate || null,
-      reviewReasons: ctx.review_reasons || [],
-    });
+    let emails = {
+      customer: { sent: false, to: submission.customer_email, error: null },
+      internal: { sent: false, to: "INTERNAL_NOTIFY_EMAIL", error: null },
+    };
+
+    try {
+      await sendFreightQuoteEmails(submission, {
+        requestId,
+        submittedAt,
+        route: ctx.route || null,
+        localEstimate: ctx.local_estimate || null,
+        reviewReasons: ctx.review_reasons || [],
+      });
+      emails = {
+        customer: { sent: true, to: submission.customer_email, error: null },
+        internal: { sent: true, to: "INTERNAL_NOTIFY_EMAIL", error: null },
+      };
+    } catch (mailErr) {
+      console.error("[freight-quote] email failed:", mailErr?.message || mailErr);
+      return res.status(500).json({
+        success: false,
+        error: "Estimate calculated but email failed. Please try again or call 480-588-7006.",
+        request_id: requestId,
+        emails: {
+          customer: { sent: false, to: submission.customer_email, error: String(mailErr?.message || mailErr) },
+          internal: { sent: false, error: String(mailErr?.message || mailErr) },
+        },
+      });
+    }
 
     const responseBody = {
       success: true,
@@ -204,14 +306,11 @@ router.post("/freight-quote", freightRateLimit, jsonParser, async (req, res) => 
           ? "Request received. Check your email for a summary — our team will follow up."
           : "Estimate request received. Check your email for a summary.",
       request_id: requestId,
-      delivery_path: ctx.delivery_path,
-      route: ctx.route || undefined,
-      local_estimate: ctx.local_estimate || undefined,
-      freight_ready: ctx.freight_ready || undefined,
-      requires_confirmed_quote: ctx.requires_confirmed_quote || undefined,
-      requires_manual_review: ctx.requires_manual_review || false,
-      review_reasons: ctx.review_reasons || [],
+      emails,
+      emails_sent: true,
+      ...ctx,
       redirect_faq: "https://www.lostandfoundresale.com/faq",
+      redirect_shop_all: "https://www.lostandfoundresale.com/all-for-sale",
     };
 
     setIdempotentResponse(idemKey, responseBody);
@@ -221,6 +320,7 @@ router.post("/freight-quote", freightRateLimit, jsonParser, async (req, res) => 
       mode: submission.request_mode,
       items: submission.items.length,
       email: submission.customer_email.replace(/(.{2}).+(@.+)/, "$1***$2"),
+      emails,
     });
 
     return res.json(responseBody);

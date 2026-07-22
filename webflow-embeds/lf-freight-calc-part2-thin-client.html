@@ -1,0 +1,565 @@
+<!--
+LOST & FOUND DELIVERY & FREIGHT CALCULATOR
+PART 2 OF 2: PAGE FOOTER JAVASCRIPT (thin client)
+
+Paste this entire block into:
+Page Settings > Custom Code > Before </body>
+
+The visible HTML/CSS from Part 1 must already be on the page.
+Render (webflow-sync-server.onrender.com) is the only calculator.
+
+This script:
+- Collects raw form fields only
+- Calls /api/listing, /api/freight-quote/preview, /api/freight-quote
+- Displays API-returned estimates / freight entries only
+- Does NOT calculate price, pallet dims, weight, class, or accessorials
+-->
+<script>
+(function () {
+  "use strict";
+
+  const API_BASE = "https://webflow-sync-server.onrender.com";
+  const LOOKUP_URL = API_BASE + "/api/listing";
+  const PREVIEW_URL = API_BASE + "/api/freight-quote/preview";
+  const SUBMIT_URL = API_BASE + "/api/freight-quote";
+  const ORIGIN_ADDRESS = "15530 N Greenway Hayden Loop Ste 100, Scottsdale, AZ 85260";
+  const SHOP_ALL_URL = "https://www.lostandfoundresale.com/all-for-sale";
+  const FAQ_URL = "https://www.lostandfoundresale.com/faq";
+
+  let step = 1;
+  let itemCounter = 0;
+  let lastPreview = null;
+  let submitting = false;
+
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+  const form = $("#lfForm");
+  const itemsWrap = $("#lfItems");
+  const template = $("#lfItemTemplate");
+
+  function num(v) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  }
+  function bool(id) {
+    return !!$(id)?.checked;
+  }
+  function value(id) {
+    return ($(id)?.value || "").trim();
+  }
+  function escapeHtml(v) {
+    return String(v ?? "").replace(/[&<>"']/g, (m) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" }[m])
+    );
+  }
+  function compact(obj) {
+    Object.keys(obj).forEach((k) => {
+      if (obj[k] === undefined || obj[k] === null || obj[k] === "") delete obj[k];
+    });
+    return obj;
+  }
+  function money(n) {
+    if (n == null || !Number.isFinite(Number(n))) return null;
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency: "USD",
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(Number(n));
+  }
+
+  function setStep(next) {
+    step = Math.max(1, Math.min(5, next));
+    $$(".lf-step").forEach((el) => (el.hidden = Number(el.dataset.step) !== step));
+    $$(".lf-progress div").forEach((el) =>
+      el.classList.toggle("active", Number(el.dataset.progress) === step)
+    );
+    $("#lfCalc").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  function fieldError(input, msg) {
+    input.setAttribute("aria-invalid", msg ? "true" : "false");
+    const holder = input.closest(".lf-field");
+    const error = holder ? $(".lf-error", holder) : null;
+    if (error) error.textContent = msg || "";
+  }
+
+  function validateStep(n) {
+    let valid = true;
+    const scope = $('.lf-step[data-step="' + n + '"]');
+    if (!scope) return true;
+    $$("input[required],select[required],textarea[required]", scope).forEach((input) => {
+      if (input.closest(".lf-conditional")?.hidden) return;
+      let msg = "";
+      if (input.type === "checkbox" && !input.checked) msg = "Required.";
+      else if (!String(input.value || "").trim()) msg = "Required.";
+      else if (input.type === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input.value))
+        msg = "Enter a valid email.";
+      else if (input.name === "state" && !/^[A-Za-z]{2}$/.test(input.value.trim()))
+        msg = "Use a two-letter state.";
+      else if (input.name === "zip" && !/^\d{5}(-\d{4})?$/.test(input.value.trim()))
+        msg = "Enter a valid ZIP code.";
+      else if (input.type === "number" && num(input.value) <= 0)
+        msg = "Enter a number greater than zero.";
+      fieldError(input, msg);
+      if (msg) valid = false;
+    });
+    if (n === 3 && $$(".lf-item", itemsWrap).length === 0) {
+      valid = false;
+      alert("Add at least one item.");
+    }
+    if (n === 4 && bool("#lfStairs")) {
+      const flights = num(value("#lfFlights"));
+      const stairNotes = value("#lfStairNotes");
+      if (flights < 1 && !stairNotes) {
+        valid = false;
+        fieldError($("#lfFlights"), "Enter the number of flights or add a stair note.");
+        fieldError($("#lfStairNotes"), "Enter a stair note or the number of flights.");
+      } else {
+        fieldError($("#lfFlights"), "");
+        fieldError($("#lfStairNotes"), "");
+      }
+    }
+    return valid;
+  }
+
+  function updatePathDefaults() {
+    const local = $('input[name="delivery_path"]:checked')?.value === "local_az";
+    if (local && !value("#lfState")) $("#lfState").value = "AZ";
+  }
+
+  function addItem(prefill = {}) {
+    itemCounter++;
+    const node = template.content.firstElementChild.cloneNode(true);
+    node.dataset.itemId = String(itemCounter);
+    $(".lf-item-number", node).textContent = String($$(".lf-item", itemsWrap).length + 1);
+
+    $(".lf-title", node).value = prefill.title || "";
+    $(".lf-width", node).value = prefill.width || "";
+    $(".lf-depth", node).value = prefill.depth || "";
+    $(".lf-height", node).value = prefill.height || "";
+    $(".lf-weight", node).value = prefill.weight || "";
+    $(".lf-quantity", node).value = prefill.quantity || 1;
+    $(".lf-price-input", node).value = prefill.price || "";
+    $(".lf-url", node).value = prefill.product_url || "";
+    $(".lf-source", node).value = prefill.source || "manual";
+    $(".lf-class", node).value =
+      prefill.freight_class != null && prefill.freight_class !== ""
+        ? String(prefill.freight_class)
+        : "";
+    $(".lf-nonstack", node).checked = !!prefill.non_stackable;
+
+    $(".lf-remove", node).addEventListener("click", () => {
+      node.remove();
+      renumberItems();
+      if (!$$(".lf-item", itemsWrap).length) addItem();
+    });
+    $(".lf-lookup", node).addEventListener("click", () => lookupItem(node));
+    [
+      $(".lf-title", node),
+      $(".lf-width", node),
+      $(".lf-depth", node),
+      $(".lf-height", node),
+      $(".lf-weight", node),
+      $(".lf-class", node),
+      $(".lf-nonstack", node),
+    ].forEach((el) => el.addEventListener("input", () => updatePalletHint(node)));
+
+    itemsWrap.appendChild(node);
+    updatePalletHint(node);
+  }
+
+  function renumberItems() {
+    $$(".lf-item", itemsWrap).forEach((el, i) => {
+      $(".lf-item-number", el).textContent = String(i + 1);
+    });
+  }
+
+  /** Raw item fields only — no client-side pallet/price math. */
+  function itemFromNode(node) {
+    return {
+      source: $(".lf-source", node).value,
+      title: $(".lf-title", node).value.trim(),
+      width: num($(".lf-width", node).value),
+      depth: num($(".lf-depth", node).value),
+      height: num($(".lf-height", node).value),
+      weight: num($(".lf-weight", node).value),
+      quantity: Math.max(1, num($(".lf-quantity", node).value) || 1),
+      price: num($(".lf-price-input", node).value),
+      product_url: $(".lf-url", node).value.trim(),
+      freight_class: $(".lf-class", node).value === "" ? null : num($(".lf-class", node).value),
+      non_stackable: $(".lf-nonstack", node).checked,
+    };
+  }
+
+  function updatePalletHint(node) {
+    const box = $(".lf-pallet", node);
+    const i = itemFromNode(node);
+    if (!i.width || !i.depth || !i.height || !i.weight) {
+      box.textContent = "Enter dimensions and weight. Freight entry is calculated on the server when you review.";
+      return;
+    }
+    box.innerHTML =
+      "<strong>Ready for server calculation:</strong> " +
+      i.width +
+      '" × ' +
+      i.depth +
+      '" × ' +
+      i.height +
+      '" · ' +
+      i.weight +
+      " lb (pallet rules applied by Render on review)";
+  }
+
+  async function lookupItem(node) {
+    const title = $(".lf-title", node).value.trim();
+    const btn = $(".lf-lookup", node);
+    const msg = $(".lf-lookup-message", node);
+    if (!title) {
+      fieldError($(".lf-title", node), "Enter the exact listing title.");
+      return;
+    }
+    btn.disabled = true;
+    btn.innerHTML = '<span class="lf-spin"></span>Looking Up';
+    msg.className = "lf-lookup-message";
+    try {
+      const res = await fetch(LOOKUP_URL + "?name=" + encodeURIComponent(title), {
+        headers: { Accept: "application/json" },
+      });
+      const raw = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(raw.error || raw.message || "Listing not found.");
+      const d = raw.listing || raw;
+      if (d.title) $(".lf-title", node).value = d.title;
+      if (d.width) $(".lf-width", node).value = d.width;
+      if (d.depth) $(".lf-depth", node).value = d.depth;
+      if (d.height) $(".lf-height", node).value = d.height;
+      if (d.weight) $(".lf-weight", node).value = d.weight;
+      if (d.price) $(".lf-price-input", node).value = d.price;
+      if (d.product_url) $(".lf-url", node).value = d.product_url;
+      $(".lf-source", node).value = "listing";
+      if (d.freight_class != null && d.freight_class !== "")
+        $(".lf-class", node).value = String(d.freight_class);
+      const missing = Array.isArray(d.missing_fields) ? d.missing_fields : [];
+      msg.textContent = missing.length
+        ? "Item found. Please complete: " + missing.join(", ") + "."
+        : "Item found. Please review fields before continuing.";
+      msg.classList.add("show");
+      if (missing.length) msg.classList.add("bad");
+      updatePalletHint(node);
+    } catch (err) {
+      msg.textContent =
+        (err.message || "We could not find an exact match.") +
+        " You can still enter the item manually.";
+      msg.classList.add("show", "bad");
+      $(".lf-source", node).value = "manual";
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Find Item";
+    }
+  }
+
+  function buildPayload() {
+    const path = $('input[name="delivery_path"]:checked')?.value || "local_az";
+    const mode = $('input[name="request_mode"]:checked')?.value || "estimate";
+    const destinationType = value("#lfType") || "residential";
+    const dock = bool("#lfDock");
+    const address = compact({
+      street: value("#lfStreet"),
+      unit: value("#lfUnit"),
+      city: value("#lfCity"),
+      state: value("#lfState").toUpperCase(),
+      zip: value("#lfZip"),
+    });
+    address.full = [address.street, address.unit, address.city, address.state, address.zip]
+      .filter(Boolean)
+      .join(", ");
+
+    return {
+      request_mode: mode,
+      delivery_path: path,
+      customer_name: value("#lfName"),
+      customer_email: value("#lfEmail"),
+      customer_phone: value("#lfPhone"),
+      destination_type: destinationType,
+      delivery_address: address,
+      street: address.street,
+      unit: address.unit,
+      city: address.city,
+      state: address.state,
+      zip: address.zip,
+      origin_address: ORIGIN_ADDRESS,
+      access: {
+        residential: destinationType === "residential",
+        commercial: destinationType === "commercial",
+        dock,
+        freight_elevator: bool("#lfElevator"),
+        freight_elevator_notes: value("#lfElevatorNotes"),
+        stairs: bool("#lfStairs"),
+        stair_flights: bool("#lfStairs") ? num(value("#lfFlights")) : 0,
+        stair_notes: bool("#lfStairs") ? value("#lfStairNotes") : "",
+        needs_more_than_two_people: bool("#lfCrew"),
+        crew_review_required: bool("#lfCrew"),
+        tight_turns_or_narrow_halls: bool("#lfTight"),
+        gated_access: bool("#lfGate"),
+        gate_code_or_instructions: value("#lfGateCode"),
+        inside_delivery: bool("#lfInside"),
+        room_placement: bool("#lfRoom"),
+        unpacking_or_debris_removal: bool("#lfUnpack"),
+        disassembly_or_assembly: bool("#lfDisassembly"),
+        long_carry: bool("#lfLongCarry"),
+        parking_or_time_restrictions: bool("#lfParking"),
+        fragile_or_special_handling: bool("#lfFragile"),
+        notes: value("#lfNotes"),
+        liftgate_pickup: true,
+        liftgate_delivery: !dock,
+      },
+      items: $$(".lf-item", itemsWrap).map(itemFromNode),
+      page_url: location.href,
+      submitted_at: new Date().toISOString(),
+      company_website: "",
+    };
+  }
+
+  function renderFromApi(payload, api) {
+    const pathLocal = (api.delivery_path || payload.delivery_path) === "local_az";
+    const items = api.items || payload.items || [];
+    const addr =
+      api.address?.delivery_address?.full ||
+      payload.delivery_address?.full ||
+      "";
+
+    const itemHtml = items
+      .map((i, idx) => {
+        const p = i.pallet || {};
+        const classText =
+          i.freight_class_display ||
+          (i.freight_class == null ? "To be confirmed" : "Class " + i.freight_class);
+        return (
+          "<li><strong>" +
+          escapeHtml(i.title || "Item " + (idx + 1)) +
+          "</strong>: " +
+          (i.width || "—") +
+          '" × ' +
+          (i.depth || "—") +
+          '" × ' +
+          (i.height || "—") +
+          '" · ' +
+          (i.weight || "—") +
+          " lb · Freight " +
+          (p.width || "—") +
+          '" × ' +
+          (p.depth || "—") +
+          '" × ' +
+          (p.height || "—") +
+          '" · ' +
+          (p.weight || "—") +
+          " lb · " +
+          escapeHtml(classText) +
+          (p.non_stackable || i.non_stackable ? " · Non-stackable" : "") +
+          "</li>"
+        );
+      })
+      .join("");
+
+    const access = payload.access || {};
+    const flags = [];
+    if (access.stairs) flags.push("stairs");
+    if (access.needs_more_than_two_people) flags.push("more than two people");
+    if (access.tight_turns_or_narrow_halls) flags.push("tight turns / narrow access");
+    if (access.gated_access) flags.push("gated access");
+    if (access.inside_delivery) flags.push("inside delivery");
+    if (access.room_placement) flags.push("room placement");
+    if (access.long_carry) flags.push("long carry");
+    if (access.parking_or_time_restrictions) flags.push("parking or time restrictions");
+    if (access.fragile_or_special_handling) flags.push("fragile / special handling");
+
+    $("#lfSummary").innerHTML =
+      '<div class="lf-summary-card"><h3>Request</h3><p><strong>' +
+      (payload.request_mode === "please_quote" ? "Have Us Quote It" : "Get an Estimate") +
+      "</strong> · " +
+      (pathLocal ? "Local Arizona Delivery" : "Nationwide Freight") +
+      "</p></div>" +
+      '<div class="lf-summary-card"><h3>Delivery</h3><p>' +
+      escapeHtml(addr) +
+      "</p><p>" +
+      escapeHtml(payload.customer_name) +
+      " · " +
+      escapeHtml(payload.customer_email) +
+      (payload.customer_phone ? " · " + escapeHtml(payload.customer_phone) : "") +
+      "</p></div>" +
+      '<div class="lf-summary-card"><h3>Items</h3><ul>' +
+      itemHtml +
+      "</ul></div>" +
+      '<div class="lf-summary-card"><h3>Access</h3><p>' +
+      (flags.length ? escapeHtml(flags.join(", ")) : "No additional access concerns reported.") +
+      "</p><p>Liftgate pickup: Yes · Liftgate delivery: " +
+      (access.liftgate_delivery ? "Yes" : "No — loading dock confirmed") +
+      "</p></div>";
+
+    const result = $("#lfResult");
+    const display = api.display || {};
+
+    if (pathLocal) {
+      const amountText =
+        display.display_amount_formatted ||
+        (display.display_amount != null ? money(display.display_amount) : null) ||
+        "—";
+      const label = display.estimate_label || "Your Preliminary Estimate Is";
+      const review =
+        display.requires_manual_review || (api.review_reasons || []).length
+          ? "<p><strong>Additional review is needed:</strong> " +
+            escapeHtml((api.review_reasons || display.review_reasons || []).join("; ") ||
+              "Access or handling conditions may affect the final price.") +
+            "</p>"
+          : "<p>This is a best estimate only. Final pricing and scheduling must be confirmed by Lost &amp; Found Resale.</p>";
+
+      result.innerHTML =
+        "<h2>Your Preliminary Local Delivery Estimate</h2>" +
+        '<div class="lf-price">' +
+        escapeHtml(label) +
+        " " +
+        escapeHtml(amountText) +
+        "</div>" +
+        "<p>Our team will confirm final pricing after you purchase the item. If you would like confirmed pricing before purchasing, please contact Lost &amp; Found Resale at <a href=\"tel:4805887006\"><strong>480-588-7006</strong></a> or <a href=\"mailto:info@lostandfoundresale.com\"><strong>info@lostandfoundresale.com</strong></a>.</p>" +
+        review;
+    } else {
+      const rate = api.nationwide_rate || {};
+      const status = rate.status || display.status || "pending_manual_review";
+      const amount =
+        display.display_amount_formatted ||
+        (rate.amount != null ? money(rate.amount) : null);
+      result.innerHTML =
+        "<h2>" +
+        escapeHtml(display.headline || "Your Nationwide Freight Summary") +
+        "</h2>" +
+        '<div class="lf-price">' +
+        (amount || "Freight-Ready") +
+        "</div>" +
+        "<p>" +
+        escapeHtml(
+          display.message ||
+            rate.message ||
+            "Pallet dimensions and accessorials were prepared on the server. Confirmed carrier pricing follows after review."
+        ) +
+        "</p>" +
+        (status === "pending_manual_review"
+          ? "<p><strong>Status:</strong> Pending manual review — no carrier price is invented by this calculator.</p>"
+          : "");
+    }
+    result.classList.add("show");
+  }
+
+  function showReviewAlert(msg) {
+    const a = $("#lfReviewAlert");
+    if (!a) return;
+    a.textContent = msg || "";
+    a.className = msg ? "lf-alert show error" : "lf-alert error";
+  }
+
+  async function reviewEstimateAndEmail() {
+    if (submitting) return;
+    showReviewAlert("");
+
+    if (!validateStep(2)) {
+      showReviewAlert("Please enter a valid email and complete delivery address.");
+      setStep(2);
+      return;
+    }
+    if (!validateStep(3)) {
+      showReviewAlert("Please complete the item information before requesting the estimate.");
+      setStep(3);
+      return;
+    }
+    if (!validateStep(4)) {
+      showReviewAlert("Please complete the access and handling information.");
+      return;
+    }
+    if (!$("#lfReviewAgree").checked) {
+      showReviewAlert("Please confirm that you understand this is a preliminary estimate.");
+      $("#lfReviewAgree").focus();
+      return;
+    }
+
+    const payload = buildPayload();
+    const btn = $("#lfReviewSubmit");
+    const originalText = btn.textContent;
+    submitting = true;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="lf-spin"></span>Preparing & Sending';
+
+    let previewData = null;
+    try {
+      const previewResponse = await fetch(PREVIEW_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const previewJson = await previewResponse.json().catch(() => ({}));
+      if (!previewResponse.ok) {
+        throw new Error(previewJson.error || previewJson.message || "Preview failed.");
+      }
+      previewData = previewJson;
+      lastPreview = previewJson;
+    } catch (err) {
+      showReviewAlert(err.message || "Preview failed. Please try again.");
+      btn.disabled = false;
+      btn.textContent = originalText;
+      submitting = false;
+      return;
+    }
+
+    try {
+      const submitResponse = await fetch(SUBMIT_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const submitJson = await submitResponse.json().catch(() => ({}));
+      if (!submitResponse.ok) {
+        throw new Error(submitJson.error || submitJson.message || "Submit failed.");
+      }
+
+      $("#lfReceiptEmail").textContent = payload.customer_email;
+      renderFromApi(payload, submitJson.display ? submitJson : previewData || submitJson);
+      setStep(5);
+      btn.textContent = "Sent";
+
+      const shop = document.querySelector('.lf-link-btn[href*="all-for-sale"]');
+      const faq = document.querySelector('.lf-link-btn[href*="faq"]');
+      if (shop) shop.href = submitJson.redirect_shop_all || SHOP_ALL_URL;
+      if (faq) faq.href = submitJson.redirect_faq || FAQ_URL;
+    } catch (err) {
+      showReviewAlert(err.message || "Something went wrong. Please try again or call 480-588-7006.");
+      btn.disabled = false;
+      btn.textContent = originalText;
+      submitting = false;
+    }
+  }
+
+  $$("[data-next]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      if (validateStep(step)) {
+        updatePathDefaults();
+        setStep(step + 1);
+      }
+    })
+  );
+  $$("[data-back]").forEach((btn) => btn.addEventListener("click", () => setStep(step - 1)));
+  $("#lfAddItem").addEventListener("click", () => addItem());
+  $("#lfReviewSubmit").addEventListener("click", reviewEstimateAndEmail);
+  form.addEventListener("submit", (e) => e.preventDefault());
+  $("#lfStairs").addEventListener("change", (e) => ($("#lfStairDetails").hidden = !e.target.checked));
+  $("#lfElevator").addEventListener(
+    "change",
+    (e) => ($("#lfElevatorDetails").hidden = !e.target.checked)
+  );
+  $("#lfGate").addEventListener("change", (e) => ($("#lfGateDetails").hidden = !e.target.checked));
+  $$('input[name="delivery_path"]').forEach((el) =>
+    el.addEventListener("change", () => {
+      if ($('input[name="delivery_path"]:checked').value === "local_az") $("#lfState").value = "AZ";
+    })
+  );
+
+  addItem();
+})();
+</script>
