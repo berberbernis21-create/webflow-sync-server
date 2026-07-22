@@ -11483,17 +11483,12 @@ app.get("/api/listing", async (req, res) => {
 
     const freightListing = {
       title: listing.title || "",
-      width: width ?? 0,
-      depth: depth ?? 0,
-      height: height ?? 0,
-      weight: weight ?? 0,
-      price: priceNum ?? 0,
+      width: width ?? null,
+      depth: depth ?? null,
+      height: height ?? null,
+      weight: weight ?? null,
+      price: priceNum ?? null,
       product_url: listing.productUrl || listing.shopifyOnlineUrl || "",
-      // Keep nulls discoverable for manual completion when missing
-      width_missing: width == null,
-      depth_missing: depth == null,
-      height_missing: height == null,
-      weight_missing: weight == null,
     };
 
     return res.json({

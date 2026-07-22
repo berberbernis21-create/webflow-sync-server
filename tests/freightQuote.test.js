@@ -43,24 +43,43 @@ test("SOP small cabinet → 48x40x35 @ 85 lb class 150", () => {
 
 test("oversized width rounds width only", () => {
   const r = palletizeItem({ title: "Wood desk", width: 55.6, depth: 29, height: 31, weight: 85 });
-  assert.equal(r.pallet.width, 56);
+  assert.equal(r.pallet.width, 60);
   assert.equal(r.pallet.depth, 40);
   assert.equal(r.pallet.height, 36);
   assert.equal(r.pallet.weight, 115);
 });
 
-test("oversized depth rounds depth only", () => {
+test("oversized depth rounds depth only to next 5", () => {
   const r = palletizeItem({ title: "Deep piece", width: 40, depth: 45.2, height: 30, weight: 50 });
   assert.equal(r.pallet.width, 48);
-  assert.equal(r.pallet.depth, 46);
+  assert.equal(r.pallet.depth, 50);
 });
 
-test("dining table class 175", () => {
-  assert.equal(inferFreightClass({ title: "Dining table oak" }), 175);
+test("null freight class stays null (Not sure)", () => {
+  const r = palletizeItem({
+    title: "Small cabinet",
+    width: 24,
+    depth: 19,
+    height: 30,
+    weight: 55,
+    freight_class: null,
+  });
+  assert.equal(r.pallet.freight_class, null);
+  assert.equal(r.pallet.suggested_freight_class, 150);
 });
 
-test("standard cabinet class 150", () => {
-  assert.equal(inferFreightClass({ title: "Small cabinet" }), 150);
+test("dining table with explicit class 175", () => {
+  const r = palletizeItem({
+    title: "Dining table",
+    width: 72,
+    depth: 42,
+    height: 30,
+    weight: 120,
+    freight_class: 175,
+  });
+  assert.equal(r.pallet.freight_class, 175);
+  assert.equal(r.pallet.width, 75);
+  assert.equal(r.pallet.depth, 45);
 });
 
 test("fragile mirror non-stackable", () => {
@@ -137,8 +156,8 @@ test("nationwide residential payload accepted", () => {
   assert.equal(v.submission.delivery_path, "nationwide");
   assert.equal(v.submission.access.liftgate_pickup, true);
   assert.equal(v.submission.items[0].pallet.freight_class, 175);
-  assert.equal(v.submission.items[0].pallet.width, 72);
-  assert.equal(v.submission.items[0].pallet.depth, 42);
+  assert.equal(v.submission.items[0].pallet.width, 75);
+  assert.equal(v.submission.items[0].pallet.depth, 45);
 });
 
 test("commercial dock clears default liftgate delivery unless forced", () => {
