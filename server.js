@@ -35,6 +35,7 @@ import {
   isAllowedConsignmentOrigin,
 } from "./lib/consignmentCors.js";
 import consignmentRouter from "./routes/consignmentSubmission.js";
+import freightQuoteRouter from "./routes/freightQuote.js";
 import { recoverStaleConsignmentIntakes } from "./lib/consignmentIntakeRecovery.js";
 import { registerSocialCaptionRoute } from "./socialCaption.js";
 import {
@@ -555,6 +556,7 @@ const app = express();
 app.use(createConsignmentCorsMiddleware());
 
 app.use("/api", consignmentRouter);
+app.use("/api", freightQuoteRouter);
 app.use(
   express.json({
     limit: "15mb",
