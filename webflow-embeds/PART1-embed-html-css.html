@@ -47,12 +47,12 @@ to remain visible inside the Webflow Designer.
 @media(max-width:900px){.lf-path-grid{grid-template-columns:1fr}}
 .lf-choice{position:relative}
 .lf-choice input{position:absolute;opacity:0}
-.lf-choice label{display:block;height:100%;min-height:104px;padding:14px;border:1px solid var(--lf-border);border-radius:7px;background:var(--lf-cream);cursor:pointer;transition:.15s}
+.lf-choice label{display:block;height:100%;min-height:0;padding:14px;border:1px solid var(--lf-border);border-radius:7px;background:var(--lf-cream);cursor:pointer;transition:.15s}
 .lf-choice label:hover{transform:translateY(-1px);border-color:#aaa294}
 .lf-choice input:focus+label{box-shadow:0 0 0 3px rgba(7,18,124,.12)}
 .lf-choice input:checked+label{border:2px solid var(--lf-navy);background:#f4f6ff}
-.lf-choice strong{display:block;margin-bottom:5px;color:var(--lf-navy);font-size:14px}
-.lf-choice span{display:block;color:#383838;font-size:11px}
+.lf-choice strong{display:block;margin:0;color:var(--lf-navy);font-size:14px;line-height:1.25}
+.lf-choice span{display:block;color:#383838;font-size:11px;line-height:1.45}
 .lf-subtitle{margin:16px 0 8px;color:var(--lf-navy);font-size:13px;font-weight:800}
 .lf-items{display:grid;gap:12px}
 .lf-item{padding:15px;border:1px solid var(--lf-border);border-radius:7px;background:var(--lf-cream)}
@@ -114,18 +114,35 @@ to remain visible inside the Webflow Designer.
    Makes every customer choice easy to identify
    ========================================================= */
 
-/* Radio-card selections */
+/* Radio-card selections — title + SELECT on one row; description full width below */
 .lf-choice label {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 10px;
+  row-gap: 6px;
+  align-content: start;
   position: relative;
-  padding-right: 100px;
+  padding: 14px;
   border-width: 2px;
+}
+
+.lf-choice strong {
+  grid-column: 1;
+  grid-row: 1;
+  align-self: center;
+  padding-right: 0;
+  margin: 0;
 }
 
 .lf-choice label::after {
   content: "SELECT";
-  position: absolute;
-  top: 12px;
-  right: 12px;
+  grid-column: 2;
+  grid-row: 1;
+  position: static;
+  align-self: center;
+  justify-self: end;
+  top: auto;
+  right: auto;
   min-width: 66px;
   padding: 5px 7px;
   border: 1px solid #c9c3b8;
@@ -137,6 +154,13 @@ to remain visible inside the Webflow Designer.
   letter-spacing: .45px;
   line-height: 1;
   text-align: center;
+  white-space: nowrap;
+}
+
+.lf-choice span {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  margin: 0;
 }
 
 .lf-choice input:checked + label {
@@ -257,14 +281,7 @@ to remain visible inside the Webflow Designer.
 /* Mobile adjustments */
 @media screen and (max-width: 767px) {
   .lf-choice label {
-    padding-right: 14px;
-    padding-top: 48px;
-  }
-
-  .lf-choice label::after {
-    top: 11px;
-    left: 12px;
-    right: auto;
+    padding: 12px;
   }
 
   .lf-check:has(input:checked)::after {
@@ -443,8 +460,8 @@ to remain visible inside the Webflow Designer.
       <div class="lf-head"><h2>What do you need?</h2><p>Choose delivery, consignor pickup, or nationwide freight.</p></div>
 
       <div class="lf-choice-grid lf-path-grid">
-        <div class="lf-choice"><input id="lfLocal" type="radio" name="delivery_path" value="local_az" checked><label for="lfLocal"><strong>Local Arizona Delivery</strong><span>We deliver from our Scottsdale showroom to you. Same $95.00/hour round-trip cost (showroom → your location → showroom).</span></label></div>
-        <div class="lf-choice"><input id="lfPickup" type="radio" name="delivery_path" value="pickup_az"><label for="lfPickup"><strong>Consignor Pickup</strong><span>We drive from our Scottsdale showroom to your Arizona location and back with the item. Same $95.00/hour round-trip cost (showroom → your location → showroom).</span></label></div>
+        <div class="lf-choice"><input id="lfLocal" type="radio" name="delivery_path" value="local_az" checked><label for="lfLocal"><strong>Local Arizona Delivery</strong><span>We deliver from our Scottsdale showroom to you. $95.00/hour round-trip — in and out, not one way.</span></label></div>
+        <div class="lf-choice"><input id="lfPickup" type="radio" name="delivery_path" value="pickup_az"><label for="lfPickup"><strong>Consignor Pickup</strong><span>We pick up from your Arizona location and bring the item to our Scottsdale showroom. Same $95.00/hour round-trip — in and out, not one way.</span></label></div>
         <div class="lf-choice"><input id="lfNational" type="radio" name="delivery_path" value="nationwide"><label for="lfNational"><strong>Nationwide Freight</strong><span>We prepare the pallet, freight class, and accessorial details needed for a FreightCenter quote.</span></label></div>
       </div>
 
