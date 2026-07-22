@@ -110,6 +110,23 @@ to remain visible inside the Webflow Designer.
 .lf-social-chip.lf-social-ig{background:linear-gradient(135deg,#f58529,#dd2a7b 55%,#515bd4);border-color:#dd2a7b;color:#fff}
 .lf-social-chip.lf-social-light{background:#fff;border-color:var(--lf-navy);color:var(--lf-navy)}
 .lf-social-chip.lf-social-light svg{width:18px;height:18px}
+
+/* Product buy cards on estimate confirmation */
+.lf-buy-block{margin:14px 0 4px}
+.lf-buy-block>p{margin:0 0 10px;font-size:13px;font-weight:800;color:var(--lf-navy)}
+.lf-buy-cards{display:flex;flex-direction:column;gap:10px}
+.lf-buy-card{display:flex;gap:12px;align-items:stretch;padding:12px;border:1px solid var(--lf-border);border-radius:10px;background:var(--lf-cream)}
+.lf-buy-card-img{flex:0 0 96px;width:96px;height:96px;border-radius:8px;overflow:hidden;border:1px solid var(--lf-border);background:#fff;line-height:0;text-decoration:none}
+.lf-buy-card-img img{display:block;width:100%;height:100%;object-fit:cover}
+.lf-buy-card-body{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:6px}
+.lf-buy-card-title{margin:0;font-size:14px;font-weight:800;color:var(--lf-text);line-height:1.35}
+.lf-buy-card-meta{margin:0;font-size:12px;color:var(--lf-muted)}
+.lf-buy-card-cta{display:inline-flex;align-items:center;justify-content:center;align-self:flex-start;margin-top:4px;padding:10px 16px;border-radius:8px;background:var(--lf-navy);color:#fff!important;font-size:13px;font-weight:800;text-decoration:none;letter-spacing:.02em}
+.lf-buy-card-cta:hover{opacity:.92}
+@media screen and (max-width:480px){
+  .lf-buy-card{flex-direction:column}
+  .lf-buy-card-img{width:100%;height:160px;flex-basis:auto}
+}
 .lf-alert{display:none;margin-top:12px;padding:10px 11px;border-radius:5px;font-size:11px;font-weight:700}
 .lf-alert.show{display:block}
 .lf-alert.error{border:1px solid #d5b4b4;background:#fff7f7;color:var(--lf-red)}

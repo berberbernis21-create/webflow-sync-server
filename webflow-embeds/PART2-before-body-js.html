@@ -435,6 +435,30 @@ This script will run on the published Webflow staging and production sites.
       '</div>';
   }
 
+  /** Product photo cards + Buy Now — only items with a product_url. */
+  function buyItemsHtml(items,isPickup){
+    if(isPickup)return"";
+    const cards=(items||[]).filter(i=>i.product_url).map(i=>{
+      const title=escapeHtml(i.title||"View item");
+      const url=escapeHtml(i.product_url);
+      const meta=[
+        i.weight!=null?escapeHtml(i.weight)+" lb":null,
+        i.price?money(i.price):null
+      ].filter(Boolean).join(" · ");
+      const img=i.image_url
+        ?'<a class="lf-buy-card-img" href="'+url+'" target="_blank" rel="noopener"><img src="'+escapeHtml(i.image_url)+'" alt="'+title+'" loading="lazy"></a>'
+        :"";
+      return '<div class="lf-buy-card">'+img+
+        '<div class="lf-buy-card-body">'+
+        '<p class="lf-buy-card-title">'+title+"</p>"+
+        (meta?'<p class="lf-buy-card-meta">'+meta+"</p>":"")+
+        '<a class="lf-buy-card-cta" href="'+url+'" target="_blank" rel="noopener">Buy Now</a>'+
+        "</div></div>";
+    }).join("");
+    if(!cards)return"";
+    return '<div class="lf-buy-block"><p>Buy your item(s)</p><div class="lf-buy-cards">'+cards+"</div></div>";
+  }
+
   function extractDriveMinutes(data){
     const options=[
       data?.drive_minutes,data?.driveMinutes,
@@ -492,9 +516,7 @@ This script will run on the published Webflow staging and production sites.
       const policyText=isPickup
         ?'<p>Final pricing will need to be confirmed directly with the driver team. If you need final confirmed pricing, please email <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> or call <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>'
         :'<p><strong>We do not hold items</strong> — we work for our consignors. Ready to buy? Purchase now and we can confirm delivery after. Want rates first? <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> — <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>';
-      const buyLinks=!isPickup?payload.items.filter(i=>i.product_url).map(i=>
-        '<li><a href="'+escapeHtml(i.product_url)+'"><strong>'+escapeHtml(i.title||"View item")+'</strong></a></li>'
-      ).join(""):"";
+      const buyHtml=buyItemsHtml(payload.items,isPickup);
 
       result.innerHTML='<h2>'+(isPickup?"Your Preliminary Consignor Pickup Estimate":"Your Preliminary Local Delivery Estimate")+'</h2>'+
         '<div class="lf-price">'+priceLabel+displayedAmount+'</div>'+
@@ -502,7 +524,7 @@ This script will run on the published Webflow staging and production sites.
         mapHtml+
         '<p>'+laborText+'</p>'+
         policyText+
-        (buyLinks?'<p><strong>Buy your item(s):</strong></p><ul>'+buyLinks+'</ul>':'')+
+        buyHtml+
         (payload.access.needs_more_than_two_people
           ? '<p><strong>Additional crew review required:</strong> Amount above is the standard two-person base only.</p>'
           : (manual
@@ -522,9 +544,7 @@ This script will run on the published Webflow staging and production sites.
       const dirUrl=preview?.route?.directions_url||display?.directions_url||rate?.route?.directions_url||"";
       const mapHtml=routeMapHtml(mapUrl,dirUrl);
       const rangeText=hasRange?money(low)+" - "+money(high):"Freight-Ready";
-      const buyLinks=payload.items.filter(i=>i.product_url).map(i=>
-        '<li><a href="'+escapeHtml(i.product_url)+'"><strong>'+escapeHtml(i.title||"View item")+'</strong></a></li>'
-      ).join("");
+      const buyHtml=buyItemsHtml(payload.items,false);
       result.innerHTML='<h2>Your Preliminary Nationwide Freight Range</h2>'+
         '<div class="lf-price">'+rangeText+'</div>'+
         milesLine+
@@ -532,7 +552,7 @@ This script will run on the published Webflow staging and production sites.
         '<p>Based on distance, pallet size/weight, and access. <strong>Final price depends on carrier and service</strong> — can be lower; white-glove can raise it.</p>'+
         '<p>We will follow up with better rates after partner review. FreightCenter: <a href="tel:8007167608"><strong>800-716-7608</strong></a>.</p>'+
         '<p><strong>We do not hold items</strong> — ready to buy? Purchase now and confirm freight after. Want rates first? <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> · <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>'+
-        (buyLinks?'<p><strong>Buy your item(s):</strong></p><ul>'+buyLinks+'</ul>':'');
+        buyHtml;
     }
     result.classList.add("show");
   }
