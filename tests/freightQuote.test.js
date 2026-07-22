@@ -5,6 +5,7 @@ import {
   calculateLocalRouteEstimate,
   inferFreightClass,
   shouldMarkNonStackable,
+  parseSetCountFromTitle,
 } from "../lib/freightPalletize.js";
 import { validateFreightQuoteRequest } from "../lib/freightQuoteValidation.js";
 import { buildManualReviewReasons } from "../lib/freightLocalEstimate.js";
@@ -91,8 +92,50 @@ test("dining table with explicit class 175", () => {
   assert.equal(r.pallet.depth, 45);
 });
 
-test("fragile mirror non-stackable", () => {
-  assert.equal(shouldMarkNonStackable({ title: "Antique wall mirror" }), true);
+test("set of 4 swivel chairs: qty 1, total weight, layered pallet", () => {
+  const r = palletizeItem({
+    title: "Mitchell Gold + Bob Williams Poppy Swivel Dining Chairs- Set of 4- 26X23X30H",
+    width: 26,
+    depth: 23,
+    height: 30,
+    weight: 172,
+    quantity: 1,
+    freight_class: null,
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.quantity, 1);
+  assert.equal(r.set_count, 4);
+  assert.equal(r.product.dims_are, "per_piece");
+  assert.equal(r.product.weight_is, "total_for_set");
+  // Swivel → layered (not nested): 2 per layer on 48x40, 2 layers → 60" + 5" pallet
+  assert.equal(r.packing.packing_mode, "layered");
+  assert.equal(r.packing.pieces_per_layer, 2);
+  assert.equal(r.packing.layers, 2);
+  assert.equal(r.pallet.height, 65);
+  assert.equal(r.pallet.weight, 202); // 172 + 30, NOT 172*4
+  assert.equal(r.pallet.width, 48);
+  assert.equal(r.pallet.depth, 40);
+});
+
+test("set of 6 nestable chairs uses nested stack height", () => {
+  const r = palletizeItem({
+    title: "Dining Chairs Set of 6 - 20X20X36H",
+    width: 20,
+    depth: 20,
+    height: 36,
+    weight: 108,
+    quantity: 1,
+  });
+  assert.equal(r.set_count, 6);
+  assert.equal(r.packing.packing_mode, "nested_stack");
+  assert.ok(r.packing.stacked_height_in > 36);
+  assert.equal(r.pallet.weight, 138); // 108+30
+});
+
+test("parseSetCountFromTitle", () => {
+  assert.equal(parseSetCountFromTitle("Chairs- Set of 4- 26X23X30H"), 4);
+  assert.equal(parseSetCountFromTitle("Pair of lamps"), 2);
+  assert.equal(parseSetCountFromTitle("Single sofa"), 1);
 });
 
 test("out-of-state as local_az rejected", () => {

@@ -34,6 +34,7 @@ import {
   createConsignmentCorsMiddleware,
   isAllowedConsignmentOrigin,
 } from "./lib/consignmentCors.js";
+import { parseSetCountFromTitle } from "./lib/freightPalletize.js";
 import consignmentRouter from "./routes/consignmentSubmission.js";
 import freightQuoteRouter from "./routes/freightQuote.js";
 import { recoverStaleConsignmentIntakes } from "./lib/consignmentIntakeRecovery.js";
@@ -11594,6 +11595,8 @@ app.get("/api/listing", async (req, res) => {
       if (Number.isFinite(n)) priceNum = n;
     }
 
+    const setCount = parseSetCountFromTitle(listing.title || "");
+
     const freightListing = {
       title: listing.title || "",
       width: width ?? null,
@@ -11602,9 +11605,12 @@ app.get("/api/listing", async (req, res) => {
       weight: weight ?? null,
       price: priceNum ?? null,
       product_url: listing.productUrl || listing.shopifyOnlineUrl || "",
-      // Aliases the Webflow calculator also checks
       estimated_weight: weight ?? null,
       weight_lbs: weight ?? null,
+      set_count: setCount,
+      quantity: 1,
+      dims_are: setCount > 1 ? "per_piece" : "as_listed",
+      weight_is: setCount > 1 ? "total_for_set" : "as_listed",
     };
 
     return res.json({
