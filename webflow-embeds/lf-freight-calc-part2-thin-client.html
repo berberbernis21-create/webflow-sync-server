@@ -399,13 +399,13 @@ This script will run on the published Webflow staging and production sites.
       const milesText=Number.isFinite(miles)&&miles>0?" · about "+miles+" miles":"";
       const driveText=oneWay
         ? oneWay+" minutes one way ("+(oneWay*2)+" minutes round trip)"+milesText+(isPickup
-            ?" from your pickup location to our Scottsdale showroom and back"
+            ?" from our Scottsdale showroom to your pickup location and back"
             :" from our Scottsdale showroom to your location and back")
         : (isPickup
-            ?"the drive from your pickup location to our Scottsdale showroom and back"
+            ?"the drive from our Scottsdale showroom to your pickup location and back"
             :"the drive from our Scottsdale showroom to your location and back");
       const laborText=isPickup
-        ?"loading the item at your location, securing it for transport, unloading it at our showroom, and the expected time and labor"
+        ?"loading the item at your location, securing it for transport, bringing it back to our showroom, unloading, and the expected time and labor"
         :"wrapping and securing for transport, loading the item, unloading, and the expected time and labor";
       const policyText=isPickup
         ?'<p>This is a consignor pickup estimate. After you submit, our team will confirm scheduling and final pricing. Questions? Email <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> or call <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>'
