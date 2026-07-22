@@ -78,6 +78,15 @@ async function buildQuoteContext(submission) {
     items: submission.items,
     accessorials: accessorialsFromAccess(submission.access),
     multi_item_note: submission.multi_item_note || undefined,
+    // Convenience for Webflow UI — one true calculator display fields
+    display: {
+      estimated_price: local.local_estimate?.estimated_price ?? null,
+      drive_minutes: local.route?.drive_minutes ?? local.local_estimate?.drive_minutes ?? null,
+      distance_miles: local.route?.distance_miles ?? null,
+      currency: "USD",
+      pricing_note:
+        "$95 through 17 minutes one-way, then +$15/8 per extra minute, rounded up to the next $5",
+    },
   };
 }
 
