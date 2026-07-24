@@ -11090,7 +11090,23 @@ async function syncGoogleMerchantFurnitureFromShopifyProduct(
   cache = null,
   pricingHints = null
 ) {
-  if (!googleMerchantEnabled() || !product) return false;
+  if (!product) return false;
+  if (!googleMerchantEnabled()) {
+    webflowLog("warn", {
+      event: "google_merchant.skipped_disabled",
+      reason,
+      shopifyProductId: String(product?.id || "").trim() || null,
+      message: "GOOGLE_MERCHANT_ENABLED is not true; skipping Google push",
+    });
+    return false;
+  }
+  webflowLog("info", {
+    event: "google_merchant.sync_start",
+    reason,
+    shopifyProductId: String(product?.id || "").trim() || null,
+    availability,
+    hasPricingHints: !!(pricingHints && (pricingHints.compareAtCents != null || pricingHints.previousPriceCents != null)),
+  });
   const cfg = getWebflowConfig("furniture");
   const sid = String(product?.id || "").trim();
   let canonicalSlug = "";
@@ -11194,7 +11210,18 @@ async function syncGoogleMerchantFurnitureFromShopifyProduct(
     cache,
     webflowPricingHints
   );
-  if (!payload || !payload.offerId || !payload.title) return false;
+  if (!payload || !payload.offerId || !payload.title) {
+    webflowLog("warn", {
+      event: "google_merchant.skip_invalid_payload",
+      reason,
+      shopifyProductId: sid || null,
+      canonicalSlug: canonicalSlug || null,
+      hasPayload: !!payload,
+      offerId: payload?.offerId || null,
+      title: payload?.title ? String(payload.title).slice(0, 80) : null,
+    });
+    return false;
+  }
   if (!hasValidGoogleShippingWeight(payload.shippingWeight)) {
     const googleDims = getDimensionsFromProduct(product || {});
     const googleMissing = getMissingFurnitureDimensionKeys(googleDims);
