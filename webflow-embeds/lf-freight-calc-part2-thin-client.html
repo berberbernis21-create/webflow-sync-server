@@ -167,11 +167,27 @@ This script will run on the published Webflow staging and production sites.
     return valid;
   }
 
+  function updateWhatNext(path){
+    const el=$("#lfWhatNext");
+    if(!el)return;
+    const p=path||$('input[name="delivery_path"]:checked')?.value||"local_az";
+    let body="";
+    if(p==="pickup_az"){
+      body="Now we enter where we’re picking up from, then your item details, then access needs, then you review — and we email a preliminary estimate so we can confirm final pricing.";
+    }else if(p==="nationwide"){
+      body="Now we enter where it’s going, then your item details, then freight options, then you review — and we get you a confirmed quote.";
+    }else{
+      body="Now we enter where it’s going, then your item details, then access needs, then you review — and we email a preliminary estimate so we can confirm final pricing.";
+    }
+    el.innerHTML="<strong>What happens next:</strong> "+body;
+  }
+
   function updatePathDefaults(){
     const path=$('input[name="delivery_path"]:checked')?.value||"local_az";
     if((path==="local_az"||path==="pickup_az")&&!value("#lfState"))$("#lfState").value="AZ";
     updateAddressCopy(path);
     updateAccessCopy(path);
+    updateWhatNext(path);
   }
 
   function updateAddressCopy(path){
@@ -805,10 +821,12 @@ This script will run on the published Webflow staging and production sites.
     if(path==="local_az"||path==="pickup_az")$("#lfState").value="AZ";
     updateAddressCopy(path);
     updateAccessCopy(path);
+    updateWhatNext(path);
   }));
 
   updateAddressCopy();
   updateAccessCopy();
+  updateWhatNext();
   addItem();
 })();
 </script>
