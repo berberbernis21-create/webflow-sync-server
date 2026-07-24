@@ -2071,6 +2071,19 @@ async function syncFurnitureEcommerceSku(product, webflowProductId, config, cont
     }
   );
 
+  // Effective compare-at after this sync (cleared, newly set, or preserved).
+  let compareAtCents = existingCompareAtCents;
+  if (Object.prototype.hasOwnProperty.call(fieldData, compareSlug)) {
+    compareAtCents =
+      fieldData[compareSlug] == null ? null : webflowSkuMoneyFieldToCents(fieldData[compareSlug]);
+  }
+  const pricingHints = {
+    priceCents,
+    previousPriceCents,
+    compareAtCents,
+    existingCompareAtCents,
+  };
+
   if (isSkuImageImportBlocked(config.siteId, webflowProductId)) {
     delete fieldData["main-image"];
     delete fieldData["more-images"];
@@ -2084,7 +2097,7 @@ async function syncFurnitureEcommerceSku(product, webflowProductId, config, cont
       webflowProductId,
       shopifyProductId: product?.id,
     });
-    return;
+    return pricingHints;
   }
 
   await updateWebflowEcommerceSku(config.siteId, webflowProductId, defaultSku.id, mergedFd, config.token, {
@@ -2095,6 +2108,7 @@ async function syncFurnitureEcommerceSku(product, webflowProductId, config, cont
     previousQty: context.previousQty,
   });
   webflowLog("info", { event: "syncFurnitureEcommerceSku.exit", webflowProductId, skuId: defaultSku.id });
+  return pricingHints;
 }
 
 /** Archive an ecommerce product (soft-delete) so it no longer appears in the furniture store. */
@@ -8860,9 +8874,15 @@ async function syncSingleProductCore(product, cache, options = {}) {
             webflowId: existing.id,
             message: "Product fieldData matches but Shopify snapshot changed; syncing SKU (price/markdown/images)",
           });
-          await syncFurnitureEcommerceSku(product, existing.id, config);
+          const skuPricing = await syncFurnitureEcommerceSku(product, existing.id, config);
           if (!soldNow) {
-            await syncGoogleMerchantFurnitureFromShopifyProduct(product, "in stock", "furniture_sku_only_update", cache);
+            await syncGoogleMerchantFurnitureFromShopifyProduct(
+              product,
+              "in stock",
+              "furniture_sku_only_update",
+              cache,
+              skuPricing || null
+            );
           }
           cache[shopifyProductId] = {
             hash: currentHash,
@@ -8890,8 +8910,14 @@ async function syncSingleProductCore(product, cache, options = {}) {
       webflowLog("info", { event: "sync_product.updating", shopifyProductId, productTitle: name, webflowId: existing.id, reason: "shopify_changed_and_webflow_differs" });
       if (vertical === "furniture" && furnitureUsesEcommerceApi(config)) {
         await updateWebflowEcommerceProduct(config.siteId, existing.id, fieldData, config.token, existing);
-        await syncFurnitureEcommerceSku(product, existing.id, config);
-        await syncGoogleMerchantFurnitureFromShopifyProduct(product, "in stock", "furniture_update", cache);
+        const skuPricing = await syncFurnitureEcommerceSku(product, existing.id, config);
+        await syncGoogleMerchantFurnitureFromShopifyProduct(
+          product,
+          "in stock",
+          "furniture_update",
+          cache,
+          skuPricing || null
+        );
       } else {
         await axios.patch(
           `https://api.webflow.com/v2/collections/${config.collectionId}/items/${existing.id}`,
@@ -9212,9 +9238,10 @@ async function syncSingleProductCore(product, cache, options = {}) {
         return { operation: "skip", id: guardExisting.id };
       }
       webflowLog("info", { event: "sync_product.updating", shopifyProductId, productTitle: name, webflowId: guardExisting.id, reason: "shopify_changed_and_webflow_differs" });
+      let guardSkuPricing = null;
       if (detectedVertical === "furniture" && furnitureUsesEcommerceApi(guardConfig)) {
         await updateWebflowEcommerceProduct(guardConfig.siteId, guardExisting.id, fieldData, guardConfig.token, guardExisting);
-        await syncFurnitureEcommerceSku(product, guardExisting.id, guardConfig);
+        guardSkuPricing = await syncFurnitureEcommerceSku(product, guardExisting.id, guardConfig);
       } else {
         await axios.patch(
           `https://api.webflow.com/v2/collections/${guardConfig.collectionId}/items/${guardExisting.id}`,
@@ -9239,7 +9266,13 @@ async function syncSingleProductCore(product, cache, options = {}) {
         ...cacheSyncMeta(product, cacheEntry, qty),
       };
       if (detectedVertical === "furniture") {
-        await syncGoogleMerchantFurnitureFromShopifyProduct(product, "in stock", "furniture_guard_update", cache);
+        await syncGoogleMerchantFurnitureFromShopifyProduct(
+          product,
+          "in stock",
+          "furniture_guard_update",
+          cache,
+          guardSkuPricing || null
+        );
       }
       webflowLog("info", { event: "cache.mutated", shopifyProductId, op: "update", webflowId: guardExisting.id, vertical: detectedVertical });
       return { operation: "update", id: guardExisting.id };
@@ -10681,7 +10714,8 @@ function googleMoneyFromCents(cents, currency = null) {
  * Keep Google `price` as the original list price and put the discounted amount in `salePrice`
  * when the drop is greater than $5. Further drops on the same item only update `salePrice`.
  *
- * Original is the high-water selling price (or Shopify compare-at) frozen when the sale starts.
+ * Original is the high-water selling price (Webflow compare-at / previous Webflow price /
+ * Shopify compare-at) frozen when the sale starts.
  * When price is raised back (any markup) or restored near/above the original, clear salePrice
  * so Google no longer shows a sale — matching Webflow compare-at clearing.
  */
@@ -10689,6 +10723,7 @@ function resolveGoogleSalePricing({
   currentPriceCents,
   shopifyProductId = null,
   compareAtCents = null,
+  previousPriceCents = null,
   cacheEntry = null,
 }) {
   const currency = String(process.env.GOOGLE_MERCHANT_CURRENCY || "USD").trim() || "USD";
@@ -10780,8 +10815,12 @@ function resolveGoogleSalePricing({
     if (cachedLast != null && Number(cachedLast) > 0) {
       highWaterCandidates.push(Math.round(Number(cachedLast)));
     }
+    // Webflow compare-at / previous SKU price — source of truth on markdown syncs.
     if (compareAtCents != null && Number(compareAtCents) > 0) {
       highWaterCandidates.push(Math.round(Number(compareAtCents)));
+    }
+    if (previousPriceCents != null && Number(previousPriceCents) > 0) {
+      highWaterCandidates.push(Math.round(Number(previousPriceCents)));
     }
     highWaterCandidates.push(current);
     const highWater = Math.max(...highWaterCandidates);
@@ -10811,6 +10850,8 @@ function resolveGoogleSalePricing({
       salePriceCents: current,
       dropCents: listCents - current,
       minDropCents: GOOGLE_SALE_MIN_DROP_CENTS,
+      compareAtCents: compareAtCents ?? null,
+      previousPriceCents: previousPriceCents ?? null,
     });
     return { price, salePrice, state, onSale: true, reason };
   }
@@ -10819,24 +10860,33 @@ function resolveGoogleSalePricing({
   return clearSale("price_restored_near_original", current);
 }
 
-function resolveGoogleSalePricingForShopifyProduct(product, cache = null) {
+function resolveGoogleSalePricingForShopifyProduct(product, cache = null, pricingHints = null) {
   const sid = String(product?.id || "").trim();
   const cacheEntry = cache && sid ? getCacheEntry(cache, sid) : null;
-  const currentPriceCents = parseGooglePriceToCents(
-    product?.variants?.[0]?.price ?? product?.price
-  );
+  const currentPriceCents =
+    pricingHints?.priceCents != null
+      ? pricingHints.priceCents
+      : parseGooglePriceToCents(product?.variants?.[0]?.price ?? product?.price);
   const compareAtCents =
+    pricingHints?.compareAtCents ??
     parseGooglePriceToCents(product?.variants?.[0]?.compare_at_price) ??
     parseGooglePriceToCents(product?.compare_at_price);
+  const previousPriceCents = pricingHints?.previousPriceCents ?? null;
   return resolveGoogleSalePricing({
     currentPriceCents,
     shopifyProductId: sid,
     compareAtCents,
+    previousPriceCents,
     cacheEntry,
   });
 }
 
-async function buildGoogleFurnitureProductFromShopify(product, availability = "in stock", cache = null) {
+async function buildGoogleFurnitureProductFromShopify(
+  product,
+  availability = "in stock",
+  cache = null,
+  pricingHints = null
+) {
   const canonicalSlug =
     String(product?.__googleCanonicalSlug || "").trim() ||
     String(product?.__webflowCanonicalSlug || "").trim();
@@ -10872,7 +10922,7 @@ async function buildGoogleFurnitureProductFromShopify(product, availability = "i
     dims: extractedDims,
   });
   extractedDims = applyGoogleDimFallback(extractedDims);
-  const pricing = resolveGoogleSalePricingForShopifyProduct(product, cache);
+  const pricing = resolveGoogleSalePricingForShopifyProduct(product, cache, pricingHints);
   const out = {
     offerId,
     title: String(product?.title || "").trim(),
@@ -11033,11 +11083,18 @@ async function googleMerchantInsertProduct(payload) {
   });
 }
 
-async function syncGoogleMerchantFurnitureFromShopifyProduct(product, availability = "in stock", reason = "sync", cache = null) {
+async function syncGoogleMerchantFurnitureFromShopifyProduct(
+  product,
+  availability = "in stock",
+  reason = "sync",
+  cache = null,
+  pricingHints = null
+) {
   if (!googleMerchantEnabled() || !product) return false;
   const cfg = getWebflowConfig("furniture");
   const sid = String(product?.id || "").trim();
   let canonicalSlug = "";
+  let webflowPricingHints = pricingHints;
   const retries = Math.max(1, parseInt(process.env.GOOGLE_MERCHANT_WAIT_FOR_WEBFLOW_SLUG_RETRIES || "4", 10) || 4);
   const delayMs = Math.max(250, parseInt(process.env.GOOGLE_MERCHANT_WAIT_FOR_WEBFLOW_SLUG_DELAY_MS || "1500", 10) || 1500);
   for (let attempt = 1; attempt <= retries; attempt++) {
@@ -11060,6 +11117,15 @@ async function syncGoogleMerchantFurnitureFromShopifyProduct(product, availabili
         const foundSlug = String(fd.slug || fd["shopify-slug-2"] || "").trim();
         if (foundSlug) {
           canonicalSlug = foundSlug;
+          if (!webflowPricingHints) {
+            const compareSlug = getFurnitureSkuCompareAtSlug();
+            const skuFd = existing?.skus?.[0]?.fieldData || {};
+            webflowPricingHints = {
+              priceCents: webflowSkuMoneyFieldToCents(skuFd.price),
+              compareAtCents: webflowSkuMoneyFieldToCents(skuFd[compareSlug]),
+              previousPriceCents: null,
+            };
+          }
           break;
         }
       } catch (err) {
@@ -11085,8 +11151,49 @@ async function syncGoogleMerchantFurnitureFromShopifyProduct(product, availabili
     });
     return false;
   }
+  // Prefer live Webflow SKU compare-at when caller didn't pass pricing hints (e.g. full push).
+  if (
+    !webflowPricingHints?.compareAtCents &&
+    cfg?.siteId &&
+    cfg?.token &&
+    sid
+  ) {
+    try {
+      const indexed = furnitureProductIndex?.byShopifyId?.get(sid);
+      const existing =
+        indexed ||
+        (await findExistingWebflowEcommerceProduct(
+          sid,
+          null,
+          cfg,
+          String(product?.title || "").trim() || null
+        ));
+      const skuFd = existing?.skus?.[0]?.fieldData || {};
+      const compareSlug = getFurnitureSkuCompareAtSlug();
+      const compareAtCents = webflowSkuMoneyFieldToCents(skuFd[compareSlug]);
+      const priceCents = webflowSkuMoneyFieldToCents(skuFd.price);
+      if (compareAtCents != null || priceCents != null) {
+        webflowPricingHints = {
+          ...(webflowPricingHints || {}),
+          priceCents: webflowPricingHints?.priceCents ?? priceCents,
+          compareAtCents: webflowPricingHints?.compareAtCents ?? compareAtCents,
+        };
+      }
+    } catch (err) {
+      webflowLog("warn", {
+        event: "google_merchant.compare_at_lookup_failed",
+        shopifyProductId: sid || null,
+        message: err?.message || String(err),
+      });
+    }
+  }
   const productForGoogle = { ...product, __googleCanonicalSlug: canonicalSlug };
-  const payload = await buildGoogleFurnitureProductFromShopify(productForGoogle, availability, cache);
+  const payload = await buildGoogleFurnitureProductFromShopify(
+    productForGoogle,
+    availability,
+    cache,
+    webflowPricingHints
+  );
   if (!payload || !payload.offerId || !payload.title) return false;
   if (!hasValidGoogleShippingWeight(payload.shippingWeight)) {
     const googleDims = getDimensionsFromProduct(product || {});
