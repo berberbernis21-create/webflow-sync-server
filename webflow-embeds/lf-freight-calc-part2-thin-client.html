@@ -283,7 +283,6 @@ This script will run on the published Webflow staging and production sites.
     if(pickup){
       if($("#lfUnpack"))$("#lfUnpack").checked=false;
       if($("#lfWhiteGlove"))$("#lfWhiteGlove").checked=false;
-      if($("#lfRoc"))$("#lfRoc").checked=false;
       if($("#lfWarehousePickup"))$("#lfWarehousePickup").checked=false;
       if($("#lfDock"))$("#lfDock").checked=false;
     }
@@ -328,7 +327,7 @@ This script will run on the published Webflow staging and production sites.
       if(notes)notes.placeholder="Share dock hours, appointment needs, HOA rules, or anything the carrier should know.";
       const summaryHelp=$("#lfSummaryHelp");
       if(summaryHelp)summaryHelp.textContent="Below are the delivery address, item information, and nationwide freight options you submitted.";
-      setText("#lfAccessHeadHelp","Nationwide freight is different from local truck delivery. Choose White Glove / Room of Choice only if needed, and tell us about dock, liftgate, and warehouse pickup options that change the carrier rate.");
+      setText("#lfAccessHeadHelp","Nationwide freight is different from local truck delivery. Choose White Glove only if needed, and tell us about dock, liftgate, and warehouse pickup options that change the carrier rate.");
     }else{
       setText("#lfInsideLabel","Inside delivery requested");
       setText("#lfCrewHelp","Lost & Found will review the item, weight, size, and access conditions. If more than two movers or a specialized delivery crew is required, the delivery price will increase and we will provide an updated estimated range for approval before scheduling.");
@@ -498,7 +497,7 @@ This script will run on the published Webflow staging and production sites.
     address.full=[address.street,address.unit,address.city,address.state,address.zip].filter(Boolean).join(", ");
 
     const whiteGlove=path==="nationwide"&&bool("#lfWhiteGlove");
-    const roomOfChoice=path==="nationwide"&&bool("#lfRoc");
+    const roomOfChoice=false;
     const warehousePickup=path==="nationwide"&&bool("#lfWarehousePickup");
     // Customer does not choose origin loading; LF confirms whether pickup can be done without a liftgate (most pallet freight cannot).
     const storeLoading=false;
@@ -522,7 +521,7 @@ This script will run on the published Webflow staging and production sites.
       gated_access:bool("#lfGate"),
       gate_code_or_instructions:value("#lfGateCode"),
       inside_delivery:path==="nationwide"?whiteGlove:bool("#lfInside"),
-      room_placement:path==="nationwide"?(roomOfChoice||whiteGlove):false,
+      room_placement:path==="nationwide"?whiteGlove:false,
       unpacking_or_debris_removal:path==="pickup_az"||path==="nationwide"?false:bool("#lfUnpack"),
       disassembly_or_assembly:bool("#lfDisassembly"),
       long_carry:bool("#lfLongCarry"),
@@ -705,9 +704,9 @@ This script will run on the published Webflow staging and production sites.
       const mapHtml=routeMapHtml(mapUrl,dirUrl);
       const rangeText=hasRange?money(low)+" - "+money(high):"Freight-Ready";
       const buyHtml=buyItemsHtml(payload.items,false);
-      const wgNote=payload.access.white_glove||payload.access.room_of_choice
-        ?'<p><strong>White Glove / Room of Choice selected</strong> — these raise the quote significantly versus standard freight.</p>'
-        :'<p>White Glove or Room of Choice raise the quote significantly if you need them later.</p>';
+      const wgNote=payload.access.white_glove
+        ?'<p><strong>White Glove selected</strong> — this raises the quote significantly versus standard freight.</p>'
+        :'<p>White Glove raises the quote significantly if you need it later.</p>';
       const whNote=payload.access.warehouse_pickup
         ?'<p><strong>Warehouse / terminal pickup selected</strong> — that usually saves about $150–$200.</p>'
         :'<p>Tip: picking up from a warehouse/terminal near you usually saves about <strong>$150–$200</strong>. We will mention this when we send your quote.</p>';
