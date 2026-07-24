@@ -500,11 +500,8 @@ to remain visible inside the Webflow Designer.
         <div class="lf-choice"><input id="lfNational" type="radio" name="delivery_path" value="nationwide"><label for="lfNational"><strong>Nationwide Freight</strong><span>We prepare the pallet, freight class, and accessorial details needed for a FreightCenter quote.</span></label></div>
       </div>
 
-      <div class="lf-subtitle">How would you like to continue?</div>
-      <div class="lf-choice-grid">
-        <div class="lf-choice"><input id="lfEstimate" type="radio" name="request_mode" value="estimate" checked><label for="lfEstimate"><strong>Get an Estimate</strong><span>See a preliminary result and email a copy of the request to yourself and our team.</span></label></div>
-        <div class="lf-choice"><input id="lfQuote" type="radio" name="request_mode" value="please_quote"><label for="lfQuote"><strong>Have Us Quote It</strong><span>Send everything to our team for review and confirmed pricing. You still get an email receipt with your request summary.</span></label></div>
-      </div>
+      <input type="hidden" name="request_mode" id="lfRequestMode" value="estimate">
+      <p class="lf-fine" style="margin:14px 0 0;">You’ll get a preliminary estimate on screen, and we email the full request to you and our team so we can confirm pricing.</p>
 
       <div class="lf-actions"><div></div><button class="lf-btn" type="button" data-next>Continue</button></div>
     </section>
@@ -648,7 +645,7 @@ to remain visible inside the Webflow Designer.
       </label>
 
       <p class="lf-fine lf-review-email-note">
-        When you continue, your completed request summary will be emailed to you and Lost &amp; Found Resale (whether you chose Get an Estimate or Have Us Quote It).
+        When you continue, your completed request summary will be emailed to you and Lost &amp; Found Resale.
       </p>
 
       <div class="lf-actions">

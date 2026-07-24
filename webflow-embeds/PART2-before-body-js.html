@@ -415,7 +415,7 @@ This script will run on the published Webflow staging and production sites.
 
   function buildPayload(){
     const path=$('input[name="delivery_path"]:checked')?.value||"local_az";
-    const mode=$('input[name="request_mode"]:checked')?.value||"estimate";
+    const mode=value("#lfRequestMode")||$('input[name="request_mode"]:checked')?.value||"estimate";
     const destinationType=value("#lfType")||"residential";
     const dock=bool("#lfDock");
     const address=compact({
@@ -577,7 +577,7 @@ This script will run on the published Webflow staging and production sites.
       : "";
 
     $("#lfSummary").innerHTML=
-      '<div class="lf-summary-card"><h3>Request</h3><p><strong>'+(payload.request_mode==="please_quote"?"Have Us Quote It":"Get an Estimate")+'</strong> · '+pathLabel(path)+'</p></div>'+
+      '<div class="lf-summary-card"><h3>Request</h3><p><strong>Estimate / quote request</strong> · '+pathLabel(path)+'</p></div>'+
       '<div class="lf-summary-card"><h3>'+(isPickup?"Pickup":"Delivery")+'</h3><p>'+escapeHtml(payload.delivery_address.full)+'</p><p>'+escapeHtml(payload.customer_name)+' · '+escapeHtml(payload.customer_email)+(payload.customer_phone?" · "+escapeHtml(payload.customer_phone):"")+'</p></div>'+
       '<div class="lf-summary-card"><h3>Items</h3><ul>'+itemHtml+'</ul></div>'+
       '<div class="lf-summary-card"><h3>Access</h3><p>'+(flags.length?escapeHtml(flags.join(", ")):"No additional access concerns reported.")+'</p>'+(liftgateLine?'<p>'+liftgateLine+'</p>':'')+'</div>';
