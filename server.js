@@ -10692,6 +10692,14 @@ async function googleMerchantInsertProduct(payload) {
   const url = `https://merchantapi.googleapis.com/products/v1/accounts/${encodeURIComponent(
     cfg.merchantId
   )}/productInputs:insert`;
+  webflowLog("info", {
+    event: "google_merchant.insert_request",
+    dataSource: cfg.dataSource,
+    offerId: body.offerId,
+    contentLanguage: body.contentLanguage,
+    feedLabel: body.feedLabel,
+    productAttributes: body.productAttributes,
+  });
   return axios.post(url, body, {
     params: { dataSource: cfg.dataSource },
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
@@ -11449,6 +11457,82 @@ async function mapFurnitureListingSearchHit(hit, config) {
 }
 
 /**
+ * Parse freight "Find Item" input: full product URL /slug or plain title.
+ * @returns {{ kind: "slug"|"name", value: string, raw: string }}
+ */
+function extractListingLookupQuery(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return { kind: "name", value: "", raw: s };
+  const looksUrl =
+    /^https?:\/\//i.test(s) ||
+    /lostandfoundresale\.com/i.test(s) ||
+    /\/products?\//i.test(s);
+  if (!looksUrl) return { kind: "name", value: s, raw: s };
+  try {
+    const href = /^https?:\/\//i.test(s) ? s : `https://${s.replace(/^\/+/, "")}`;
+    const u = new URL(href);
+    const parts = u.pathname.split("/").filter(Boolean);
+    const pi = parts.findIndex((p) => p === "product" || p === "products");
+    if (pi >= 0 && parts[pi + 1]) {
+      return {
+        kind: "slug",
+        value: decodeURIComponent(parts[pi + 1]).replace(/\/+$/, ""),
+        raw: s,
+      };
+    }
+    if (parts.length) {
+      return {
+        kind: "slug",
+        value: decodeURIComponent(parts[parts.length - 1]).replace(/\/+$/, ""),
+        raw: s,
+      };
+    }
+  } catch {
+    /* fall through */
+  }
+  return { kind: "name", value: s, raw: s };
+}
+
+/** Resolve a CMS/ecommerce listing by public slug/handle. */
+async function searchWebflowListingBySlug(slug) {
+  const key = String(slug || "").trim();
+  if (!key) return null;
+  const furnCfg = getWebflowConfig("furniture");
+  if (furnCfg.siteId && furnCfg.token) {
+    if (!furnitureProductIndex?.complete) {
+      try {
+        await loadFurnitureProductIndex();
+      } catch {
+        /* continue */
+      }
+    }
+    const entry = furnitureProductIndex?.bySlug?.get(key);
+    if (entry) {
+      return mapFurnitureListingSearchHit(
+        { product: entry, fd: entry.fieldData || {}, skus: entry.skus || [] },
+        furnCfg
+      );
+    }
+  }
+  const luxCfg = getWebflowConfig("luxury");
+  if (luxCfg.collectionId && luxCfg.token) {
+    if (!luxuryItemIndex?.complete) {
+      try {
+        await loadLuxuryItemIndex();
+      } catch {
+        /* continue */
+      }
+    }
+    const luxItem = luxuryItemIndex?.bySlug?.get(key);
+    if (luxItem) {
+      const fd = luxItem.fieldData || {};
+      return mapLuxuryListingSearchHit({ item: luxItem, fd, score: 1000 });
+    }
+  }
+  return null;
+}
+
+/**
  * Best-effort title search across Luxury CMS + Furniture ecommerce (same JSON shape as Shopify listing).
  * @param {string} name
  */
@@ -11528,7 +11612,7 @@ app.get("/test-resend", async (req, res) => {
 });
 
 app.get("/api/listing", async (req, res) => {
-  const name = req.query.name;
+  const name = req.query.name ?? req.query.url ?? req.query.slug;
   if (name === undefined || String(name).trim() === "") {
     return res.status(400).json({ error: "Missing required query param: name" });
   }
@@ -11537,25 +11621,44 @@ app.get("/api/listing", async (req, res) => {
     String(req.query.exact || req.query.match || "").trim().toLowerCase() === "1" ||
     String(req.query.exact || req.query.match || "").trim().toLowerCase() === "exact" ||
     String(req.query.exact || "").trim().toLowerCase() === "true";
+  const lookup = extractListingLookupQuery(String(name));
+  const searchName = lookup.kind === "slug" ? lookup.value : lookup.value;
   try {
     let listing = null;
     let matchScore = null;
-    if (source === "shopify") {
-      listing = await searchShopifyProducts(String(name));
-      if (!listing) {
-        listing = await searchWebflowListing(String(name));
-      }
-    } else {
+    let matchedBySlug = false;
+
+    if (lookup.kind === "slug" && lookup.value) {
       try {
-        listing = await searchWebflowListing(String(name));
-      } catch (webflowErr) {
+        listing = await searchWebflowListingBySlug(lookup.value);
+        matchedBySlug = Boolean(listing);
+      } catch (slugErr) {
         webflowLog("warn", {
-          event: "api.listing.webflow_fallback_shopify",
-          message: webflowErr?.message || "webflow listing search failed",
+          event: "api.listing.slug_lookup_failed",
+          slug: lookup.value.slice(0, 120),
+          message: slugErr?.message || String(slugErr),
         });
       }
-      if (!listing) {
-        listing = await searchShopifyProducts(String(name));
+    }
+
+    if (!listing) {
+      if (source === "shopify") {
+        listing = await searchShopifyProducts(searchName);
+        if (!listing) {
+          listing = await searchWebflowListing(searchName);
+        }
+      } else {
+        try {
+          listing = await searchWebflowListing(searchName);
+        } catch (webflowErr) {
+          webflowLog("warn", {
+            event: "api.listing.webflow_fallback_shopify",
+            message: webflowErr?.message || "webflow listing search failed",
+          });
+        }
+        if (!listing) {
+          listing = await searchShopifyProducts(searchName);
+        }
       }
     }
     if (!listing) {
@@ -11563,18 +11666,21 @@ app.get("/api/listing", async (req, res) => {
     }
 
     // Exact-title gate for freight calculator (and when ?exact=1).
-    const qNorm = normalizeProductNameForIndex(String(name));
+    // Skip when the customer pasted a product URL / slug — that is an exact listing resolve.
+    const qNorm = normalizeProductNameForIndex(String(searchName));
     const tNorm = normalizeProductNameForIndex(String(listing.title || ""));
     const isExact = Boolean(qNorm && tNorm && qNorm === tNorm);
-    matchScore = listingTitleSearchScore(String(name), String(listing.title || ""));
-    if (exactOnly && !isExact && matchScore < 1000) {
+    matchScore = matchedBySlug
+      ? 1000
+      : listingTitleSearchScore(String(searchName), String(listing.title || ""));
+    if (!matchedBySlug && exactOnly && !isExact && matchScore < 1000) {
       return res.status(404).json({
         error: "No exact listing title match",
         listing: null,
       });
     }
     // Freight clients often omit exact=1 but type the full title — still reject weak fuzzy hits.
-    if (!exactOnly && matchScore < getListingSearchMinScore()) {
+    if (!matchedBySlug && !exactOnly && matchScore < getListingSearchMinScore()) {
       return res.status(404).json({ error: "No products found", listing: null });
     }
 

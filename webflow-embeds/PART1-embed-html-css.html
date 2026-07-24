@@ -531,16 +531,37 @@ to remain visible inside the Webflow Designer.
     </section>
 
     <section class="lf-step" data-step="3" hidden>
-      <div class="lf-head"><h2>Add the Item or Items</h2><p>Use the exact website listing title for automatic lookup, or enter the item manually.</p></div>
+      <div class="lf-head"><h2>Add the Item or Items</h2><p>Paste the exact website listing title <strong>or the product page URL</strong> for automatic lookup, or enter the item manually.</p></div>
       <div class="lf-items" id="lfItems"></div>
       <div style="margin-top:11px"><button class="lf-btn secondary" id="lfAddItem" type="button">+ Add Another Item</button></div>
       <div class="lf-actions"><button class="lf-btn secondary" type="button" data-back>Back</button><button class="lf-btn" type="button" data-next>Continue</button></div>
     </section>
 
     <section class="lf-step" data-step="4" hidden>
-      <div class="lf-head"><h2>Access &amp; Handling</h2><p>Tell us about stairs, interior access, building access, and handling needs so the estimate is as accurate as possible.</p></div>
+      <div class="lf-head"><h2>Access &amp; Handling</h2><p id="lfAccessHeadHelp">Tell us about stairs, interior access, building access, and handling needs so the estimate is as accurate as possible.</p></div>
 
       <div class="lf-access-grid">
+        <div class="lf-access-card lf-nationwide-only" hidden>
+          <h3>Nationwide freight service</h3>
+          <label class="lf-check"><input id="lfWhiteGlove" type="checkbox"> White Glove delivery (into the home + careful placement)</label>
+          <label class="lf-check"><input id="lfRoc" type="checkbox"> Room of Choice (ROC) — place in a specific room</label>
+          <div class="lf-help" style="margin:-2px 4px 10px 4px;">
+            White Glove and Room of Choice <strong>increase freight cost significantly</strong> versus standard threshold / curbside freight. Only select what you need.
+          </div>
+          <label class="lf-check"><input id="lfWarehousePickup" type="checkbox"> I can pick the freight up from a warehouse / terminal near me</label>
+          <div class="lf-help" style="margin:-2px 4px 10px 4px;">
+            Warehouse or terminal pickup typically lowers the quote by about <strong>$150–$200</strong>. Even if you skip this, we will mention the option when we confirm your exact rate.
+          </div>
+          <label class="lf-check"><input id="lfNoLiftgate" type="checkbox"> No liftgate needed at delivery (loading dock, forklift, or commercial receiving)</label>
+          <div class="lf-help" style="margin:-2px 4px 10px 4px;">
+            Skipping liftgate at the receiving end usually brings the carrier quote down. Residential deliveries most often need a liftgate.
+          </div>
+          <label class="lf-check"><input id="lfStoreLoad" type="checkbox" checked> Lost &amp; Found can load the freight at our Scottsdale warehouse / showroom</label>
+          <div class="lf-help" style="margin:-2px 4px 4px 4px;">
+            Store loading at origin usually helps the rate versus requiring a special pickup appointment.
+          </div>
+        </div>
+
         <div class="lf-access-card">
           <h3>Stairs &amp; Interior Access</h3>
 
@@ -566,9 +587,9 @@ to remain visible inside the Webflow Designer.
           </div>
 
           <label class="lf-check"><input id="lfTight" type="checkbox"> Tight turns, narrow halls, or narrow doorways</label>
-          <label class="lf-check" id="lfInsideWrap"><input id="lfInside" type="checkbox"> <span id="lfInsideLabel">Inside delivery requested</span></label>
-          <label class="lf-check lf-delivery-only" id="lfRoomWrap"><input id="lfRoom" type="checkbox"> Room placement requested</label>
-          <label class="lf-check lf-delivery-only" id="lfUnpackWrap"><input id="lfUnpack" type="checkbox"> Unpacking or debris removal requested</label>
+          <label class="lf-check lf-local-truck-only" id="lfInsideWrap"><input id="lfInside" type="checkbox"> <span id="lfInsideLabel">Inside delivery requested</span></label>
+          <label class="lf-check lf-delivery-only lf-local-truck-only" id="lfRoomWrap"><input id="lfRoom" type="checkbox"> Room placement requested</label>
+          <label class="lf-check lf-delivery-only lf-local-truck-only" id="lfUnpackWrap"><input id="lfUnpack" type="checkbox"> Unpacking or debris removal requested</label>
           <label class="lf-check lf-pickup-only" id="lfCarryOutWrap" hidden><input id="lfCarryOut" type="checkbox"> Item needs to be carried out from inside the home or a specific room</label>
         </div>
 
@@ -596,8 +617,8 @@ to remain visible inside the Webflow Designer.
 
         <div class="lf-access-card">
           <h3>Labor &amp; Item Handling</h3>
-          <label class="lf-check"><input id="lfCrew" type="checkbox"> This item may require more than two people</label>
-          <div class="lf-help" id="lfCrewHelp" style="margin:-2px 4px 8px 4px;">
+          <label class="lf-check lf-local-truck-only"><input id="lfCrew" type="checkbox"> This item may require more than two people</label>
+          <div class="lf-help lf-local-truck-only" id="lfCrewHelp" style="margin:-2px 4px 8px 4px;">
             Lost &amp; Found will review the item, weight, size, and access conditions. If more than two movers or a specialized delivery crew is required, the delivery price will increase and we will provide an updated estimated range for approval before scheduling.
           </div>
           <label class="lf-check"><input id="lfFragile" type="checkbox"> Fragile, antique, glass, artwork, wicker, cane, rattan, or high-end item</label>
@@ -714,7 +735,7 @@ to remain visible inside the Webflow Designer.
   <article class="lf-item">
     <div class="lf-item-head"><h3>Item <span class="lf-item-number"></span></h3><button class="lf-remove" type="button">Remove</button></div>
     <div class="lf-lookup-row">
-      <div class="lf-field"><label>Exact website listing title <span class="lf-required">*</span></label><input class="lf-title" required placeholder="Paste the exact product title"><div class="lf-help">Try lookup first. You can still enter everything manually if no exact listing is found.</div><div class="lf-error"></div></div>
+      <div class="lf-field"><label>Website listing title or product URL <span class="lf-required">*</span></label><input class="lf-title" required placeholder="Paste the exact product title or product page URL"><div class="lf-help">Lookup accepts the listing title or a lostandfoundresale.com product link. You can still enter everything manually if nothing is found.</div><div class="lf-error"></div></div>
       <button class="lf-btn lf-lookup" type="button">Find Item</button>
     </div>
     <div class="lf-lookup-message"></div>
@@ -755,6 +776,7 @@ to remain visible inside the Webflow Designer.
       <input class="lf-image-url" type="hidden" value="">
     </div>
     <label class="lf-check"><input class="lf-nonstack" type="checkbox"> Treat as non-stackable / fragile freight</label>
+    <div class="lf-help" style="margin:4px 0 0;">Leave unchecked when pieces can be stacked for freight (pairs of chairs usually stack — freight height stays near one piece plus stack padding, not double height). Non-stackable adds about $50 on nationwide estimates.</div>
     <div class="lf-pallet">Enter dimensions and weight to see the SOP freight entry.</div>
   </article>
 </template>

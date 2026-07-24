@@ -48,18 +48,55 @@ This script will run on the published Webflow staging and production sites.
     return {freightClass:null,nonStackable:nonstack};
   }
 
+  function parseSetCount(title){
+    const t=String(title||"");
+    let m=t.match(/\bsets?\s+of\s+(\d{1,2})\b/i);
+    if(m)return Math.min(24,parseInt(m[1],10));
+    if(/\bpair\b/i.test(t))return 2;
+    m=t.match(/\b(\d{1,2})\s*-?\s*(?:pc|pcs|piece|pieces)\b/i);
+    if(m)return Math.min(24,parseInt(m[1],10));
+    m=t.match(/\b(\d{1,2})\s+chairs?\b/i);
+    if(m)return Math.min(24,parseInt(m[1],10));
+    return 1;
+  }
+
+  function canNestStack(title,nonStackable){
+    if(nonStackable)return false;
+    const t=String(title||"").toLowerCase();
+    if(/\b(recliner|sofa|loveseat|sectional|chaise|bench)\b/.test(t))return false;
+    return /\b(dining\s+chairs?|side\s+chairs?|chairs?|stools?|bar\s*stools?|barstools?|ottoman)\b/.test(t);
+  }
+
+  function nestAddIn(pieceHeight,title){
+    const t=String(title||"").toLowerCase();
+    if(/\b(swivel|barrel)\b/.test(t))return Math.max(8,Math.min(14,Math.round(pieceHeight*0.28)||10));
+    return Math.max(3,Math.min(6,Math.round(pieceHeight*0.12)||4));
+  }
+
   function palletize(item){
     const w=num(item.width),d=num(item.depth),h=num(item.height),wt=num(item.weight);
     const selectedClass=item.freight_class===null||item.freight_class===""?null:num(item.freight_class);
+    const setCount=Math.max(1,parseSetCount(item.title));
+    let freightH=h;
+    let stackNote="";
+    if(setCount>1&&canNestStack(item.title,item.non_stackable)){
+      const add=nestAddIn(h,item.title);
+      freightH=h+(setCount-1)*add;
+      stackNote="stacked "+setCount+" pcs (~"+Math.ceil(freightH)+"\" before pallet board)";
+    }else if(item.non_stackable){
+      stackNote="non-stackable";
+    }
 
     return {
       width:w<=48?48:roundUp5(w),
       depth:d<=40?40:roundUp5(d),
-      height:Math.ceil(h+5),
+      height:Math.ceil(freightH+5),
       weight:Math.ceil(wt+30),
       freight_class:selectedClass,
       packaging_type:"Pallet(s)",
-      non_stackable:!!item.non_stackable
+      non_stackable:!!item.non_stackable,
+      set_count:setCount,
+      stack_note:stackNote
     };
   }
 
@@ -157,15 +194,31 @@ This script will run on the published Webflow staging and production sites.
   }
 
   function updateAccessCopy(path){
-    const pickup=(path||$('input[name="delivery_path"]:checked')?.value||"local_az")==="pickup_az";
-    $$(".lf-delivery-only").forEach(el=>{el.hidden=pickup});
+    const p=path||$('input[name="delivery_path"]:checked')?.value||"local_az";
+    const pickup=p==="pickup_az";
+    const nationwide=p==="nationwide";
+    $$(".lf-nationwide-only").forEach(el=>{el.hidden=!nationwide});
+    $$(".lf-local-truck-only").forEach(el=>{el.hidden=nationwide||(el.classList.contains("lf-delivery-only")&&pickup)});
+    $$(".lf-delivery-only").forEach(el=>{
+      if(el.classList.contains("lf-nationwide-only"))return;
+      el.hidden=pickup||nationwide;
+    });
     $$(".lf-pickup-only").forEach(el=>{el.hidden=!pickup});
 
     if(pickup){
       if($("#lfRoom"))$("#lfRoom").checked=false;
       if($("#lfUnpack"))$("#lfUnpack").checked=false;
+      if($("#lfWhiteGlove"))$("#lfWhiteGlove").checked=false;
+      if($("#lfRoc"))$("#lfRoc").checked=false;
+      if($("#lfWarehousePickup"))$("#lfWarehousePickup").checked=false;
     }else if($("#lfCarryOut")){
       $("#lfCarryOut").checked=false;
+    }
+    if(nationwide){
+      if($("#lfInside"))$("#lfInside").checked=false;
+      if($("#lfRoom"))$("#lfRoom").checked=false;
+      if($("#lfUnpack"))$("#lfUnpack").checked=false;
+      if($("#lfCrew"))$("#lfCrew").checked=false;
     }
 
     const setText=(sel,htmlOrText,asHtml)=>{
@@ -189,8 +242,20 @@ This script will run on the published Webflow staging and production sites.
       if(notes)notes.placeholder="Share anything else the pickup team should know.";
       const summaryHelp=$("#lfSummaryHelp");
       if(summaryHelp)summaryHelp.textContent="Below are the pickup address, item information, and access details you submitted.";
-      const accessHead=$('.lf-step[data-step="4"] .lf-head p');
-      if(accessHead)accessHead.textContent="Tell us about stairs, interior access, building access, and handling needs for this pickup so the estimate is as accurate as possible.";
+      setText("#lfAccessHeadHelp","Tell us about stairs, interior access, building access, and handling needs for this pickup so the estimate is as accurate as possible.");
+    }else if(nationwide){
+      setText("#lfDockLabel","Confirmed loading dock or forklift at delivery (helps avoid liftgate)");
+      setText("#lfDisassemblyLabel","Disassembly or assembly may be required");
+      setText("#lfLongCarryLabel","Long carry from truck / terminal to entrance");
+      setText("#lfLongCarryHelp","For freight, a long carry means an extended distance from where the truck can park or from the terminal door to the entrance — generally about 75 feet or more.");
+      setText("#lfParkingLabel","Limited truck parking, low clearance, appointment windows, or HOA restrictions");
+      setText("#lfSmartDefaults","<strong>Nationwide freight:</strong> Ranges are wide because every carrier prices differently. We confirm the exact quote ourselves with a trusted human partner in the loop. White Glove / Room of Choice raise cost a lot; warehouse pickup usually saves about $150–$200; no liftgate and store loading also help.",true);
+      setText("#lfAgreeLabel","I understand this is a preliminary freight range only — final carrier pricing must be confirmed by Lost & Found (human in the loop) before freight is booked.");
+      const notes=$("#lfNotes");
+      if(notes)notes.placeholder="Share dock hours, appointment needs, HOA rules, or anything the carrier should know.";
+      const summaryHelp=$("#lfSummaryHelp");
+      if(summaryHelp)summaryHelp.textContent="Below are the delivery address, item information, and nationwide freight options you submitted.";
+      setText("#lfAccessHeadHelp","Nationwide freight is different from local truck delivery. Choose White Glove / Room of Choice only if needed, and tell us about dock, liftgate, and warehouse pickup options that change the carrier rate.");
     }else{
       setText("#lfInsideLabel","Inside delivery requested");
       setText("#lfDockLabel","Confirmed loading dock at delivery");
@@ -205,8 +270,7 @@ This script will run on the published Webflow staging and production sites.
       if(notes)notes.placeholder="Share anything else the delivery team or carrier should know.";
       const summaryHelp=$("#lfSummaryHelp");
       if(summaryHelp)summaryHelp.textContent="Below are the delivery address, item information, and access details you submitted.";
-      const accessHead=$('.lf-step[data-step="4"] .lf-head p');
-      if(accessHead)accessHead.textContent="Tell us about stairs, interior access, building access, and handling needs so the estimate is as accurate as possible.";
+      setText("#lfAccessHeadHelp","Tell us about stairs, interior access, building access, and handling needs so the estimate is as accurate as possible.");
     }
   }
 
@@ -282,7 +346,8 @@ This script will run on the published Webflow staging and production sites.
     const i=itemFromNode(node),box=$(".lf-pallet",node);
     if(!i.width||!i.depth||!i.height||!i.weight){box.textContent="Enter dimensions and weight to see the SOP freight entry.";return}
     const classText=i.pallet.freight_class===null?"Class to be confirmed":"Class "+i.pallet.freight_class;
-    box.innerHTML="<strong>Freight-ready entry:</strong> "+i.pallet.width+'" W × '+i.pallet.depth+'" D × '+i.pallet.height+'" H · '+i.pallet.weight+" lb · "+classText+(i.pallet.non_stackable?" · Non-stackable":"");
+    const stackBit=i.pallet.stack_note?" · "+i.pallet.stack_note:(i.pallet.non_stackable?" · Non-stackable":"");
+    box.innerHTML="<strong>Freight-ready entry:</strong> "+i.pallet.width+'" W × '+i.pallet.depth+'" D × '+i.pallet.height+'" H · '+i.pallet.weight+" lb · "+classText+stackBit;
   }
 
   function extractListing(raw){
@@ -315,7 +380,7 @@ This script will run on the published Webflow staging and production sites.
 
   async function lookupItem(node){
     const title=$(".lf-title",node).value.trim(),btn=$(".lf-lookup",node),msg=$(".lf-lookup-message",node);
-    if(!title){fieldError($(".lf-title",node),"Enter the exact listing title.");return}
+    if(!title){fieldError($(".lf-title",node),"Enter the listing title or product URL.");return}
     btn.disabled=true;btn.innerHTML='<span class="lf-spin"></span>Looking Up';
     msg.className="lf-lookup-message";
     try{
@@ -359,6 +424,12 @@ This script will run on the published Webflow staging and production sites.
     });
     address.full=[address.street,address.unit,address.city,address.state,address.zip].filter(Boolean).join(", ");
 
+    const whiteGlove=path==="nationwide"&&bool("#lfWhiteGlove");
+    const roomOfChoice=path==="nationwide"&&bool("#lfRoc");
+    const warehousePickup=path==="nationwide"&&bool("#lfWarehousePickup");
+    const storeLoading=path==="nationwide"&&bool("#lfStoreLoad");
+    const noLiftgate=path==="nationwide"&&(bool("#lfNoLiftgate")||dock||warehousePickup);
+
     const access={
       residential:destinationType==="residential",
       commercial:destinationType==="commercial",
@@ -368,21 +439,30 @@ This script will run on the published Webflow staging and production sites.
       stairs:bool("#lfStairs"),
       stair_flights:bool("#lfStairs")?num(value("#lfFlights")):0,
       stair_notes:bool("#lfStairs")?value("#lfStairNotes"):"",
-      needs_more_than_two_people:bool("#lfCrew"),
-      crew_review_required:bool("#lfCrew"),
+      needs_more_than_two_people:path==="nationwide"?false:bool("#lfCrew"),
+      crew_review_required:path==="nationwide"?false:bool("#lfCrew"),
       tight_turns_or_narrow_halls:bool("#lfTight"),
       gated_access:bool("#lfGate"),
       gate_code_or_instructions:value("#lfGateCode"),
-      inside_delivery:path==="pickup_az"?(bool("#lfInside")||bool("#lfCarryOut")):bool("#lfInside"),
-      room_placement:path==="pickup_az"?bool("#lfCarryOut"):bool("#lfRoom"),
-      unpacking_or_debris_removal:path==="pickup_az"?false:bool("#lfUnpack"),
+      inside_delivery:path==="pickup_az"
+        ?(bool("#lfInside")||bool("#lfCarryOut"))
+        :path==="nationwide"?whiteGlove:bool("#lfInside"),
+      room_placement:path==="pickup_az"
+        ?bool("#lfCarryOut")
+        :path==="nationwide"?(roomOfChoice||whiteGlove):bool("#lfRoom"),
+      unpacking_or_debris_removal:path==="pickup_az"||path==="nationwide"?false:bool("#lfUnpack"),
       disassembly_or_assembly:bool("#lfDisassembly"),
       long_carry:bool("#lfLongCarry"),
       parking_or_time_restrictions:bool("#lfParking"),
       fragile_or_special_handling:bool("#lfFragile"),
+      white_glove:whiteGlove,
+      room_of_choice:roomOfChoice,
+      warehouse_pickup:warehousePickup,
+      store_loading:storeLoading,
+      no_liftgate:noLiftgate,
       notes:value("#lfNotes"),
-      liftgate_pickup:path==="nationwide"?true:(path==="pickup_az"?!dock:false),
-      liftgate_delivery:path==="nationwide"?!dock:false
+      liftgate_pickup:path==="nationwide"?!storeLoading:(path==="pickup_az"?!dock:false),
+      liftgate_delivery:path==="nationwide"?!noLiftgate:false
     };
 
     return {
@@ -414,6 +494,11 @@ This script will run on the published Webflow staging and production sites.
     if(a.tight_turns_or_narrow_halls)flags.push("tight turns / narrow access");
     if(a.freight_elevator)flags.push("freight elevator");
     if(a.gated_access)flags.push("gated access");
+    if(a.white_glove)flags.push("White Glove");
+    if(a.room_of_choice)flags.push("Room of Choice");
+    if(a.warehouse_pickup)flags.push("warehouse / terminal pickup");
+    if(a.store_loading)flags.push("store loading at origin");
+    if(a.no_liftgate)flags.push("no liftgate at delivery");
     if(a.inside_delivery)flags.push(isPickup?"inside pickup":"inside delivery");
     if(a.room_placement)flags.push(isPickup?"carry-out from room / inside":"room placement");
     if(a.unpacking_or_debris_removal)flags.push("unpacking / debris removal");
@@ -483,7 +568,7 @@ This script will run on the published Webflow staging and production sites.
     }).join("");
 
     const liftgateLine=path==="nationwide"
-      ? ("Liftgate pickup: Yes · Liftgate delivery: "+(payload.access.liftgate_delivery?"Yes":"No — loading dock confirmed"))
+      ? ("Liftgate pickup: "+(payload.access.liftgate_pickup?"Yes":"No (store loading)")+" · Liftgate delivery: "+(payload.access.liftgate_delivery?"Yes":"No"))
       : "";
 
     $("#lfSummary").innerHTML=
@@ -545,12 +630,21 @@ This script will run on the published Webflow staging and production sites.
       const mapHtml=routeMapHtml(mapUrl,dirUrl);
       const rangeText=hasRange?money(low)+" - "+money(high):"Freight-Ready";
       const buyHtml=buyItemsHtml(payload.items,false);
+      const wgNote=payload.access.white_glove||payload.access.room_of_choice
+        ?'<p><strong>White Glove / Room of Choice selected</strong> — these services increase nationwide freight significantly versus standard threshold delivery.</p>'
+        :'<p>Need White Glove or Room of Choice? Those options raise the carrier quote a lot compared with standard freight.</p>';
+      const whNote=payload.access.warehouse_pickup
+        ?'<p><strong>Warehouse / terminal pickup selected</strong> — that typically lowers the quote by about $150–$200.</p>'
+        :'<p>Tip: picking the freight up from a warehouse/terminal near you usually lowers the quote by about <strong>$150–$200</strong>. We will still mention this option when we confirm your exact rate.</p>';
       result.innerHTML='<h2>Your Preliminary Nationwide Freight Range</h2>'+
         '<div class="lf-price">'+rangeText+'</div>'+
         milesLine+
         mapHtml+
-        '<p>Based on distance, pallet size/weight, and access. <strong>Final price depends on carrier and service</strong> — can be lower; white-glove can raise it.</p>'+
-        '<p>We will follow up with better rates after partner review. FreightCenter: <a href="tel:8007167608"><strong>800-716-7608</strong></a>.</p>'+
+        '<p>Based on distance, pallet size/weight, and the freight options you selected. <strong>Ranges are wide on purpose</strong> — every carrier prices freight differently.</p>'+
+        '<p>We confirm the exact quote ourselves with a trusted <strong>human partner in the loop</strong> (not an automated book-it rate). FreightCenter same-day check: <a href="tel:8007167608"><strong>800-716-7608</strong></a>.</p>'+
+        wgNote+
+        whNote+
+        '<p>No liftgate at delivery and store loading at our Scottsdale warehouse/showroom also help bring the rate down when they apply.</p>'+
         '<p><strong>We do not hold items</strong> — ready to buy? Purchase now and confirm freight after. Want rates first? <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> · <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>'+
         buyHtml;
     }

@@ -127,7 +127,7 @@ test("dining table with explicit class 175", () => {
   assert.equal(r.pallet.depth, 45);
 });
 
-test("set of 4 swivel chairs: qty 1, total weight, layered pallet", () => {
+test("set of 4 swivel chairs: qty 1, total weight, stacked (not 4× tall)", () => {
   const r = palletizeItem({
     title: "Mitchell Gold + Bob Williams Poppy Swivel Dining Chairs- Set of 4- 26X23X30H",
     width: 26,
@@ -142,11 +142,10 @@ test("set of 4 swivel chairs: qty 1, total weight, layered pallet", () => {
   assert.equal(r.set_count, 4);
   assert.equal(r.product.dims_are, "per_piece");
   assert.equal(r.product.weight_is, "total_for_set");
-  // Swivel → layered (not nested): 2 per layer on 48x40, 2 layers → 60" + 5" pallet
-  assert.equal(r.packing.packing_mode, "layered");
-  assert.equal(r.packing.pieces_per_layer, 2);
-  assert.equal(r.packing.layers, 2);
-  assert.equal(r.pallet.height, 65);
+  // Swivel chairs stack with padding (not 4× piece height)
+  assert.equal(r.packing.packing_mode, "nested_stack");
+  assert.equal(r.packing.stacked_height_in, 54); // 30 + 3*8
+  assert.equal(r.pallet.height, 59); // +5" pallet board
   assert.equal(r.pallet.weight, 202); // 172 + 30, NOT 172*4
   assert.equal(r.pallet.width, 48);
   assert.equal(r.pallet.depth, 40);
