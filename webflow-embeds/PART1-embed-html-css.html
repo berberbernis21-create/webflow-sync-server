@@ -654,9 +654,17 @@ to remain visible inside the Webflow Designer.
 
         <div class="lf-access-card">
           <h3>Labor &amp; Item Handling</h3>
-          <label class="lf-check lf-local-truck-only" id="lfCrewWrap"><input id="lfCrew" type="checkbox"> <span id="lfCrewLabel">To the best of your knowledge, would this need more than two people?</span></label>
+          <label class="lf-check lf-local-truck-only" id="lfCrewWrap"><input id="lfCrew" type="checkbox"> <span id="lfCrewLabel">In your opinion, would this need more than two people?</span></label>
           <div class="lf-help lf-local-truck-only" id="lfCrewHelp" style="margin:-2px 4px 8px 4px;">
-            Assume the crew has straps, dollies, and normal moving equipment. Check this only if the item still looks too heavy, bulky, or awkward for two people. Lost &amp; Found will review and confirm — if more than two movers are needed, the price will increase and we will give you an updated range before scheduling.
+            This is your opinion only — assume the crew has straps, dollies, and normal moving equipment. If you check yes, briefly explain why so we’re on the same page. Lost &amp; Found will review and confirm; if more than two movers are needed, the price will increase and we will give you an updated range before scheduling.
+          </div>
+          <div class="lf-conditional lf-local-truck-only" id="lfCrewDetails" hidden>
+            <div class="lf-field" style="margin-top:8px">
+              <label for="lfCrewWhy">Why do you think more than two people are needed? <span class="lf-required">*</span></label>
+              <textarea id="lfCrewWhy" placeholder="Example: solid wood armoire that feels very heavy, tight stairwell, awkward shape, etc."></textarea>
+              <div class="lf-help">A short explanation helps us match your expectations before we confirm the crew size.</div>
+              <div class="lf-error"></div>
+            </div>
           </div>
           <label class="lf-check"><input id="lfFragile" type="checkbox"> Fragile, antique, glass, artwork, wicker, cane, rattan, or high-end item</label>
           <label class="lf-check" id="lfDisassemblyWrap"><input id="lfDisassembly" type="checkbox"> <span id="lfDisassemblyLabel">Disassembly or assembly may be required</span></label>

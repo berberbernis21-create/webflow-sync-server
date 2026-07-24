@@ -164,6 +164,15 @@ This script will run on the published Webflow staging and production sites.
         fieldError($("#lfStairNotes"),"");
       }
     }
+    if(n===4&&bool("#lfCrew")&&!$("#lfCrewDetails")?.hidden){
+      const why=value("#lfCrewWhy");
+      if(!why){
+        valid=false;
+        fieldError($("#lfCrewWhy"),"Please explain why you think more than two people are needed.");
+      }else{
+        fieldError($("#lfCrewWhy"),"");
+      }
+    }
     return valid;
   }
 
@@ -318,7 +327,11 @@ This script will run on the published Webflow staging and production sites.
     }
     if(nationwide){
       if($("#lfInside"))$("#lfInside").checked=false;
-      if($("#lfCrew"))$("#lfCrew").checked=false;
+      if($("#lfCrew")){
+        $("#lfCrew").checked=false;
+        if($("#lfCrewDetails"))$("#lfCrewDetails").hidden=true;
+        if($("#lfCrewWhy"))$("#lfCrewWhy").value="";
+      }
     }else if($("#lfDock")&&!nationwide){
       $("#lfDock").checked=false;
     }
@@ -334,8 +347,8 @@ This script will run on the published Webflow staging and production sites.
 
     if(pickup){
       setText("#lfInsideLabel","Inside pickup (item is inside the home or building)");
-      setText("#lfCrewLabel","To the best of your knowledge, would this pickup need more than two people?");
-      setText("#lfCrewHelp","Assume the crew has straps, dollies, and normal moving equipment. Check this only if the item still looks too heavy, bulky, or awkward for two people. Lost & Found will review and confirm — if more than two movers are needed, the pickup price will increase and we will give you an updated range before scheduling.");
+      setText("#lfCrewLabel","In your opinion, would this pickup need more than two people?");
+      setText("#lfCrewHelp","This is your opinion only — assume the crew has straps, dollies, and normal moving equipment. If you check yes, briefly explain why so we’re on the same page. Lost & Found will review and confirm; if more than two movers are needed, the pickup price will increase and we will give you an updated range before scheduling.");
       setText("#lfDisassemblyLabel","Disassembly may be required to get the item out");
       setText("#lfLongCarryLabel","Long carry from entrance to the truck");
       setText("#lfLongCarryHelp","A long carry means the movers must carry the item an extended distance, generally about 75 feet or more, from the entrance, elevator, or pickup area to where the truck can park.");
@@ -363,8 +376,8 @@ This script will run on the published Webflow staging and production sites.
       setText("#lfAccessHeadHelp","Standard freight is threshold / curbside. Choose White Glove only if you need placement inside the home — then we’ll ask about stairs and interior access. Also tell us about dock, liftgate, and warehouse pickup options.");
     }else{
       setText("#lfInsideLabel","Inside delivery requested");
-      setText("#lfCrewLabel","To the best of your knowledge, would this need more than two people?");
-      setText("#lfCrewHelp","Assume the crew has straps, dollies, and normal moving equipment. Check this only if the item still looks too heavy, bulky, or awkward for two people. Lost & Found will review and confirm — if more than two movers are needed, the delivery price will increase and we will give you an updated range before scheduling.");
+      setText("#lfCrewLabel","In your opinion, would this need more than two people?");
+      setText("#lfCrewHelp","This is your opinion only — assume the crew has straps, dollies, and normal moving equipment. If you check yes, briefly explain why so we’re on the same page. Lost & Found will review and confirm; if more than two movers are needed, the delivery price will increase and we will give you an updated range before scheduling.");
       setText("#lfDisassemblyLabel","Disassembly or assembly may be required");
       setText("#lfLongCarryLabel","Long carry from truck to entrance");
       setText("#lfLongCarryHelp","A long carry means the movers must carry the item an extended distance, generally about 75 feet or more, from where the truck can park to the entrance, elevator, or delivery area.");
@@ -552,6 +565,7 @@ This script will run on the published Webflow staging and production sites.
       stair_notes:askInteriorAccess&&bool("#lfStairs")?value("#lfStairNotes"):"",
       needs_more_than_two_people:path==="nationwide"?false:bool("#lfCrew"),
       crew_review_required:path==="nationwide"?false:bool("#lfCrew"),
+      more_than_two_people_reason:path==="nationwide"||!bool("#lfCrew")?"":value("#lfCrewWhy"),
       tight_turns_or_narrow_halls:askInteriorAccess&&bool("#lfTight"),
       gated_access:bool("#lfGate"),
       gate_code_or_instructions:value("#lfGateCode"),
@@ -598,7 +612,11 @@ This script will run on the published Webflow staging and production sites.
       if(a.stair_notes)stairParts.push(a.stair_notes);
       flags.push(stairParts.length?"stairs: "+stairParts.join(" | "):"stairs");
     }
-    if(a.needs_more_than_two_people)flags.push("more than two people");
+    if(a.needs_more_than_two_people){
+      flags.push(a.more_than_two_people_reason
+        ?"more than two people (opinion): "+a.more_than_two_people_reason
+        :"more than two people (customer opinion)");
+    }
     if(a.tight_turns_or_narrow_halls)flags.push("tight turns / narrow access");
     if(a.freight_elevator)flags.push("freight elevator");
     if(a.gated_access)flags.push("gated access");
@@ -932,6 +950,14 @@ This script will run on the published Webflow staging and production sites.
   $("#lfStairs").addEventListener("change",e=>$("#lfStairDetails").hidden=!e.target.checked);
   $("#lfElevator").addEventListener("change",e=>$("#lfElevatorDetails").hidden=!e.target.checked);
   $("#lfGate").addEventListener("change",e=>$("#lfGateDetails").hidden=!e.target.checked);
+  if($("#lfCrew"))$("#lfCrew").addEventListener("change",e=>{
+    const details=$("#lfCrewDetails");
+    if(details)details.hidden=!e.target.checked;
+    if(!e.target.checked&&$("#lfCrewWhy")){
+      $("#lfCrewWhy").value="";
+      fieldError($("#lfCrewWhy"),"");
+    }
+  });
   if($("#lfWhiteGlove"))$("#lfWhiteGlove").addEventListener("change",()=>updateWhiteGloveAccess());
   $$('input[name="delivery_path"]').forEach(el=>el.addEventListener("change",()=>{
     const path=$('input[name="delivery_path"]:checked').value;
