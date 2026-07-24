@@ -138,6 +138,7 @@ function getFeelIntentComboBlock(frame, intent) {
     `- "What is this post doing?" = OBJECTIVE / JOB — the caption must visibly achieve that outcome`,
     `- Intent DOUBLES DOWN on feel: do not write a generic catalog blurb that ignores either dropdown`,
     `- If they conflict with a generic layout tip, dropdowns win`,
+    `- Still return exactly 5 hashtags in the JSON "hashtags" array (never inside "caption") — we append them after`,
   ];
 
   if (f && FRAME_INSTRUCTIONS[f]) {
