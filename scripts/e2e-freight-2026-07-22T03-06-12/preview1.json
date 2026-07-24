@@ -1,0 +1,92 @@
+{
+  "status": 200,
+  "json": {
+    "success": true,
+    "delivery_path": "local_az",
+    "route": {
+      "drive_minutes": 19,
+      "distance_miles": 8.9
+    },
+    "local_estimate": {
+      "base_minutes": 20,
+      "base_price": 95,
+      "block_minutes": 8,
+      "block_price": 15,
+      "estimated_price": 95,
+      "drive_minutes": 19,
+      "requires_manual_review": true,
+      "review_reasons": [
+        "2 flights of stairs",
+        "Tight turns or narrow hallways",
+        "Inside delivery requested",
+        "Room placement requested",
+        "Gated access"
+      ]
+    },
+    "requires_manual_review": true,
+    "review_reasons": [
+      "2 flights of stairs",
+      "Tight turns or narrow hallways",
+      "Inside delivery requested",
+      "Room placement requested",
+      "Gated access"
+    ],
+    "items": [
+      {
+        "index": 1,
+        "source": "listing",
+        "title": "Vaughan-Bassett Benchmade Crafted Oak 5 Drw Chest - 40X20X52.5H",
+        "price": 0,
+        "product_url": "",
+        "quantity": 1,
+        "set_count": 1,
+        "width": 40,
+        "depth": 20,
+        "height": 52.5,
+        "weight": 115,
+        "dims_are": "as_listed",
+        "weight_is": "as_listed",
+        "freight_class": null,
+        "suggested_freight_class": 150,
+        "non_stackable": false,
+        "packing": {
+          "set_count": 1,
+          "packing_mode": "single",
+          "pieces_per_layer": 1,
+          "layers": 1,
+          "stacked_height_in": 52.5,
+          "pallet_count": 1,
+          "notes": [
+            "Single piece — standard SOP pallet entry."
+          ]
+        },
+        "pallet": {
+          "width": 48,
+          "depth": 40,
+          "height": 58,
+          "weight": 145,
+          "freight_class": null,
+          "suggested_freight_class": 150,
+          "packaging_type": "Pallet(s)",
+          "non_stackable": false,
+          "set_count": 1,
+          "packing_mode": "single",
+          "pieces_per_layer": 1,
+          "layers": 1,
+          "stacked_height_in": 52.5,
+          "pallet_count": 1,
+          "packing_notes": [
+            "Single piece — standard SOP pallet entry."
+          ]
+        },
+        "ok": true,
+        "missing": []
+      }
+    ],
+    "accessorials": {
+      "liftgate_pickup": true,
+      "liftgate_delivery": true,
+      "residential_delivery": true
+    }
+  }
+}

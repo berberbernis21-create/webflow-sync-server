@@ -5,61 +5,175 @@
  */
 
 const FRAME_INSTRUCTIONS = {
-  pov_driven: `FRAME MODE: POV DRIVEN
+  pov_driven: `FRAME MODE: POV DRIVEN (voice)
 - First-person resale operator voice
 - Clear stance on why people misunderstand value
 - Confident, insightful, never arrogant`,
-  educational: `FRAME MODE: EDUCATIONAL
+  educational: `FRAME MODE: EDUCATIONAL (voice)
 - Teach one clear, actionable idea
 - Smart but uninformed reader
-- Practical takeaway at the end`,
-  resale_philosophy: `FRAME MODE: RESALE PHILOSOPHY
+- Practical takeaway the audience can reuse`,
+  resale_philosophy: `FRAME MODE: RESALE PHILOSOPHY (voice)
 - Beliefs and principles behind resale
 - Reflective, grounded, memorable
-- No hard sell`,
-  product_focused: `FRAME MODE: PRODUCT FOCUSED
+- No hard sell in the tone — intent may still push an action`,
+  product_focused: `FRAME MODE: PRODUCT FOCUSED (voice)
 - Show the product working without overselling
 - Practical, outcome-oriented
 - Materials, construction, design intent`,
-  quiet_luxury: `FRAME MODE: QUIET LUXURY
+  quiet_luxury: `FRAME MODE: QUIET LUXURY (voice)
 - Restraint, precision, short sentences
-- Signal quality without explaining everything`,
-  algorithm_busting: `FRAME MODE: ALGORITHM BUSTING
+- Signal quality without explaining everything
+- Understated confidence`,
+  algorithm_busting: `FRAME MODE: ALGORITHM BUSTING (voice)
 - Contrarian or curiosity-driven hook
-- Punchy, direct, then prove the point`,
-  conversation_starter: `FRAME MODE: CONVERSATION STARTER
-- Thoughtful open-ended question
-- Curious, not bait`,
+- Punchy, direct, then prove the point
+- Built for stop-scroll reach`,
+  conversation_starter: `FRAME MODE: CONVERSATION STARTER (voice)
+- Thoughtful open-ended question energy in the voice
+- Curious, not bait
+- Enough context to spark discussion`,
+  scroll_stopping: `FRAME MODE: SCROLL STOPPING (voice)
+- Pattern-interrupt hook in the first line
+- Bold, specific, visual — then land the product hard
+- Optimized for exposure / reach without sounding spammy`,
+  collector_insider: `FRAME MODE: COLLECTOR INSIDER (voice)
+- Speak to serious buyers: marks, makers, eras, market reads
+- Insider shorthand, never gatekeepy
+- Assumes taste; rewards knowledge`,
+  lifestyle_scene: `FRAME MODE: LIFESTYLE SCENE (voice)
+- Place the piece in a lived moment (room, outfit, occasion, hostess beat)
+- Sensory and cinematic, still factual
+- Desire through context, not adjectives`,
+  bold_direct: `FRAME MODE: BOLD & DIRECT (voice)
+- Straight talk, short lines, zero fluff
+- Name the value and why it matters now
+- Sales-friendly without sounding like an ad network`,
+  warm_host: `FRAME MODE: WARM HOST (voice)
+- Inviting Scottsdale shopkeeper energy
+- Come see it / you're welcome here
+- Human, local, hospitality-forward`,
 };
 
 const INTENT_INSTRUCTIONS = {
-  teaching_taste: `OBJECTIVE: TEACHING TASTE
+  teaching_taste: `OBJECTIVE: TEACHING TASTE (job)
 - Shape how the audience evaluates quality and value
 - Teach recognition of value beyond brand or retail price
-- Quiet guidance, not a lecture`,
-  building_desire: `OBJECTIVE: BUILDING DESIRE
+- Quiet guidance, not a lecture — still serve the FRAME voice`,
+  building_desire: `OBJECTIVE: BUILDING DESIRE (job)
 - Make the item feel wanted
-- Scarcity, condition, demand, long-term appeal — no urgency pressure`,
-  selling_softly: `OBJECTIVE: SELLING SOFTLY
-- Nudge without pushing; sell implied, not stated
-- Lead toward trusting the price/process — no "buy now"`,
-  driving_traffic: `OBJECTIVE: DRIVING STORE TRAFFIC
-- Create a reason to click or visit
-- Tease details best seen in-store or on the site`,
-  encouraging_comments: `OBJECTIVE: ENCOURAGING COMMENTS
+- Scarcity, condition, demand, long-term appeal — no fake urgency
+- Desire must be obvious by the mid-caption`,
+  selling_softly: `OBJECTIVE: SELLING SOFTLY (job)
+- Nudge without pushing; sell implied, not shouted
+- Lead toward trusting the price/process — no "BUY NOW"
+- Soft close that still moves toward a purchase path`,
+  closing_the_sale: `OBJECTIVE: CLOSING THE SALE (job)
+- Clear next step: shop the feed, visit store, DM, checkout
+- Price confidence + friction removal (shipping/pickup when useful)
+- Still on-brand — never desperate, never countdown spam`,
+  driving_traffic: `OBJECTIVE: DRIVING STORE TRAFFIC (job)
+- Create a reason to click or visit Scottsdale / the site
+- Tease details best seen in-store or online
+- CTA must be specific and early enough to feel intentional`,
+  boosting_exposure: `OBJECTIVE: BOOSTING EXPOSURE / SHARES (job)
+- One line built to travel (save, share, tag a friend)
+- Shareable insight or wow fact — not a generic "like and share"
+- Hook must be memorable enough to expand reach`,
+  encouraging_comments: `OBJECTIVE: ENCOURAGING COMMENTS (job)
 - Spark thoughtful engagement
-- End with an open-ended question (not yes/no)`,
-  reinforcing_brand: `OBJECTIVE: REINFORCING BRAND IDENTITY
+- End with an open-ended question (not yes/no)
+- Question must fit the FRAME voice`,
+  starting_dms: `OBJECTIVE: STARTING DMS (job)
+- Invite a private reply: size, hold, consign, availability, freight
+- Soft ask that feels helpful, not salesy
+- Make DM the natural next move`,
+  reinforcing_brand: `OBJECTIVE: REINFORCING BRAND IDENTITY (job)
 - Sound unmistakably Lost + Found: data over hype, clarity over guesswork
-- Do not explain the brand aloud — let voice signal it`,
-  historical_fact: `OBJECTIVE: HISTORICAL POST (Did you know?)
-- Start with a real historical fact about the item/brand/era
-- Then connect that history to modern resale value and demand`,
-  consign_with_us: `OBJECTIVE: CONSIGN WITH US
-- About the consignment process — NOT selling this specific SKU
-- No hard-selling this item's price; invite people to consign
-- Conversational, welcoming, process-focused`,
+- Do not explain the brand aloud — let voice + facts signal it`,
+  historical_fact: `OBJECTIVE: HISTORICAL POST (Did you know?) (job)
+- Start with a real historical fact about the item/brand/era/material
+- Then connect that history to modern resale value and demand
+- NEVER open with generic fluff ("celebration of beauty", "richness of heritage")`,
+  showcasing_value: `OBJECTIVE: SHOWCASING VALUE (job)
+- Make the number make sense: craft, condition, comps, retail vs resale when known
+- Evidence over hype
+- Leave the reader thinking "that's smart money"`,
+  consign_with_us: `OBJECTIVE: CONSIGN WITH US (job)
+- About the consignment process — NOT selling this specific SKU hard
+- Invite people to consign; conversational, welcoming, process-focused
+- Item can be the example, not the only ask`,
 };
+
+function getFrameBlock(frame) {
+  const key = String(frame || "").trim();
+  if (key && FRAME_INSTRUCTIONS[key]) return FRAME_INSTRUCTIONS[key];
+  return `FRAME MODE: Let the engine decide (Data-Led voice)
+- Confident, evidence-backed product storytelling from listing facts
+- COMMIT fully to the STYLE FOR THIS POST block below — that's your personality this post
+- Vary hooks, location lines, CTAs, and rhythm from post to post while keeping the mandatory layout sections`;
+}
+
+function getIntentBlock(intent) {
+  const key = String(intent || "").trim();
+  if (key && INTENT_INSTRUCTIONS[key]) return INTENT_INSTRUCTIONS[key];
+  return `OBJECTIVE: Let the engine decide (Data-Led job)
+- Demonstrate authority without hard persuasion
+- Let the listing dictate educate vs desire-build vs soft-sell
+- Confident, final, evidence-backed`;
+}
+
+/**
+ * Feel (frame) sets the voice. Intent is the job. When either/both are set,
+ * they must stack — intent doubles down on what the feel is already doing.
+ */
+function getFeelIntentComboBlock(frame, intent) {
+  const f = String(frame || "").trim();
+  const i = String(intent || "").trim();
+  if (!f && !i) return "";
+
+  const lines = [
+    `FEEL + INTENT STACK (HARD — USER SELECTED THESE):`,
+    `- "How should this post feel?" = FRAME / VOICE — every sentence must sound like that mode`,
+    `- "What is this post doing?" = OBJECTIVE / JOB — the caption must visibly achieve that outcome`,
+    `- Intent DOUBLES DOWN on feel: do not write a generic catalog blurb that ignores either dropdown`,
+    `- If they conflict with a generic layout tip, dropdowns win`,
+  ];
+
+  if (f && FRAME_INSTRUCTIONS[f]) {
+    lines.push(`- Active FEEL: ${f.replace(/_/g, " ")}`);
+  }
+  if (i && INTENT_INSTRUCTIONS[i]) {
+    lines.push(`- Active JOB: ${i.replace(/_/g, " ")}`);
+  }
+
+  if (i === "historical_fact") {
+    lines.push(
+      `- Historical HARD RULE: open with a real Did-you-know / origin fact (brand, era, craft, material)`,
+      `- Then one sentence tying that history to resale value NOW`,
+      `- Then roster / product details — NEVER lead with "ensemble / celebration of beauty / perfectly paired"`
+    );
+  }
+  if (i === "closing_the_sale" || i === "driving_traffic") {
+    lines.push(`- Sales/traffic HARD RULE: include a clear next step before the final hashtag zone`);
+  }
+  if (i === "boosting_exposure") {
+    lines.push(`- Exposure HARD RULE: first line must be shareable on its own`);
+  }
+  if (i === "encouraging_comments" || i === "starting_dms") {
+    lines.push(`- Engagement HARD RULE: end with the ask (question or DM invite) after location`);
+  }
+  if (i === "building_desire" || i === "showcasing_value") {
+    lines.push(`- Desire/value HARD RULE: reader must feel the want or the smart-buy by mid-caption`);
+  }
+
+  return lines.join("\n");
+}
+
+/** @deprecated name kept for call sites — prefer getFeelIntentComboBlock */
+function getIntentPriorityBlock(intent, frame = "") {
+  return getFeelIntentComboBlock(frame, intent);
+}
 
 const LOCATION_EXAMPLES_FURNITURE = `LOCATION LINE EXAMPLES (pick ONE and vary each caption — do NOT reuse the same one back-to-back, NEVER default to "Sitting pretty in Scottsdale"):
 📍 Located in Scottsdale, AZ near Scottsdale Quarter
@@ -361,24 +475,6 @@ HARD BANS:
 - Long shipping policy paragraphs`,
 };
 
-function getFrameBlock(frame) {
-  const key = String(frame || "").trim();
-  if (key && FRAME_INSTRUCTIONS[key]) return FRAME_INSTRUCTIONS[key];
-  return `FRAME MODE: Let the engine decide (Data-Led)
-- Confident, evidence-backed product storytelling from listing facts
-- COMMIT fully to the STYLE FOR THIS POST block below — that's your personality this post
-- Vary hooks, location lines, CTAs, and rhythm from post to post while keeping the mandatory layout sections`;
-}
-
-function getIntentBlock(intent) {
-  const key = String(intent || "").trim();
-  if (key && INTENT_INSTRUCTIONS[key]) return INTENT_INSTRUCTIONS[key];
-  return `OBJECTIVE: Let the engine decide (Data-Led)
-- Demonstrate authority without hard persuasion
-- Let the listing dictate educate vs desire-build vs soft-sell
-- Confident, final, evidence-backed`;
-}
-
 function getBasePrompt(division) {
   return BASE_PROMPTS[division] || BASE_PROMPTS.resale_interiors;
 }
@@ -549,8 +645,8 @@ VOICE:
 - Prefer language like "a set that…" / "these pieces…" / "pairing…" — never sound like 3 separate posts glued together
 
 MANDATORY LAYOUT (blank line between sections — NO hashtags in caption):
-1) TAGLINE / HOOK — one scroll-stopping line about the SET vibe (count-accurate)
-2) SHORT INTRO — 1-2 sentences on why these belong together
+1) TAGLINE / HOOK — one scroll-stopping line about the SET vibe (count-accurate). If INTENT OVERRIDE is present, that override owns the hook (e.g. Historical = Did-you-know fact first).
+2) SHORT INTRO — 1-2 sentences on why these belong together (or how the history ties to resale value when Historical)
 3) ITEM ROSTER — one compact line per item, in order. Format:
    ✨ Item full title - 💰 $price - 📐 dims (omit 📐 if none; omit 💰 if no price)
    Keep each roster line to ONE line
@@ -880,6 +976,8 @@ ${getFrameBlock(frame)}
 
 ${getIntentBlock(intent)}
 
+${getIntentPriorityBlock(intent, frame)}
+
 ${style.text}
 
 ${SET_CAPTION_RULES}
@@ -891,6 +989,7 @@ VARIETY RULES:
 - Never reuse the same tagline/location/CTA defaults
 - Say we ship everywhere (never "most pieces")
 - Hashtags ONLY in JSON hashtags array
+- If INTENT OVERRIDE is present, it beats the generic SET tagline guidance
 
 MEDIA TYPE: static multi-item Meta post. Photos are attached BELOW in ITEM order (photo 1 = ITEM 1, etc.).
 Use the images to make the set feel cohesive (shared material, color, era, scale, vibe) — still never invent facts not in PRODUCT CONTEXT.
@@ -904,6 +1003,7 @@ TASK:
 6) CTA / conversation ONLY at the end. Because this is a MULTI-PHOTO post, NEVER say "Shop this post" (Instagram shop-banner bug). Use "Shop this store right here" / "Visit us online" / "Visit us in store" instead.
 7) Exactly 5 hashtags in hashtags array; ZERO hashtags in caption.
 8) Never use em/en dashes — only hyphens or commas.
+9) Obey INTENT OVERRIDE if present — Historical must open with a real Did-you-know fact, not a luxury fluff ensemble blurb.
 
 Return JSON:
 {
@@ -920,6 +1020,8 @@ ${listingBits}`
 ${getFrameBlock(frame)}
 
 ${getIntentBlock(intent)}
+
+${getIntentPriorityBlock(intent, frame)}
 
 ${style.text}
 

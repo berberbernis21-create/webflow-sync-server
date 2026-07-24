@@ -1,0 +1,48 @@
+{
+  "status": 200,
+  "body": {
+    "listing": {
+      "title": "Vaughan-Bassett Benchmade Crafted Oak 5 Drw Chest - 40X20X52.5H",
+      "width": 40,
+      "depth": 20,
+      "height": 52.5,
+      "weight": 115,
+      "price": 749,
+      "product_url": "https://www.lostandfoundresale.com/product/vaughan-bassett-benchmade-crafted-oak-5-drw-chest-40x20x525h-efe8e",
+      "estimated_weight": 115,
+      "weight_lbs": 115,
+      "set_count": 1,
+      "quantity": 1,
+      "dims_are": "as_listed",
+      "weight_is": "as_listed"
+    },
+    "title": "Vaughan-Bassett Benchmade Crafted Oak 5 Drw Chest - 40X20X52.5H",
+    "shopifyProductId": null,
+    "price": "749.00",
+    "description": "Vaughan-Bassett Benchmade Crafted oak 5-drawer chest in a warm medium-brown finish with clean, transitional styling. The straight lines and rich oak grain give it a tailored, timeless look that pairs easily with traditional, modern, or rustic decor. Pickup is available in Scottsdale, and we offer both local and nationwide delivery. Please see Delivery, Pickup &amp; Freight Options below the description for additional details. Dimensions: Width: 40\" × Depth: 20\" × Height: 52.5\". Weight: 115 lb.",
+    "images": [
+      "https://cdn.prod.website-files.com/5e8d436caa44d5d97ccf33f5/6a5c0addc73b36a85562b19a_I343636939-178431783169211V9JQLRWP8RQF5DXPWI.jpeg",
+      "https://cdn.prod.website-files.com/5e8d436caa44d5d97ccf33f5/6a5c0addc73b36a85562b196_I343636939-178431784115262MVE1711UJC8SJ97GF3.jpeg",
+      "https://cdn.prod.website-files.com/5e8d436caa44d5d97ccf33f5/6a5c0addc73b36a85562b18a_I343636939-1784317856504URW5VHCQKNT9IM7C6QVQ.jpeg",
+      "https://cdn.prod.website-files.com/5e8d436caa44d5d97ccf33f5/6a5c0addc73b36a85562b192_I343636939-178431786730893JX02VC1S9GJLKGVXGV.jpeg",
+      "https://cdn.prod.website-files.com/5e8d436caa44d5d97ccf33f5/6a5c0addc73b36a85562b18f_I343636939-1784317874017VYCEC955NWGLPTCK0TWL.jpeg",
+      "https://cdn.prod.website-files.com/5e8d436caa44d5d97ccf33f5/6a5c0addc73b36a85562b186_I343636939-178431788264265EP62I07G7MF3W42W88.jpeg",
+      "https://cdn.prod.website-files.com/5e8d436caa44d5d97ccf33f5/6a5c0addc73b36a85562b183_I343636939-1784317885792RP050MY1FSTDR3979GEP.jpeg"
+    ],
+    "handle": "vaughan-bassett-benchmade-crafted-oak-5-drw-chest-40x20x525h-efe8e",
+    "productUrl": "https://www.lostandfoundresale.com/product/vaughan-bassett-benchmade-crafted-oak-5-drw-chest-40x20x525h-efe8e",
+    "shopifyOnlineUrl": null,
+    "vertical": "furniture",
+    "vendor": null,
+    "luxuryGoodsCategory": null,
+    "productType": null,
+    "tags": [],
+    "weight": 115,
+    "width": 40,
+    "depth": 20,
+    "height": 52.5,
+    "metafields": [],
+    "exactMatch": true,
+    "matchScore": 1000
+  }
+}
