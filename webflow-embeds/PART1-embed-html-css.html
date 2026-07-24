@@ -646,14 +646,17 @@ to remain visible inside the Webflow Designer.
             </div>
           </div>
 
-          <label class="lf-check lf-nationwide-only" id="lfDockWrap" hidden><input id="lfDock" type="checkbox"> <span id="lfDockLabel">Confirmed loading dock or forklift at delivery (helps avoid liftgate)</span></label>
+          <label class="lf-check lf-nationwide-only" id="lfDockWrap" hidden><input id="lfDock" type="checkbox"> <span id="lfDockLabel">Confirmed loading dock or forklift at delivery</span></label>
+          <div class="lf-help lf-nationwide-only" id="lfDockHelp" hidden style="margin:-2px 4px 8px 4px;">
+            A <strong>loading dock</strong> is a raised bay where a freight truck backs up so the pallet can roll straight off at truck-bed height. A <strong>forklift</strong> can lift the pallet off the truck onto the ground or into a warehouse. Either one usually means you do <strong>not</strong> need a liftgate. Most homes do not have a dock or forklift.
+          </div>
         </div>
 
         <div class="lf-access-card">
           <h3>Labor &amp; Item Handling</h3>
-          <label class="lf-check lf-local-truck-only"><input id="lfCrew" type="checkbox"> This item may require more than two people</label>
+          <label class="lf-check lf-local-truck-only" id="lfCrewWrap"><input id="lfCrew" type="checkbox"> <span id="lfCrewLabel">To the best of your knowledge, would this need more than two people?</span></label>
           <div class="lf-help lf-local-truck-only" id="lfCrewHelp" style="margin:-2px 4px 8px 4px;">
-            Lost &amp; Found will review the item, weight, size, and access conditions. If more than two movers or a specialized delivery crew is required, the delivery price will increase and we will provide an updated estimated range for approval before scheduling.
+            Assume the crew has straps, dollies, and normal moving equipment. Check this only if the item still looks too heavy, bulky, or awkward for two people. Lost &amp; Found will review and confirm — if more than two movers are needed, the price will increase and we will give you an updated range before scheduling.
           </div>
           <label class="lf-check"><input id="lfFragile" type="checkbox"> Fragile, antique, glass, artwork, wicker, cane, rattan, or high-end item</label>
           <label class="lf-check" id="lfDisassemblyWrap"><input id="lfDisassembly" type="checkbox"> <span id="lfDisassemblyLabel">Disassembly or assembly may be required</span></label>

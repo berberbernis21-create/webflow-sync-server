@@ -334,7 +334,8 @@ This script will run on the published Webflow staging and production sites.
 
     if(pickup){
       setText("#lfInsideLabel","Inside pickup (item is inside the home or building)");
-      setText("#lfCrewHelp","Lost & Found will review the item, weight, size, and access conditions. If more than two movers or a specialized pickup crew is required, the pickup price will increase and we will provide an updated estimated range for approval before scheduling.");
+      setText("#lfCrewLabel","To the best of your knowledge, would this pickup need more than two people?");
+      setText("#lfCrewHelp","Assume the crew has straps, dollies, and normal moving equipment. Check this only if the item still looks too heavy, bulky, or awkward for two people. Lost & Found will review and confirm — if more than two movers are needed, the pickup price will increase and we will give you an updated range before scheduling.");
       setText("#lfDisassemblyLabel","Disassembly may be required to get the item out");
       setText("#lfLongCarryLabel","Long carry from entrance to the truck");
       setText("#lfLongCarryHelp","A long carry means the movers must carry the item an extended distance, generally about 75 feet or more, from the entrance, elevator, or pickup area to where the truck can park.");
@@ -347,7 +348,8 @@ This script will run on the published Webflow staging and production sites.
       if(summaryHelp)summaryHelp.textContent="Below are the pickup address, item information, and access details you submitted.";
       setText("#lfAccessHeadHelp","Tell us about stairs, interior access, building access, and handling needs for this pickup so the estimate is as accurate as possible.");
     }else if(nationwide){
-      setText("#lfDockLabel","Confirmed loading dock or forklift at delivery (helps avoid liftgate)");
+      setText("#lfDockLabel","Confirmed loading dock or forklift at delivery");
+      setText("#lfDockHelp","A loading dock is a raised bay where a freight truck backs up so the pallet can roll straight off at truck-bed height. A forklift can lift the pallet off the truck onto the ground or into a warehouse. Either one usually means you do not need a liftgate. Most homes do not have a dock or forklift.");
       setText("#lfDisassemblyLabel","Disassembly or assembly may be required");
       setText("#lfLongCarryLabel","Long carry from truck / terminal to entrance");
       setText("#lfLongCarryHelp","For freight, a long carry means an extended distance from where the truck can park or from the terminal door to the entrance — generally about 75 feet or more.");
@@ -361,7 +363,8 @@ This script will run on the published Webflow staging and production sites.
       setText("#lfAccessHeadHelp","Standard freight is threshold / curbside. Choose White Glove only if you need placement inside the home — then we’ll ask about stairs and interior access. Also tell us about dock, liftgate, and warehouse pickup options.");
     }else{
       setText("#lfInsideLabel","Inside delivery requested");
-      setText("#lfCrewHelp","Lost & Found will review the item, weight, size, and access conditions. If more than two movers or a specialized delivery crew is required, the delivery price will increase and we will provide an updated estimated range for approval before scheduling.");
+      setText("#lfCrewLabel","To the best of your knowledge, would this need more than two people?");
+      setText("#lfCrewHelp","Assume the crew has straps, dollies, and normal moving equipment. Check this only if the item still looks too heavy, bulky, or awkward for two people. Lost & Found will review and confirm — if more than two movers are needed, the delivery price will increase and we will give you an updated range before scheduling.");
       setText("#lfDisassemblyLabel","Disassembly or assembly may be required");
       setText("#lfLongCarryLabel","Long carry from truck to entrance");
       setText("#lfLongCarryHelp","A long carry means the movers must carry the item an extended distance, generally about 75 feet or more, from where the truck can park to the entrance, elevator, or delivery area.");
