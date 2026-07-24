@@ -1,14 +1,4 @@
-<!--
-LOST & FOUND DELIVERY & FREIGHT CALCULATOR
-PART 2 OF 2: PAGE FOOTER JAVASCRIPT
-
-Paste this entire block into:
-Page Settings > Custom Code > Before </body>
-
-The visible HTML/CSS from Part 1 must already be on the page.
-This script will run on the published Webflow staging and production sites.
--->
-
+<!-- LF freight calc Part 2: paste Before </body> (needs Part 1 on page) -->
 <script>
 (function(){
   "use strict";
@@ -20,6 +10,10 @@ This script will run on the published Webflow staging and production sites.
   const ORIGIN_ADDRESS="15530 N Greenway Hayden Loop Ste 100, Scottsdale, AZ 85260";
   const REDIRECT_URL="https://www.lostandfoundresale.com/faq";
   const REDIRECT_DELAY_MS=4500;
+  const JSON_HDR={"Content-Type":"application/json","Accept":"application/json"};
+  const LF_MAIL='<a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a>';
+  const LF_TEL='<a href="tel:4805887006"><strong>480-588-7006</strong></a>';
+  const crewHelp=k=>"This is your opinion only — assume straps, dollies, and normal gear. If yes, briefly explain why. We'll review; if more than two movers are needed, the "+k+" price increases and we'll send an updated range before scheduling.";
 
   const LOCAL={baseMinutes:15,basePrice:95,referenceMinutes:8,referencePrice:15};
   let step=1,itemCounter=0,lastPreview=null,submitting=false;
@@ -40,11 +34,6 @@ This script will run on the published Webflow staging and production sites.
     const t=String(title||"").toLowerCase();
     const nonstack=/(glass|mirror|artwork|art |wicker|cane|rattan|antique|fragile|marble|stone|sculpture)/.test(t);
 
-    /*
-      Do not guess a final freight class from the product title.
-      Freight class can depend on the confirmed NMFC item, density,
-      packaging, handling, stowability, and liability.
-    */
     return {freightClass:null,nonStackable:nonstack};
   }
 
@@ -227,9 +216,11 @@ This script will run on the published Webflow staging and production sites.
       if(title)title.placeholder="Example: Ethan Allen American Impressions Full Sleigh Bed";
       if(lookup)lookup.hidden=true;
       if($(".lf-source",node))$(".lf-source",node).value="manual";
+      if($(".lf-url",node))$(".lf-url",node).value="";
+      if($(".lf-image-url",node))$(".lf-image-url",node).value="";
     }else{
       if(label)label.innerHTML='Website listing title or product URL <span class="lf-required">*</span>';
-      if(help)help.textContent="Copy the full title from the listing page (not a shortened name), or paste the full lostandfoundresale.com product link from your browser. Then click Find Item. You can still fill in dimensions manually if nothing is found.";
+      if(help)help.textContent="Paste the full listing title or full lostandfoundresale.com product URL, then click Find Item. You can still enter dimensions manually if nothing is found.";
       if(title)title.placeholder="Copy and paste the entire product title, or the full product page URL";
       if(lookup)lookup.hidden=false;
     }
@@ -296,7 +287,6 @@ This script will run on the published Webflow staging and production sites.
 
     const unpackWrap=$("#lfUnpackWrap");
     if(unpackWrap){
-      // Local delivery: show. Pickup: hide. Nationwide: only with White Glove.
       unpackWrap.hidden=pickup||(nationwide&&!whiteGlove);
     }
 
@@ -314,7 +304,7 @@ This script will run on the published Webflow staging and production sites.
     $$(".lf-local-truck-only").forEach(el=>{el.hidden=nationwide||(el.classList.contains("lf-delivery-only")&&pickup)});
     $$(".lf-delivery-only").forEach(el=>{
       if(el.classList.contains("lf-nationwide-only"))return;
-      if(el.id==="lfUnpackWrap")return; // handled in updateWhiteGloveAccess
+      if(el.id==="lfUnpackWrap")return;
       el.hidden=pickup||nationwide;
     });
     $$(".lf-pickup-only").forEach(el=>{el.hidden=!pickup});
@@ -348,10 +338,10 @@ This script will run on the published Webflow staging and production sites.
     if(pickup){
       setText("#lfInsideLabel","Inside pickup (item is inside the home or building)");
       setText("#lfCrewLabel","In your opinion, would this pickup need more than two people?");
-      setText("#lfCrewHelp","This is your opinion only — assume the crew has straps, dollies, and normal moving equipment. If you check yes, briefly explain why so we’re on the same page. Lost & Found will review and confirm; if more than two movers are needed, the pickup price will increase and we will give you an updated range before scheduling.");
+      setText("#lfCrewHelp",crewHelp("pickup"));
       setText("#lfDisassemblyLabel","Disassembly may be required to get the item out");
       setText("#lfLongCarryLabel","Long carry from entrance to the truck");
-      setText("#lfLongCarryHelp","A long carry means the movers must carry the item an extended distance, generally about 75 feet or more, from the entrance, elevator, or pickup area to where the truck can park.");
+      setText("#lfLongCarryHelp","Long carry = about 75+ feet from entrance/elevator/pickup area to where the truck can park.");
       setText("#lfParkingLabel","Limited truck parking, low clearance, or restricted pickup hours");
       setText("#lfSmartDefaults","<strong>Note:</strong> Residential pickup is the default. Check any stairs, access, or handling items that apply so we can price the job accurately.",true);
       setText("#lfAgreeLabel","I understand this is a preliminary estimate and final pricing must be confirmed before pickup is scheduled.");
@@ -362,10 +352,10 @@ This script will run on the published Webflow staging and production sites.
       setText("#lfAccessHeadHelp","Tell us about stairs, interior access, building access, and handling needs for this pickup so the estimate is as accurate as possible.");
     }else if(nationwide){
       setText("#lfDockLabel","Confirmed loading dock or forklift at delivery");
-      setText("#lfDockHelp","A loading dock is a raised bay where a freight truck backs up so the pallet can roll straight off at truck-bed height. A forklift can lift the pallet off the truck onto the ground or into a warehouse. Either one usually means you do not need a liftgate. Most homes do not have a dock or forklift.");
+      setText("#lfDockHelp","A dock is a raised bay so a pallet rolls off at truck height; a forklift lifts the pallet off. Either usually means no liftgate. Most homes have neither.");
       setText("#lfDisassemblyLabel","Disassembly or assembly may be required");
       setText("#lfLongCarryLabel","Long carry from truck / terminal to entrance");
-      setText("#lfLongCarryHelp","For freight, a long carry means an extended distance from where the truck can park or from the terminal door to the entrance — generally about 75 feet or more.");
+      setText("#lfLongCarryHelp","Long carry = about 75+ feet from truck/terminal to the entrance.");
       setText("#lfParkingLabel","Limited truck parking, low clearance, appointment windows, or HOA restrictions");
       setText("#lfSmartDefaults","<strong>Nationwide freight:</strong> This is a preliminary range — every carrier prices differently. <strong>We will get you a quote:</strong> our team reviews your request and emails you full rates. You can also call FreightCenter anytime. Lost &amp; Found pickup / loading hours: <strong>10am–5pm, Monday–Saturday</strong>.",true);
       setText("#lfAgreeLabel","I understand this is a preliminary freight range only, and Lost &amp; Found will get me a confirmed quote before freight is booked.");
@@ -377,10 +367,10 @@ This script will run on the published Webflow staging and production sites.
     }else{
       setText("#lfInsideLabel","Inside delivery requested");
       setText("#lfCrewLabel","In your opinion, would this need more than two people?");
-      setText("#lfCrewHelp","This is your opinion only — assume the crew has straps, dollies, and normal moving equipment. If you check yes, briefly explain why so we’re on the same page. Lost & Found will review and confirm; if more than two movers are needed, the delivery price will increase and we will give you an updated range before scheduling.");
+      setText("#lfCrewHelp",crewHelp("delivery"));
       setText("#lfDisassemblyLabel","Disassembly or assembly may be required");
       setText("#lfLongCarryLabel","Long carry from truck to entrance");
-      setText("#lfLongCarryHelp","A long carry means the movers must carry the item an extended distance, generally about 75 feet or more, from where the truck can park to the entrance, elevator, or delivery area.");
+      setText("#lfLongCarryHelp","Long carry = about 75+ feet from truck parking to entrance/elevator/delivery area.");
       setText("#lfParkingLabel","Limited truck parking, low clearance, or restricted delivery hours");
       setText("#lfSmartDefaults","<strong>Note:</strong> Residential delivery is the default. Check any stairs, access, or handling items that apply so we can price the job accurately.",true);
       setText("#lfAgreeLabel","I understand this is a preliminary estimate and final pricing must be confirmed before delivery or freight is scheduled.");
@@ -443,8 +433,9 @@ This script will run on the published Webflow staging and production sites.
   function renumberItems(){$$(".lf-item",itemsWrap).forEach((el,i)=>$(".lf-item-number",el).textContent=String(i+1))}
 
   function itemFromNode(node){
+    const pickup=$('input[name="delivery_path"]:checked')?.value==="pickup_az";
     const item={
-      source:$(".lf-source",node).value,
+      source:pickup?"manual":($(".lf-source",node).value||"manual"),
       title:$(".lf-title",node).value.trim(),
       width:num($(".lf-width",node).value),
       depth:num($(".lf-depth",node).value),
@@ -452,8 +443,8 @@ This script will run on the published Webflow staging and production sites.
       weight:num($(".lf-weight",node).value),
       quantity:Math.max(1,num($(".lf-quantity",node).value)||1),
       price:num($(".lf-price-input",node).value),
-      product_url:$(".lf-url",node).value.trim(),
-      image_url:($(".lf-image-url",node)?.value||"").trim(),
+      product_url:pickup?"":$(".lf-url",node).value.trim(),
+      image_url:pickup?"":($(".lf-image-url",node)?.value||"").trim(),
       freight_class:$(".lf-class",node).value===""?null:num($(".lf-class",node).value),
       non_stackable:$(".lf-nonstack",node).checked
     };
@@ -546,9 +537,7 @@ This script will run on the published Webflow staging and production sites.
     const whiteGlove=path==="nationwide"&&bool("#lfWhiteGlove");
     const roomOfChoice=false;
     const warehousePickup=path==="nationwide"&&bool("#lfWarehousePickup");
-    // Customer does not choose origin loading; LF confirms whether pickup can be done without a liftgate (most pallet freight cannot).
     const storeLoading=false;
-    // Customer chooses delivery liftgate; LF staff confirm pickup liftgate (estimate assumes liftgate needed at origin).
     const liftgateDelivery=path==="nationwide"
       ?(bool("#lfLiftgateDelivery")&&!dock&&!warehousePickup)
       :false;
@@ -647,7 +636,6 @@ This script will run on the published Webflow staging and production sites.
       '</div>';
   }
 
-  /** Product photo cards + Buy Now — only items with a product_url. */
   function buyItemsHtml(items,isPickup){
     if(isPickup)return"";
     const cards=(items||[]).filter(i=>i.product_url).map(i=>{
@@ -684,7 +672,6 @@ This script will run on the published Webflow staging and production sites.
     return found===undefined?null:Number(found);
   }
 
-  /** True when freight footprint cannot sit on a standard 48×40 pallet (either rotation). */
   function exceedsStandardPallet(item){
     const w=Number(item?.pallet?.width??item?.width);
     const d=Number(item?.pallet?.depth??item?.depth);
@@ -736,11 +723,11 @@ This script will run on the published Webflow staging and production sites.
       const dirUrl=preview?.route?.directions_url||preview?.display?.directions_url||"";
       const mapHtml=routeMapHtml(mapUrl,dirUrl);
       const laborText=isPickup
-        ?"Total time is calculated as a round trip, not one way. The estimate also covers preparing the freight, loading and securing it on the truck, return to the showroom, offloading, and placement."
-        :"Total time is calculated as a round trip, not one way. The estimate also covers wrapping and preparing the freight, loading and securing it on the truck, offloading, and placement.";
+        ?"Time is round-trip, not one way — includes prep, load/secure, return, offload, and placement."
+        :"Time is round-trip, not one way — includes wrap/prep, load/secure, offload, and placement.";
       const policyText=isPickup
-        ?'<p>Final pricing will need to be confirmed directly with the driver team. If you need final confirmed pricing, please email <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> or call <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>'
-        :'<p><strong>We do not hold items.</strong> Purchase now and we can confirm delivery and freight shortly. If you need rates ASAP, please reach out to us: <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> — <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>';
+        ?'<p>Final pricing will need to be confirmed directly with the driver team. If you need final confirmed pricing, please email '+LF_MAIL+' or call '+LF_TEL+'.</p>'
+        :'<p><strong>We do not hold items.</strong> Purchase now and we can confirm delivery and freight shortly. If you need rates ASAP, please reach out to us: '+LF_MAIL+' — '+LF_TEL+'.</p>';
       const buyHtml=buyItemsHtml(payload.items,isPickup);
 
       result.innerHTML=
@@ -785,7 +772,7 @@ This script will run on the published Webflow staging and production sites.
           :'<p>Tip: picking up from a warehouse/terminal near you usually saves about <strong>$150–$200</strong>. We will mention this with your quote.</p>',
         '<p><strong>Liftgate at delivery:</strong> '+(liftgateYes?"Yes":"No")+' (your choice). <strong>Pickup loading at Lost &amp; Found:</strong> we will determine if a liftgate is needed when we send your final quote — <strong>for now we assume yes</strong>.</p>',
         '<p><strong>Pickup / loading hours:</strong> 10am–5pm, Monday–Saturday.</p>',
-        '<p><strong>We do not hold items.</strong> Purchase now and we can confirm delivery and freight shortly. If you need rates ASAP, please reach out to us: <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> · <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>'
+        '<p><strong>We do not hold items.</strong> Purchase now and we can confirm delivery and freight shortly. If you need rates ASAP, please reach out to us: '+LF_MAIL+' · '+LF_TEL+'.</p>'
       ].filter(Boolean).join("");
       result.innerHTML=
         '<h2>Your Preliminary Nationwide Freight Range</h2>'+
@@ -806,7 +793,7 @@ This script will run on the published Webflow staging and production sites.
     result.innerHTML="<h2>Preparing Your Estimate</h2><p>Please wait while we review the information entered.</p>";
     result.classList.add("show");
     try{
-      const res=await fetch(PREVIEW_URL,{method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify(payload)});
+      const res=await fetch(PREVIEW_URL,{method:"POST",headers:JSON_HDR,body:JSON.stringify(payload)});
       const data=await res.json().catch(()=>({}));
       if(!res.ok)throw new Error(data.error||data.message||"Preview could not be completed.");
       lastPreview=data;
@@ -837,11 +824,6 @@ This script will run on the published Webflow staging and production sites.
 
     showReviewAlert("");
 
-    /*
-      Validate every section again at the moment of submission.
-      This guarantees that a valid email and complete address are present,
-      even if the customer navigated backward and changed something.
-    */
     if(!validateStep(2)){
       showReviewAlert("Please enter a valid email and complete delivery address.");
       setStep(2);
@@ -877,14 +859,10 @@ This script will run on the published Webflow staging and production sites.
 
     let previewData=null;
 
-    /*
-      Preview first so the summary page can show the best available result.
-      Preview must not send email.
-    */
     try{
       const previewResponse=await fetch(PREVIEW_URL,{
         method:"POST",
-        headers:{"Content-Type":"application/json","Accept":"application/json"},
+        headers:JSON_HDR,
         body:JSON.stringify(payload)
       });
 
@@ -901,13 +879,10 @@ This script will run on the published Webflow staging and production sites.
 
     payload.preview=previewData||undefined;
 
-    /*
-      Final submission sends the internal notification and customer receipt.
-    */
     try{
       const submitResponse=await fetch(SUBMIT_URL,{
         method:"POST",
-        headers:{"Content-Type":"application/json","Accept":"application/json"},
+        headers:JSON_HDR,
         body:JSON.stringify(payload)
       });
 
