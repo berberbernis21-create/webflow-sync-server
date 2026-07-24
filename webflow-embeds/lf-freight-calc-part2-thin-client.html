@@ -742,11 +742,8 @@ This script will run on the published Webflow staging and production sites.
         ?'<p>Final pricing will need to be confirmed directly with the driver team. If you need final confirmed pricing, please email <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> or call <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>'
         :'<p><strong>We do not hold items</strong> — we work for our consignors. Ready to buy? Purchase now and we can confirm delivery after. Want rates first? <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> — <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>';
       const buyHtml=buyItemsHtml(payload.items,isPickup);
-      const buyTop=$("#lfBuyNowTop");
-      if(buyTop)buyTop.innerHTML=buyHtml;
 
       result.innerHTML=
-        buyHtml+
         '<h2>'+(isPickup?"Your Preliminary Consignor Pickup Estimate":"Your Preliminary Local Delivery Estimate")+'</h2>'+
         '<div class="lf-price">'+priceLabel+displayedAmount+'</div>'+
         driveStats+
@@ -775,8 +772,6 @@ This script will run on the published Webflow staging and production sites.
       const mapHtml=routeMapHtml(mapUrl,dirUrl);
       const rangeText=hasRange?money(low)+" - "+money(high):"Freight-Ready";
       const buyHtml=buyItemsHtml(payload.items,false);
-      const buyTop=$("#lfBuyNowTop");
-      if(buyTop)buyTop.innerHTML=buyHtml;
       const oversizeHtml=oversizedPalletNoteHtml(payload.items);
       const liftgateYes=!!payload.access.liftgate_delivery;
       const notes=[
@@ -792,7 +787,6 @@ This script will run on the published Webflow staging and production sites.
         '<p><strong>We do not hold items.</strong> Ready to buy? Use Buy Now and we will confirm freight with your quote. Questions? <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> · <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>'
       ].filter(Boolean).join("");
       result.innerHTML=
-        buyHtml+
         '<h2>Your Preliminary Nationwide Freight Range</h2>'+
         '<div class="lf-price">'+rangeText+'</div>'+
         milesLine+
@@ -810,8 +804,6 @@ This script will run on the published Webflow staging and production sites.
     const result=$("#lfResult");
     result.innerHTML="<h2>Preparing Your Estimate</h2><p>Please wait while we review the information entered.</p>";
     result.classList.add("show");
-    const buyTop=$("#lfBuyNowTop");
-    if(buyTop)buyTop.innerHTML="";
     try{
       const res=await fetch(PREVIEW_URL,{method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify(payload)});
       const data=await res.json().catch(()=>({}));
