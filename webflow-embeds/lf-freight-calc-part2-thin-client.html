@@ -666,6 +666,19 @@ This script will run on the published Webflow staging and production sites.
     return found===undefined?null:Number(found);
   }
 
+  /** True when freight footprint cannot sit on a standard 48×40 pallet (either rotation). */
+  function exceedsStandardPallet(item){
+    const w=Number(item?.pallet?.width??item?.width);
+    const d=Number(item?.pallet?.depth??item?.depth);
+    if(!Number.isFinite(w)||!Number.isFinite(d)||w<=0||d<=0)return false;
+    return!((w<=48&&d<=40)||(w<=40&&d<=48));
+  }
+
+  function oversizedPalletNoteHtml(items){
+    if(!(items||[]).some(exceedsStandardPallet))return"";
+    return '<div class="lf-notice" style="margin:12px 0;"><strong>Oversized for a standard 48″×40″ pallet.</strong> We may be able to maneuver or re-orient this so it fits a standard pallet, which can bring the freight cost down a lot. We will follow up after we review.</div>';
+  }
+
   function renderSummary(payload,preview){
     const path=payload.delivery_path||"local_az";
     const pathLocal=isLocalStylePath(path);
@@ -746,12 +759,20 @@ This script will run on the published Webflow staging and production sites.
       const buyHtml=buyItemsHtml(payload.items,false);
       const buyTop=$("#lfBuyNowTop");
       if(buyTop)buyTop.innerHTML=buyHtml;
-      const wgNote=payload.access.white_glove
-        ?'<p><strong>White Glove selected</strong> — this raises the quote significantly versus standard freight.</p>'
-        :'<p>White Glove raises the quote significantly if you need it later.</p>';
-      const whNote=payload.access.warehouse_pickup
-        ?'<p><strong>Warehouse / terminal pickup selected</strong> — that usually saves about $150–$200.</p>'
-        :'<p>Tip: picking up from a warehouse/terminal near you usually saves about <strong>$150–$200</strong>. We will mention this when we send your quote.</p>';
+      const oversizeHtml=oversizedPalletNoteHtml(payload.items);
+      const liftgateYes=!!payload.access.liftgate_delivery;
+      const notes=[
+        '<p>This is a <strong>preliminary range</strong> only. Every carrier prices freight differently — <strong>we will get you a confirmed quote</strong> by email. You can also call FreightCenter anytime at <a href="tel:8007167608"><strong>800-716-7608</strong></a>.</p>',
+        oversizeHtml,
+        payload.access.white_glove
+          ?'<p><strong>White Glove selected</strong> — that raises the quote versus standard threshold / curbside freight.</p>'
+          :"",
+        payload.access.warehouse_pickup
+          ?'<p><strong>Warehouse / terminal pickup selected</strong> — that usually saves about $150–$200.</p>'
+          :'<p>Tip: picking up from a warehouse/terminal near you usually saves about <strong>$150–$200</strong>. We will mention this with your quote.</p>',
+        '<p><strong>Liftgate at delivery:</strong> '+(liftgateYes?"Yes":"No")+' (your choice). <strong>Pickup loading at Lost &amp; Found:</strong> we will confirm whether it can load without a liftgate — most items cannot, because they ship on a pallet. Hours: <strong>10am–5pm, Monday–Saturday</strong>.</p>',
+        '<p><strong>We do not hold items.</strong> Ready to buy? Use Buy Now and we will confirm freight with your quote. Questions? <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> · <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>'
+      ].filter(Boolean).join("");
       result.innerHTML=
         buyHtml+
         '<h2>Your Preliminary Nationwide Freight Range</h2>'+
@@ -759,12 +780,7 @@ This script will run on the published Webflow staging and production sites.
         milesLine+
         buyHtml+
         mapHtml+
-        '<p>Based on distance, pallet size/weight, and the options you selected. Ranges are wide because every carrier prices freight differently.</p>'+
-        '<p><strong>We will get you a quote.</strong> Our team will review your request and email you full rates. You can also contact <strong>FreightCenter</strong> directly anytime at <a href="tel:8007167608"><strong>800-716-7608</strong></a>.</p>'+
-        wgNote+
-        whNote+
-        '<p>A <strong>liftgate</strong> lowers the pallet to the ground when there is no dock — you selected delivery liftgate above. <strong>Lost &amp; Found will confirm</strong> whether pickup at our Scottsdale warehouse can be done without a liftgate; most items cannot, because they ship on a pallet. Pickup/loading hours: <strong>10am–5pm, Monday–Saturday</strong>.</p>'+
-        '<p><strong>We do not hold items</strong> — ready to buy? Purchase now and we will confirm freight with your quote. Questions? <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> · <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>'+
+        '<div class="lf-result-notes" style="margin-top:14px;">'+notes+'</div>'+
         buyHtml;
     }
     result.classList.add("show");
