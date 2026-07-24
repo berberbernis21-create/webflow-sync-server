@@ -10530,7 +10530,8 @@ function isCanonicalFurnitureSlug(slug) {
   const s = String(slug || "").trim();
   if (!s) return false;
   if (s.includes("undefined") || s.includes("null")) return false;
-  return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(s);
+  // Allow consecutive hyphens — Webflow can emit "bed--complete" from titles like "Bed- Complete".
+  return /^[a-z0-9]+(?:-+[a-z0-9]+)*$/.test(s);
 }
 
 async function completeGoogleWeightWithAi({ title, description, shippingWeight }) {
