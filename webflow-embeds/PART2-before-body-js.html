@@ -249,8 +249,8 @@ This script will run on the published Webflow staging and production sites.
       setText("#lfLongCarryLabel","Long carry from truck / terminal to entrance");
       setText("#lfLongCarryHelp","For freight, a long carry means an extended distance from where the truck can park or from the terminal door to the entrance — generally about 75 feet or more.");
       setText("#lfParkingLabel","Limited truck parking, low clearance, appointment windows, or HOA restrictions");
-      setText("#lfSmartDefaults","<strong>Nationwide freight:</strong> Ranges are wide because every carrier prices differently. You can contact FreightCenter directly, or we will email you full rates after our team reviews. Lost &amp; Found pickup / loading hours: <strong>10am–5pm, Monday–Saturday</strong>. White Glove / Room of Choice raise cost a lot; warehouse pickup usually saves about $150–$200.",true);
-      setText("#lfAgreeLabel","I understand this is a preliminary freight range only — final carrier pricing must be confirmed by Lost & Found (human in the loop) before freight is booked.");
+      setText("#lfSmartDefaults","<strong>Nationwide freight:</strong> This is a preliminary range — every carrier prices differently. <strong>We will get you a quote:</strong> our team reviews your request and emails you full rates. You can also call FreightCenter anytime. Lost &amp; Found pickup / loading hours: <strong>10am–5pm, Monday–Saturday</strong>.",true);
+      setText("#lfAgreeLabel","I understand this is a preliminary freight range only, and Lost &amp; Found will get me a confirmed quote before freight is booked.");
       const notes=$("#lfNotes");
       if(notes)notes.placeholder="Share dock hours, appointment needs, HOA rules, or anything the carrier should know.";
       const summaryHelp=$("#lfSummaryHelp");
@@ -428,7 +428,10 @@ This script will run on the published Webflow staging and production sites.
     const roomOfChoice=path==="nationwide"&&bool("#lfRoc");
     const warehousePickup=path==="nationwide"&&bool("#lfWarehousePickup");
     const storeLoading=path==="nationwide"&&bool("#lfStoreLoad");
-    const noLiftgate=path==="nationwide"&&(bool("#lfNoLiftgate")||dock||warehousePickup);
+    // Customer chooses delivery liftgate; LF staff confirm pickup liftgate (estimate assumes yes unless store-loading / dock).
+    const liftgateDelivery=path==="nationwide"
+      ?(bool("#lfLiftgateDelivery")&&!dock&&!warehousePickup)
+      :false;
 
     const access={
       residential:destinationType==="residential",
@@ -459,10 +462,11 @@ This script will run on the published Webflow staging and production sites.
       room_of_choice:roomOfChoice,
       warehouse_pickup:warehousePickup,
       store_loading:storeLoading,
-      no_liftgate:noLiftgate,
+      no_liftgate:!liftgateDelivery,
+      liftgate_pickup_staff_to_confirm:path==="nationwide",
       notes:value("#lfNotes"),
       liftgate_pickup:path==="nationwide"?!storeLoading:(path==="pickup_az"?!dock:false),
-      liftgate_delivery:path==="nationwide"?!noLiftgate:false
+      liftgate_delivery:liftgateDelivery
     };
 
     return {
@@ -498,7 +502,8 @@ This script will run on the published Webflow staging and production sites.
     if(a.room_of_choice)flags.push("Room of Choice");
     if(a.warehouse_pickup)flags.push("warehouse / terminal pickup");
     if(a.store_loading)flags.push("store loading at origin");
-    if(a.no_liftgate)flags.push("no liftgate at delivery");
+    if(a.liftgate_delivery)flags.push("liftgate at delivery");
+    else if(a.no_liftgate)flags.push("no liftgate at delivery");
     if(a.inside_delivery)flags.push(isPickup?"inside pickup":"inside delivery");
     if(a.room_placement)flags.push(isPickup?"carry-out from room / inside":"room placement");
     if(a.unpacking_or_debris_removal)flags.push("unpacking / debris removal");
@@ -568,7 +573,7 @@ This script will run on the published Webflow staging and production sites.
     }).join("");
 
     const liftgateLine=path==="nationwide"
-      ? ("Liftgate pickup: "+(payload.access.liftgate_pickup?"Yes":"No (store loading)")+" · Liftgate delivery: "+(payload.access.liftgate_delivery?"Yes":"No"))
+      ? ("Liftgate delivery (your choice): "+(payload.access.liftgate_delivery?"Yes":"No")+" · Liftgate at pickup: Lost & Found will confirm")
       : "";
 
     $("#lfSummary").innerHTML=
@@ -631,21 +636,21 @@ This script will run on the published Webflow staging and production sites.
       const rangeText=hasRange?money(low)+" - "+money(high):"Freight-Ready";
       const buyHtml=buyItemsHtml(payload.items,false);
       const wgNote=payload.access.white_glove||payload.access.room_of_choice
-        ?'<p><strong>White Glove / Room of Choice selected</strong> — these services increase nationwide freight significantly versus standard threshold delivery.</p>'
-        :'<p>Need White Glove or Room of Choice? Those options raise the carrier quote a lot compared with standard freight.</p>';
+        ?'<p><strong>White Glove / Room of Choice selected</strong> — these raise the quote significantly versus standard freight.</p>'
+        :'<p>White Glove or Room of Choice raise the quote significantly if you need them later.</p>';
       const whNote=payload.access.warehouse_pickup
-        ?'<p><strong>Warehouse / terminal pickup selected</strong> — that typically lowers the quote by about $150–$200.</p>'
-        :'<p>Tip: picking the freight up from a warehouse/terminal near you usually lowers the quote by about <strong>$150–$200</strong>. We will still mention this option when we confirm your exact rate.</p>';
+        ?'<p><strong>Warehouse / terminal pickup selected</strong> — that usually saves about $150–$200.</p>'
+        :'<p>Tip: picking up from a warehouse/terminal near you usually saves about <strong>$150–$200</strong>. We will mention this when we send your quote.</p>';
       result.innerHTML='<h2>Your Preliminary Nationwide Freight Range</h2>'+
         '<div class="lf-price">'+rangeText+'</div>'+
         milesLine+
         mapHtml+
-        '<p>Based on distance, pallet size/weight, and the freight options you selected. <strong>Ranges are wide on purpose</strong> — every carrier prices freight differently.</p>'+
-        '<p>You can contact <strong>FreightCenter</strong> directly at <a href="tel:8007167608"><strong>800-716-7608</strong></a> for a same-day carrier check, <strong>or</strong> we will email you full rates once our team reviews your request with our trusted human partner in the loop.</p>'+
+        '<p>Based on distance, pallet size/weight, and the options you selected. Ranges are wide because every carrier prices freight differently.</p>'+
+        '<p><strong>We will get you a quote.</strong> Our team will review your request and email you full rates. You can also contact <strong>FreightCenter</strong> directly anytime at <a href="tel:8007167608"><strong>800-716-7608</strong></a>.</p>'+
         wgNote+
         whNote+
-        '<p>No liftgate at delivery and store loading at our Scottsdale warehouse/showroom also help bring the rate down when they apply. If you follow through with pickup or loading at Lost &amp; Found, our hours are <strong>10am–5pm, Monday–Saturday</strong>.</p>'+
-        '<p><strong>We do not hold items</strong> — ready to buy? Purchase now and confirm freight after. Want rates first? <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> · <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>'+
+        '<p>A <strong>liftgate</strong> lowers the pallet to the ground when there is no dock — you selected delivery liftgate above; <strong>Lost &amp; Found will determine if a liftgate is needed at pickup</strong>. Store loading at our showroom can also help the rate. Pickup/loading hours: <strong>10am–5pm, Monday–Saturday</strong>.</p>'+
+        '<p><strong>We do not hold items</strong> — ready to buy? Purchase now and we will confirm freight with your quote. Questions? <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> · <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>'+
         buyHtml;
     }
     result.classList.add("show");
