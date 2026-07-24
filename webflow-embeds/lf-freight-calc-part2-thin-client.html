@@ -770,7 +770,7 @@ This script will run on the published Webflow staging and production sites.
         payload.access.warehouse_pickup
           ?'<p><strong>Warehouse / terminal pickup selected</strong> — that usually saves about $150–$200.</p>'
           :'<p>Tip: picking up from a warehouse/terminal near you usually saves about <strong>$150–$200</strong>. We will mention this with your quote.</p>',
-        '<p><strong>Liftgate at delivery:</strong> '+(liftgateYes?"Yes":"No")+' (your choice). <strong>Pickup loading at Lost &amp; Found:</strong> we will confirm whether it can load without a liftgate — most items cannot, because they ship on a pallet. Hours: <strong>10am–5pm, Monday–Saturday</strong>.</p>',
+        '<p><strong>Liftgate at delivery:</strong> '+(liftgateYes?"Yes":"No")+' (your choice). <strong>Pickup loading at Lost &amp; Found:</strong> we will determine if a liftgate is needed when we send your final quote — <strong>for now we assume yes</strong>. Hours: <strong>10am–5pm, Monday–Saturday</strong>.</p>',
         '<p><strong>We do not hold items.</strong> Ready to buy? Use Buy Now and we will confirm freight with your quote. Questions? <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a> · <a href="tel:4805887006"><strong>480-588-7006</strong></a>.</p>'
       ].filter(Boolean).join("");
       result.innerHTML=
