@@ -6065,10 +6065,29 @@ function getFurnitureSkuCompareAtSlug() {
 const COMPARE_AT_MIN_DROP_CENTS = 99;
 
 /**
+ * Google salePrice / Webflow compare-at clear threshold: stay on sale while current is
+ * more than $5 below the frozen original. Within $5, same, or higher → clear sale and
+ * treat current as the only price (original updates).
+ */
+const GOOGLE_SALE_MIN_DROP_CENTS = Math.max(
+  1,
+  parseInt(process.env.GOOGLE_MERCHANT_SALE_MIN_DROP_CENTS || "500", 10) || 500
+);
+
+/** True when sale should end: at/above original, or within $5 of original. */
+function isFurnitureSaleRestored(listCents, currentCents, minDropCents = GOOGLE_SALE_MIN_DROP_CENTS) {
+  if (listCents == null || currentCents == null) return true;
+  const list = Math.round(Number(listCents));
+  const current = Math.round(Number(currentCents));
+  if (!Number.isFinite(list) || !Number.isFinite(current) || list <= 0) return true;
+  if (current >= list) return true;
+  return list - current <= minDropCents;
+}
+
+/**
  * Markdown-only compare-at: set when price drops by more than $0.99.
- * Keep the original “was” price across further markdowns.
- * When price is raised back (markup) or restored to/above the original, clear compare-at
- * so Webflow no longer shows a sale/markdown.
+ * Keep the original “was” price across further markdowns and partial raise-backs.
+ * Clear only when price is within $5 of the original, the same, or higher.
  */
 function applyFurnitureSkuCompareAtField(
   fieldData,
@@ -6085,9 +6104,7 @@ function applyFurnitureSkuCompareAtField(
     existingCompareAtCents != null && existingCompareAtCents > 0;
 
   if (hasExistingCompareAt) {
-    const restoredToOrAboveOriginal = priceCents >= existingCompareAtCents;
-    const priceRaisedBack = dropCents < 0; // markup vs last Webflow price
-    if (restoredToOrAboveOriginal || priceRaisedBack) {
+    if (isFurnitureSaleRestored(existingCompareAtCents, priceCents)) {
       fieldData[compareSlug] = null;
       webflowLog("info", {
         event: "syncFurnitureEcommerceSku.markup_clear_compare_at",
@@ -6095,21 +6112,25 @@ function applyFurnitureSkuCompareAtField(
         previousPriceCents,
         newPriceCents: priceCents,
         dropCents,
-        restoredToOrAboveOriginal,
+        remainingDropCents: existingCompareAtCents - priceCents,
+        restoredToOrAboveOriginal: priceCents >= existingCompareAtCents,
         ...logMeta,
       });
       return;
     }
-    if (dropCents > COMPARE_AT_MIN_DROP_CENTS) {
-      webflowLog("info", {
-        event: "syncFurnitureEcommerceSku.price_drop_preserve_compare_at",
-        existingCompareAtCents,
-        previousPriceCents,
-        newPriceCents: priceCents,
-        dropCents,
-        ...logMeta,
-      });
-    }
+    // Still on sale (further drop or partial raise) — keep frozen original compare-at.
+    webflowLog("info", {
+      event:
+        dropCents < 0
+          ? "syncFurnitureEcommerceSku.price_raise_preserve_compare_at"
+          : "syncFurnitureEcommerceSku.price_drop_preserve_compare_at",
+      existingCompareAtCents,
+      previousPriceCents,
+      newPriceCents: priceCents,
+      dropCents,
+      remainingDropCents: existingCompareAtCents - priceCents,
+      ...logMeta,
+    });
     return;
   }
 
@@ -10751,12 +10772,6 @@ function parseGooglePriceToCents(priceLike) {
   return Math.round(n * 100);
 }
 
-/** Google salePrice only when markdown from original is greater than $5. */
-const GOOGLE_SALE_MIN_DROP_CENTS = Math.max(
-  1,
-  parseInt(process.env.GOOGLE_MERCHANT_SALE_MIN_DROP_CENTS || "500", 10) || 500
-);
-
 function googleMoneyFromCents(cents, currency = null) {
   const cur =
     String(currency || process.env.GOOGLE_MERCHANT_CURRENCY || "USD").trim() || "USD";
@@ -10768,12 +10783,11 @@ function googleMoneyFromCents(cents, currency = null) {
 
 /**
  * Keep Google `price` as the original list price and put the discounted amount in `salePrice`
- * when the drop is greater than $5. Further drops on the same item only update `salePrice`.
+ * when the drop is greater than $5. Further drops *and partial raise-backs* only update
+ * `salePrice` while still more than $5 below the frozen original.
  *
- * Original is the high-water selling price (Webflow compare-at / previous Webflow price /
- * Shopify compare-at) frozen when the sale starts.
- * When price is raised back (any markup) or restored near/above the original, clear salePrice
- * so Google no longer shows a sale — matching Webflow compare-at clearing.
+ * Clear sale (current becomes the only price) when restored within $5 of original, same, or higher.
+ * Matches Webflow compare-at clearing.
  */
 function resolveGoogleSalePricing({
   currentPriceCents,
@@ -10841,28 +10855,22 @@ function resolveGoogleSalePricing({
     };
   };
 
-  // Price raised back while a sale was active → drop salePrice immediately (both Google + Webflow path).
-  if (
-    cachedList != null &&
-    Number(cachedList) > 0 &&
-    (current >= Number(cachedList) ||
-      (cachedSale != null && current > Number(cachedSale)) ||
-      (cachedLast != null && current > Number(cachedLast)))
-  ) {
-    return clearSale(
-      current >= Number(cachedList) ? "price_restored_to_original" : "price_raised_clear_sale",
-      current
-    );
-  }
-
   let listCents = null;
   let reason = "no_sale";
 
-  if (cachedList != null && Number(cachedList) > 0 && current < Number(cachedList)) {
-    // Already in a sale window — keep original list; refresh salePrice on further drops.
-    listCents = Math.round(Number(cachedList));
-    reason =
-      cachedSale != null && current < Number(cachedSale) ? "sale_price_updated" : "sale_active";
+  if (cachedList != null && Number(cachedList) > 0) {
+    const list = Math.round(Number(cachedList));
+    if (isFurnitureSaleRestored(list, current)) {
+      return clearSale(
+        current >= list ? "price_restored_to_original" : "price_restored_near_original",
+        current
+      );
+    }
+    // Still on sale — keep frozen original; update salePrice on drops or partial raises.
+    listCents = list;
+    if (cachedSale != null && current < Number(cachedSale)) reason = "sale_price_updated";
+    else if (cachedSale != null && current > Number(cachedSale)) reason = "sale_price_raised";
+    else reason = "sale_active";
   } else {
     const highWaterCandidates = [];
     if (cachedHighWater != null && Number(cachedHighWater) > 0) {
@@ -10888,7 +10896,7 @@ function resolveGoogleSalePricing({
     }
   }
 
-  if (listCents != null && listCents > current && listCents - current > GOOGLE_SALE_MIN_DROP_CENTS) {
+  if (listCents != null && !isFurnitureSaleRestored(listCents, current)) {
     const price = googleMoneyFromCents(listCents, currency);
     const salePrice = googleMoneyFromCents(current, currency);
     const state = {
