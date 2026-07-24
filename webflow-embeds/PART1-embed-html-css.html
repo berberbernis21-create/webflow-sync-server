@@ -559,13 +559,19 @@ to remain visible inside the Webflow Designer.
         <div class="lf-field"><label for="lfState">State <span class="lf-required">*</span></label><input id="lfState" name="state" maxlength="2" value="AZ" autocomplete="address-level1" required><div class="lf-help">Use the two-letter state abbreviation.</div><div class="lf-error"></div></div>
         <div class="lf-field"><label for="lfZip">ZIP code <span class="lf-required">*</span></label><input id="lfZip" name="zip" inputmode="numeric" autocomplete="postal-code" required><div class="lf-error"></div></div>
       </div>
+      <div class="lf-step-note" id="lfAddressWhatNext"><strong>What happens next:</strong> Next, add your item(s) by copying and pasting the entire product title from the website — or the full product page URL — into the lookup field. You can also enter an item manually if needed.</div>
       <div class="lf-actions"><button class="lf-btn secondary" type="button" data-back>Back</button><button class="lf-btn" type="button" data-next>Continue</button></div>
     </section>
 
     <section class="lf-step" data-step="3" hidden>
-      <div class="lf-head"><h2>Add the Item or Items</h2><p>Paste the exact website listing title <strong>or the product page URL</strong> for automatic lookup, or enter the item manually.</p></div>
+      <div class="lf-head">
+        <h2>Add the Item or Items</h2>
+        <p>Copy and paste the <strong>entire product title</strong> from the website listing, or paste the <strong>full product page URL</strong>. Then click Find Item. You can still enter everything manually if nothing is found.</p>
+      </div>
+      <div class="lf-step-note" id="lfItemsHowTo"><strong>How to look up an item:</strong> On the product page, select the full title and copy it, then paste it here — or copy the full website address from your browser’s address bar and paste that instead. Partial titles often won’t match.</div>
       <div class="lf-items" id="lfItems"></div>
       <div style="margin-top:11px"><button class="lf-btn secondary" id="lfAddItem" type="button">+ Add Another Item</button></div>
+      <div class="lf-step-note" id="lfItemsWhatNext"><strong>What happens next:</strong> After your items, we’ll ask about stairs, access, and handling — then you review, and we email a preliminary estimate so we can confirm final pricing.</div>
       <div class="lf-actions"><button class="lf-btn secondary" type="button" data-back>Back</button><button class="lf-btn" type="button" data-next>Continue</button></div>
     </section>
 
@@ -767,7 +773,7 @@ to remain visible inside the Webflow Designer.
   <article class="lf-item">
     <div class="lf-item-head"><h3>Item <span class="lf-item-number"></span></h3><button class="lf-remove" type="button">Remove</button></div>
     <div class="lf-lookup-row">
-      <div class="lf-field"><label>Website listing title or product URL <span class="lf-required">*</span></label><input class="lf-title" required placeholder="Paste the exact product title or product page URL"><div class="lf-help">Lookup accepts the listing title or a lostandfoundresale.com product link. You can still enter everything manually if nothing is found.</div><div class="lf-error"></div></div>
+      <div class="lf-field"><label>Website listing title or product URL <span class="lf-required">*</span></label><input class="lf-title" required placeholder="Copy and paste the entire product title, or the full product page URL"><div class="lf-help">Copy the full title from the listing page (not a shortened name), or paste the full lostandfoundresale.com product link from your browser. Then click Find Item. You can still fill in dimensions manually if nothing is found.</div><div class="lf-error"></div></div>
       <button class="lf-btn lf-lookup" type="button">Find Item</button>
     </div>
     <div class="lf-lookup-message"></div>

@@ -180,6 +180,19 @@ This script will run on the published Webflow staging and production sites.
       body="Now we enter where it’s going, then your item details, then access needs, then you review — and we email a preliminary estimate so we can confirm final pricing.";
     }
     el.innerHTML="<strong>What happens next:</strong> "+body;
+
+    const itemsNext=$("#lfItemsWhatNext");
+    if(itemsNext){
+      let itemsBody="";
+      if(p==="nationwide"){
+        itemsBody="After your items, we’ll ask about freight options (liftgate, dock, White Glove, and more) — then you review, and we get you a confirmed quote.";
+      }else if(p==="pickup_az"){
+        itemsBody="After your items, we’ll ask about stairs, access, and handling for the pickup — then you review, and we email a preliminary estimate so we can confirm final pricing.";
+      }else{
+        itemsBody="After your items, we’ll ask about stairs, access, and handling — then you review, and we email a preliminary estimate so we can confirm final pricing.";
+      }
+      itemsNext.innerHTML="<strong>What happens next:</strong> "+itemsBody;
+    }
   }
 
   function updatePathDefaults(){
