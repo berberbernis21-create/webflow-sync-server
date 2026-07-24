@@ -796,6 +796,8 @@ const CACHE_FILE = `${DATA_DIR}/lastSync.json`;
 const DUPLICATE_EMAIL_SENT_FILE = `${DATA_DIR}/duplicate_placement_emails_sent.json`;
 const WEIGHT_MISSING_EMAIL_SENT_FILE = `${DATA_DIR}/weight_missing_emails_sent.json`;
 const GOOGLE_GUARD_EMAIL_SENT_FILE = `${DATA_DIR}/google_guard_emails_sent.json`;
+/** Frozen Google list price + last synced selling price (for salePrice on markdowns > $5). */
+const GOOGLE_MERCHANT_PRICE_STATE_FILE = `${DATA_DIR}/google_merchant_price_state.json`;
 const SKU_IMAGE_FAIL_EMAIL_LAST_FILE = `${DATA_DIR}/sku_image_fail_email_last.json`;
 const SKU_IMAGE_IMPORT_BLOCKED_FILE = `${DATA_DIR}/sku_image_import_blocked.json`;
 const WEBFLOW_SKU_IMAGE_MAX_ATTEMPTS = 5;
@@ -915,6 +917,130 @@ function saveGoogleGuardEmailSentIds(set) {
 
 function googleGuardIssueKey(shopifyProductId, issue) {
   return `${String(shopifyProductId || "").trim()}:${String(issue || "").trim()}`;
+}
+
+let googleMerchantPriceStateCache = null;
+let googleMerchantPriceStateDirty = false;
+let googleMerchantPriceStateSaveTimer = null;
+
+function loadGoogleMerchantPriceStateMap() {
+  if (googleMerchantPriceStateCache) return googleMerchantPriceStateCache;
+  try {
+    if (!fs.existsSync(GOOGLE_MERCHANT_PRICE_STATE_FILE)) {
+      googleMerchantPriceStateCache = {};
+      return googleMerchantPriceStateCache;
+    }
+    const raw = fs.readFileSync(GOOGLE_MERCHANT_PRICE_STATE_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    googleMerchantPriceStateCache =
+      parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    googleMerchantPriceStateCache = {};
+  }
+  return googleMerchantPriceStateCache;
+}
+
+function saveGoogleMerchantPriceStateMap(map) {
+  try {
+    ensureDataDir();
+    googleMerchantPriceStateCache = map && typeof map === "object" ? map : {};
+    fs.writeFileSync(
+      GOOGLE_MERCHANT_PRICE_STATE_FILE,
+      JSON.stringify(googleMerchantPriceStateCache, null, 2),
+      "utf8"
+    );
+    googleMerchantPriceStateDirty = false;
+  } catch (err) {
+    webflowLog("error", { event: "google_merchant.price_state_save_failed", message: err.message });
+  }
+}
+
+function flushGoogleMerchantPriceState() {
+  if (googleMerchantPriceStateSaveTimer) {
+    clearTimeout(googleMerchantPriceStateSaveTimer);
+    googleMerchantPriceStateSaveTimer = null;
+  }
+  if (!googleMerchantPriceStateDirty || !googleMerchantPriceStateCache) return;
+  saveGoogleMerchantPriceStateMap(googleMerchantPriceStateCache);
+}
+
+function scheduleGoogleMerchantPriceStateSave() {
+  if (googleMerchantPriceStateSaveTimer) return;
+  googleMerchantPriceStateSaveTimer = setTimeout(() => {
+    googleMerchantPriceStateSaveTimer = null;
+    flushGoogleMerchantPriceState();
+  }, 1000);
+}
+
+function getGoogleMerchantPriceState(shopifyProductId) {
+  const pid = String(shopifyProductId || "").trim();
+  if (!pid) return null;
+  const map = loadGoogleMerchantPriceStateMap();
+  const row = map[pid];
+  return row && typeof row === "object" ? row : null;
+}
+
+function setGoogleMerchantPriceState(shopifyProductId, state) {
+  const pid = String(shopifyProductId || "").trim();
+  if (!pid) return;
+  const map = loadGoogleMerchantPriceStateMap();
+  if (!state || typeof state !== "object") {
+    if (map[pid]) {
+      delete map[pid];
+      googleMerchantPriceStateDirty = true;
+      scheduleGoogleMerchantPriceStateSave();
+    }
+    return;
+  }
+  const next = {};
+  if (state.listPriceCents != null && Number.isFinite(Number(state.listPriceCents))) {
+    next.listPriceCents = Math.round(Number(state.listPriceCents));
+  }
+  if (state.lastPriceCents != null && Number.isFinite(Number(state.lastPriceCents))) {
+    next.lastPriceCents = Math.round(Number(state.lastPriceCents));
+  }
+  if (state.salePriceCents != null && Number.isFinite(Number(state.salePriceCents))) {
+    next.salePriceCents = Math.round(Number(state.salePriceCents));
+  }
+  if (state.highWaterCents != null && Number.isFinite(Number(state.highWaterCents))) {
+    next.highWaterCents = Math.round(Number(state.highWaterCents));
+  }
+  const prev = map[pid];
+  if (
+    prev &&
+    prev.listPriceCents === next.listPriceCents &&
+    prev.lastPriceCents === next.lastPriceCents &&
+    prev.salePriceCents === next.salePriceCents &&
+    prev.highWaterCents === next.highWaterCents
+  ) {
+    return;
+  }
+  next.updatedAt = new Date().toISOString();
+  map[pid] = next;
+  googleMerchantPriceStateDirty = true;
+  scheduleGoogleMerchantPriceStateSave();
+}
+
+/** Cache mirror of Google sale-price state (survives typical cache row rewrites via cacheSyncMeta). */
+function googleMerchantPriceCacheFields(cacheEntry, shopifyProductId = null) {
+  const fromState = getGoogleMerchantPriceState(shopifyProductId || cacheEntry?.shopifyProductId);
+  const list =
+    fromState?.listPriceCents ??
+    cacheEntry?.googleListPriceCents ??
+    null;
+  const last =
+    fromState?.lastPriceCents ??
+    cacheEntry?.googleLastPriceCents ??
+    null;
+  const sale =
+    fromState?.salePriceCents ??
+    cacheEntry?.googleSalePriceCents ??
+    null;
+  const out = {};
+  if (list != null) out.googleListPriceCents = list;
+  if (last != null) out.googleLastPriceCents = last;
+  if (sale != null) out.googleSalePriceCents = sale;
+  return out;
 }
 
 function clearGoogleGuardEmailSentIds(shopifyProductId) {
@@ -5897,8 +6023,9 @@ const COMPARE_AT_MIN_DROP_CENTS = 99;
 
 /**
  * Markdown-only compare-at: set when price drops by more than $0.99.
- * If compare-at already exists, only price is updated (original “was” price is kept).
- * Markups and same/small price changes clear compare-at only when none exists yet.
+ * Keep the original “was” price across further markdowns.
+ * When price is raised back (markup) or restored to/above the original, clear compare-at
+ * so Webflow no longer shows a sale/markdown.
  */
 function applyFurnitureSkuCompareAtField(
   fieldData,
@@ -5915,6 +6042,21 @@ function applyFurnitureSkuCompareAtField(
     existingCompareAtCents != null && existingCompareAtCents > 0;
 
   if (hasExistingCompareAt) {
+    const restoredToOrAboveOriginal = priceCents >= existingCompareAtCents;
+    const priceRaisedBack = dropCents < 0; // markup vs last Webflow price
+    if (restoredToOrAboveOriginal || priceRaisedBack) {
+      fieldData[compareSlug] = null;
+      webflowLog("info", {
+        event: "syncFurnitureEcommerceSku.markup_clear_compare_at",
+        existingCompareAtCents,
+        previousPriceCents,
+        newPriceCents: priceCents,
+        dropCents,
+        restoredToOrAboveOriginal,
+        ...logMeta,
+      });
+      return;
+    }
     if (dropCents > COMPARE_AT_MIN_DROP_CENTS) {
       webflowLog("info", {
         event: "syncFurnitureEcommerceSku.price_drop_preserve_compare_at",
@@ -6294,6 +6436,7 @@ function cacheSyncMeta(product, cacheEntry, lastQty) {
   const resolved = product?.[RESOLVED_ECOMMERCE_TAXONOMY] ?? null;
   return {
     ...soldMarkedAtPayload(cacheEntry, lastQty),
+    ...googleMerchantPriceCacheFields(cacheEntry, product?.id),
     ecommerceVerticalTagStamp: ecommerceVerticalTagStamp(getProductTagsArray(product)),
     ...(resolved
       ? {
@@ -9387,6 +9530,7 @@ async function runWebhookSingleProductSync(shopifyProductId, triggerPath) {
       message: err.message,
     });
   } finally {
+    flushGoogleMerchantPriceState();
     syncRequestId = null;
     syncStartTime = null;
     luxuryItemIndex = null;
@@ -10510,7 +10654,189 @@ function parseGooglePriceValue(priceLike) {
   return n.toFixed(2);
 }
 
-async function buildGoogleFurnitureProductFromShopify(product, availability = "in stock") {
+function parseGooglePriceToCents(priceLike) {
+  const s = String(priceLike ?? "").trim();
+  if (!s) return null;
+  const n = parseFloat(s.replace(/[^0-9.]/g, ""));
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.round(n * 100);
+}
+
+/** Google salePrice only when markdown from original is greater than $5. */
+const GOOGLE_SALE_MIN_DROP_CENTS = Math.max(
+  1,
+  parseInt(process.env.GOOGLE_MERCHANT_SALE_MIN_DROP_CENTS || "500", 10) || 500
+);
+
+function googleMoneyFromCents(cents, currency = null) {
+  const cur =
+    String(currency || process.env.GOOGLE_MERCHANT_CURRENCY || "USD").trim() || "USD";
+  if (cents == null || !Number.isFinite(Number(cents)) || Number(cents) < 0) {
+    return { value: "0.00", currency: cur };
+  }
+  return { value: (Number(cents) / 100).toFixed(2), currency: cur };
+}
+
+/**
+ * Keep Google `price` as the original list price and put the discounted amount in `salePrice`
+ * when the drop is greater than $5. Further drops on the same item only update `salePrice`.
+ *
+ * Original is the high-water selling price (or Shopify compare-at) frozen when the sale starts.
+ * When price is raised back (any markup) or restored near/above the original, clear salePrice
+ * so Google no longer shows a sale — matching Webflow compare-at clearing.
+ */
+function resolveGoogleSalePricing({
+  currentPriceCents,
+  shopifyProductId = null,
+  compareAtCents = null,
+  cacheEntry = null,
+}) {
+  const currency = String(process.env.GOOGLE_MERCHANT_CURRENCY || "USD").trim() || "USD";
+  const pid = String(shopifyProductId || "").trim();
+  const prior = getGoogleMerchantPriceState(pid) || {};
+  const cachedList =
+    prior.listPriceCents ??
+    cacheEntry?.googleListPriceCents ??
+    null;
+  const cachedLast =
+    prior.lastPriceCents ??
+    cacheEntry?.googleLastPriceCents ??
+    null;
+  const cachedSale =
+    prior.salePriceCents ??
+    cacheEntry?.googleSalePriceCents ??
+    null;
+  const cachedHighWater =
+    prior.highWaterCents ??
+    cachedLast ??
+    null;
+
+  if (currentPriceCents == null || !Number.isFinite(Number(currentPriceCents)) || Number(currentPriceCents) < 0) {
+    const price = googleMoneyFromCents(0, currency);
+    return {
+      price,
+      salePrice: null,
+      state: { lastPriceCents: null, listPriceCents: null, salePriceCents: null, highWaterCents: null },
+      onSale: false,
+    };
+  }
+
+  const current = Math.round(Number(currentPriceCents));
+
+  const clearSale = (reason, highWaterCents = current) => {
+    const state = {
+      listPriceCents: null,
+      lastPriceCents: current,
+      salePriceCents: null,
+      highWaterCents,
+    };
+    if (pid) setGoogleMerchantPriceState(pid, state);
+    if (cachedList != null || cachedSale != null) {
+      webflowLog("info", {
+        event: "google_merchant.sale_price_cleared",
+        shopifyProductId: pid || null,
+        reason,
+        previousListPriceCents: cachedList,
+        previousSalePriceCents: cachedSale,
+        currentPriceCents: current,
+      });
+    }
+    return {
+      price: googleMoneyFromCents(current, currency),
+      salePrice: null,
+      state,
+      onSale: false,
+      reason,
+    };
+  };
+
+  // Price raised back while a sale was active → drop salePrice immediately (both Google + Webflow path).
+  if (
+    cachedList != null &&
+    Number(cachedList) > 0 &&
+    (current >= Number(cachedList) ||
+      (cachedSale != null && current > Number(cachedSale)) ||
+      (cachedLast != null && current > Number(cachedLast)))
+  ) {
+    return clearSale(
+      current >= Number(cachedList) ? "price_restored_to_original" : "price_raised_clear_sale",
+      current
+    );
+  }
+
+  let listCents = null;
+  let reason = "no_sale";
+
+  if (cachedList != null && Number(cachedList) > 0 && current < Number(cachedList)) {
+    // Already in a sale window — keep original list; refresh salePrice on further drops.
+    listCents = Math.round(Number(cachedList));
+    reason =
+      cachedSale != null && current < Number(cachedSale) ? "sale_price_updated" : "sale_active";
+  } else {
+    const highWaterCandidates = [];
+    if (cachedHighWater != null && Number(cachedHighWater) > 0) {
+      highWaterCandidates.push(Math.round(Number(cachedHighWater)));
+    }
+    if (cachedLast != null && Number(cachedLast) > 0) {
+      highWaterCandidates.push(Math.round(Number(cachedLast)));
+    }
+    if (compareAtCents != null && Number(compareAtCents) > 0) {
+      highWaterCandidates.push(Math.round(Number(compareAtCents)));
+    }
+    highWaterCandidates.push(current);
+    const highWater = Math.max(...highWaterCandidates);
+    if (highWater > current && highWater - current > GOOGLE_SALE_MIN_DROP_CENTS) {
+      listCents = highWater;
+      reason = "sale_started";
+    } else {
+      return clearSale("no_sale", highWater);
+    }
+  }
+
+  if (listCents != null && listCents > current && listCents - current > GOOGLE_SALE_MIN_DROP_CENTS) {
+    const price = googleMoneyFromCents(listCents, currency);
+    const salePrice = googleMoneyFromCents(current, currency);
+    const state = {
+      listPriceCents: listCents,
+      lastPriceCents: current,
+      salePriceCents: current,
+      highWaterCents: listCents,
+    };
+    if (pid) setGoogleMerchantPriceState(pid, state);
+    webflowLog("info", {
+      event: "google_merchant.sale_price_applied",
+      shopifyProductId: pid || null,
+      reason,
+      listPriceCents: listCents,
+      salePriceCents: current,
+      dropCents: listCents - current,
+      minDropCents: GOOGLE_SALE_MIN_DROP_CENTS,
+    });
+    return { price, salePrice, state, onSale: true, reason };
+  }
+
+  // Price restored close to / above list: clear sale.
+  return clearSale("price_restored_near_original", current);
+}
+
+function resolveGoogleSalePricingForShopifyProduct(product, cache = null) {
+  const sid = String(product?.id || "").trim();
+  const cacheEntry = cache && sid ? getCacheEntry(cache, sid) : null;
+  const currentPriceCents = parseGooglePriceToCents(
+    product?.variants?.[0]?.price ?? product?.price
+  );
+  const compareAtCents =
+    parseGooglePriceToCents(product?.variants?.[0]?.compare_at_price) ??
+    parseGooglePriceToCents(product?.compare_at_price);
+  return resolveGoogleSalePricing({
+    currentPriceCents,
+    shopifyProductId: sid,
+    compareAtCents,
+    cacheEntry,
+  });
+}
+
+async function buildGoogleFurnitureProductFromShopify(product, availability = "in stock", cache = null) {
   const canonicalSlug =
     String(product?.__googleCanonicalSlug || "").trim() ||
     String(product?.__webflowCanonicalSlug || "").trim();
@@ -10546,10 +10872,7 @@ async function buildGoogleFurnitureProductFromShopify(product, availability = "i
     dims: extractedDims,
   });
   extractedDims = applyGoogleDimFallback(extractedDims);
-  const priceValue =
-    parseGooglePriceValue(product?.variants?.[0]?.price) ??
-    parseGooglePriceValue(product?.price) ??
-    "0.00";
+  const pricing = resolveGoogleSalePricingForShopifyProduct(product, cache);
   const out = {
     offerId,
     title: String(product?.title || "").trim(),
@@ -10562,13 +10885,14 @@ async function buildGoogleFurnitureProductFromShopify(product, availability = "i
     channel: "online",
     availability,
     condition: "used",
-    price: { value: priceValue, currency: String(process.env.GOOGLE_MERCHANT_CURRENCY || "USD").trim() || "USD" },
+    price: pricing.price,
     brand: String(product?.vendor || process.env.GOOGLE_MERCHANT_BRAND_FALLBACK || "Lost and Found Resale").trim(),
     identifierExists: false,
     googleProductCategory:
       String(process.env.GOOGLE_MERCHANT_FURNITURE_CATEGORY || "436").trim() || "436",
     shippingWeight,
   };
+  if (pricing.salePrice) out.salePrice = pricing.salePrice;
   Object.assign(out, extractedDims);
   return out;
 }
@@ -10637,6 +10961,8 @@ function toMerchantApiProductInput(payload) {
   };
   const price = toMerchantApiPrice(payload?.price);
   if (price) productAttributes.price = price;
+  const salePrice = toMerchantApiPrice(payload?.salePrice);
+  if (salePrice) productAttributes.salePrice = salePrice;
   const shippingWeight = toMerchantApiMeasure(payload?.shippingWeight);
   if (shippingWeight) productAttributes.shippingWeight = shippingWeight;
   const shippingWidth = toMerchantApiMeasure(payload?.shippingWidth);
@@ -10760,7 +11086,7 @@ async function syncGoogleMerchantFurnitureFromShopifyProduct(product, availabili
     return false;
   }
   const productForGoogle = { ...product, __googleCanonicalSlug: canonicalSlug };
-  const payload = await buildGoogleFurnitureProductFromShopify(productForGoogle, availability);
+  const payload = await buildGoogleFurnitureProductFromShopify(productForGoogle, availability, cache);
   if (!payload || !payload.offerId || !payload.title) return false;
   if (!hasValidGoogleShippingWeight(payload.shippingWeight)) {
     const googleDims = getDimensionsFromProduct(product || {});
@@ -10853,8 +11179,17 @@ async function buildGoogleFurnitureOutOfStockFromWebflow(existing) {
     dims,
   });
   dims = applyGoogleDimFallback(dims);
+  const sid = String(fd["shopify-product-id"] || "").trim();
   const rawPrice = existing?.skus?.[0]?.fieldData?.price?.value;
-  const priceValue = Number.isFinite(Number(rawPrice)) ? (Number(rawPrice) / 100).toFixed(2) : "0.00";
+  const currentPriceCents = Number.isFinite(Number(rawPrice)) ? Math.round(Number(rawPrice)) : null;
+  const compareSlug = getFurnitureSkuCompareAtSlug();
+  const compareAtCents = webflowSkuMoneyFieldToCents(existing?.skus?.[0]?.fieldData?.[compareSlug]);
+  const pricing = resolveGoogleSalePricing({
+    currentPriceCents,
+    shopifyProductId: sid || null,
+    compareAtCents,
+    cacheEntry: null,
+  });
   const payload = {
     offerId,
     title: String(fd.name || "").trim(),
@@ -10867,13 +11202,14 @@ async function buildGoogleFurnitureOutOfStockFromWebflow(existing) {
     channel: "online",
     availability: "out of stock",
     condition: "used",
-    price: { value: priceValue, currency: String(process.env.GOOGLE_MERCHANT_CURRENCY || "USD").trim() || "USD" },
+    price: pricing.price,
     brand: String(fd.brand || process.env.GOOGLE_MERCHANT_BRAND_FALLBACK || "Lost and Found Resale").trim(),
     identifierExists: false,
     googleProductCategory:
       String(process.env.GOOGLE_MERCHANT_FURNITURE_CATEGORY || "436").trim() || "436",
     shippingWeight: weight,
   };
+  if (pricing.salePrice) payload.salePrice = pricing.salePrice;
   Object.assign(payload, dims);
   return payload;
 }
@@ -12964,6 +13300,7 @@ app.post("/google/furniture/full-push", async (req, res) => {
     webflowLog("error", { event: "google_merchant.full_push_failed", message: err.message });
     return res.status(500).json({ error: err.message || "google full push failed" });
   } finally {
+    flushGoogleMerchantPriceState();
     syncRequestId = null;
     syncStartTime = null;
   }
@@ -13183,6 +13520,7 @@ async function executeSyncAll({ reclassifyAll = false, reclassifyIdsSet = null, 
     }
     throw err;
   } finally {
+    flushGoogleMerchantPriceState();
     luxuryItemIndex = null;
     furnitureProductIndex = null;
     furnitureSkuIndex = null;
@@ -13367,6 +13705,7 @@ app.post("/sync-by-ids", async (req, res) => {
     webflowLog("error", { event: "sync-by-ids.error", message: err.message });
     res.status(500).json({ error: err.message });
   } finally {
+    flushGoogleMerchantPriceState();
     syncRequestId = null;
     luxuryItemIndex = null;
     furnitureProductIndex = null;
