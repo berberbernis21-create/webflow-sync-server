@@ -36,6 +36,22 @@ test("local pricing: 25 min = $115", () => {
   assert.equal(calculateLocalRouteEstimate(25).estimated_price, 115);
 });
 
+test("local pricing: 1-2 items add $0", () => {
+  assert.equal(calculateLocalRouteEstimate(15, { itemCount: 1 }).multi_item_adder, 0);
+  assert.equal(calculateLocalRouteEstimate(15, { itemCount: 2 }).estimated_price, 95);
+});
+
+test("local pricing: 3 items add $10", () => {
+  const est = calculateLocalRouteEstimate(15, { itemCount: 3 });
+  assert.equal(est.multi_item_adder, 10);
+  assert.equal(est.estimated_price, 105);
+});
+
+test("local pricing: 4 items add $15, 5 add $20", () => {
+  assert.equal(calculateLocalRouteEstimate(15, { itemCount: 4 }).estimated_price, 110);
+  assert.equal(calculateLocalRouteEstimate(15, { itemCount: 5 }).estimated_price, 115);
+});
+
 test("Webflow payload: trust client pallet + entered dims (no title invent)", () => {
   const rows = palletizeItems(
     [

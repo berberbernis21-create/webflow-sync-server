@@ -119,6 +119,7 @@ async function buildQuoteContext(submission) {
     zip: submission.zip,
     destinationFull: submission.delivery_address.full,
     access: submission.access,
+    itemCount: Array.isArray(submission.items) ? submission.items.length : 0,
   });
 
   if (local.ok === false) {

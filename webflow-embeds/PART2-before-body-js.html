@@ -89,14 +89,16 @@
     };
   }
 
-  function localEstimate(minutes){
+  function localEstimate(minutes,itemCount){
     if(!Number.isFinite(Number(minutes))||Number(minutes)<=0)return null;
 
     const m=Math.ceil(Number(minutes));
     const extraMinutes=Math.max(0,m-LOCAL.baseMinutes);
     const perMinuteRate=LOCAL.referencePrice/LOCAL.referenceMinutes;
     const rawEstimate=LOCAL.basePrice+(extraMinutes*perMinuteRate);
-    const roundedEstimate=Math.ceil(rawEstimate/5)*5;
+    const routeRounded=Math.ceil(rawEstimate/5)*5;
+    const n=Math.max(0,Math.floor(Number(itemCount)||0));
+    const multiItemAdder=n>=3?10+(n-3)*5:0;
 
     return {
       drive_minutes:m,
@@ -105,7 +107,10 @@
       extra_minutes:extraMinutes,
       per_minute_rate:perMinuteRate,
       raw_estimate:rawEstimate,
-      estimated_price:roundedEstimate
+      route_price:routeRounded,
+      item_count:n,
+      multi_item_adder:multiItemAdder,
+      estimated_price:routeRounded+multiItemAdder
     };
   }
 
@@ -707,9 +712,16 @@
     const result=$("#lfResult");
     if(pathLocal){
       const minutes=extractDriveMinutes(preview);
-      const est=localEstimate(minutes);
+      const est=localEstimate(minutes,(payload.items||[]).length);
       const manual=flags.length>0||payload.access.fragile_or_special_handling;
-      const displayedAmount=est?money(est.estimated_price):"$95.00";
+      const serverPrice=Number(preview?.local_estimate?.estimated_price??preview?.display?.amount);
+      const priceAmount=Number.isFinite(serverPrice)&&serverPrice>0?serverPrice:(est?est.estimated_price:null);
+      const displayedAmount=priceAmount!=null?money(priceAmount):"$95.00";
+      const multiAdder=Number(preview?.local_estimate?.multi_item_adder??est?.multi_item_adder)||0;
+      const itemCount=Number(preview?.local_estimate?.item_count??(payload.items||[]).length)||0;
+      const multiNote=multiAdder>0
+        ?'<p class="lf-drive-stats">Includes multi-item handling for '+itemCount+" items (+"+money(multiAdder)+").</p>"
+        :"";
       const priceLabel=payload.access.needs_more_than_two_people
         ? "Approximate Two-Person Base: "
         : "Your Preliminary Estimate Is ";
@@ -734,6 +746,7 @@
         '<h2>'+(isPickup?"Your Preliminary Consignor Pickup Estimate":"Your Preliminary Local Delivery Estimate")+'</h2>'+
         '<div class="lf-price">'+priceLabel+displayedAmount+'</div>'+
         driveStats+
+        multiNote+
         buyHtml+
         mapHtml+
         '<p>'+laborText+'</p>'+
