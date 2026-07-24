@@ -269,7 +269,36 @@ const GOOGLE_LISTING_URL_CACHE_FAIL_TTL_MS = Math.max(
 
 function googleMerchantEnabled() {
   const v = String(process.env.GOOGLE_MERCHANT_ENABLED || "").trim().toLowerCase();
-  return v === "1" || v === "true" || v === "yes";
+  // Explicit off always wins.
+  if (v === "0" || v === "false" || v === "no" || v === "off") return false;
+  if (v === "1" || v === "true" || v === "yes" || v === "on") return true;
+  // If the flag is unset/empty but credentials exist, treat as enabled so deploys
+  // don't silently stop pushing to Google.
+  const merchantId = String(process.env.GOOGLE_MERCHANT_ID || "").trim();
+  const rawJson =
+    process.env.GOOGLE_MERCHANT_SERVICE_ACCOUNT_JSON ||
+    process.env.GOOGLE_SERVICE_ACCOUNT_JSON ||
+    "";
+  let hasJsonCreds = false;
+  if (rawJson && String(rawJson).trim()) {
+    try {
+      const svc = JSON.parse(rawJson);
+      hasJsonCreds = !!(svc?.client_email && svc?.private_key);
+    } catch {
+      hasJsonCreds = false;
+    }
+  }
+  const clientEmail = String(
+    process.env.GOOGLE_MERCHANT_SERVICE_ACCOUNT_EMAIL ||
+      process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL ||
+      ""
+  ).trim();
+  const privateKey = String(
+    process.env.GOOGLE_MERCHANT_SERVICE_ACCOUNT_PRIVATE_KEY ||
+      process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY ||
+      ""
+  ).trim();
+  return !!(merchantId && (hasJsonCreds || (clientEmail && privateKey)));
 }
 
 function getGoogleMerchantConfig() {
@@ -8876,13 +8905,29 @@ async function syncSingleProductCore(product, cache, options = {}) {
           });
           const skuPricing = await syncFurnitureEcommerceSku(product, existing.id, config);
           if (!soldNow) {
-            await syncGoogleMerchantFurnitureFromShopifyProduct(
-              product,
-              "in stock",
-              "furniture_sku_only_update",
-              cache,
-              skuPricing || null
-            );
+            try {
+              await syncGoogleMerchantFurnitureFromShopifyProduct(
+                product,
+                "in stock",
+                "furniture_sku_only_update",
+                cache,
+                skuPricing || null
+              );
+            } catch (err) {
+              webflowLog("error", {
+                event: "google_merchant.sync_unhandled_error",
+                reason: "furniture_sku_only_update",
+                shopifyProductId,
+                message: err?.message || String(err),
+                status: err?.response?.status ?? null,
+              });
+            }
+          } else {
+            webflowLog("info", {
+              event: "google_merchant.skipped_sold",
+              reason: "furniture_sku_only_update",
+              shopifyProductId,
+            });
           }
           cache[shopifyProductId] = {
             hash: currentHash,
@@ -8911,13 +8956,23 @@ async function syncSingleProductCore(product, cache, options = {}) {
       if (vertical === "furniture" && furnitureUsesEcommerceApi(config)) {
         await updateWebflowEcommerceProduct(config.siteId, existing.id, fieldData, config.token, existing);
         const skuPricing = await syncFurnitureEcommerceSku(product, existing.id, config);
-        await syncGoogleMerchantFurnitureFromShopifyProduct(
-          product,
-          "in stock",
-          "furniture_update",
-          cache,
-          skuPricing || null
-        );
+        try {
+          await syncGoogleMerchantFurnitureFromShopifyProduct(
+            product,
+            "in stock",
+            "furniture_update",
+            cache,
+            skuPricing || null
+          );
+        } catch (err) {
+          webflowLog("error", {
+            event: "google_merchant.sync_unhandled_error",
+            reason: "furniture_update",
+            shopifyProductId,
+            message: err?.message || String(err),
+            status: err?.response?.status ?? null,
+          });
+        }
       } else {
         await axios.patch(
           `https://api.webflow.com/v2/collections/${config.collectionId}/items/${existing.id}`,
@@ -13660,6 +13715,19 @@ async function executeSyncAll({ reclassifyAll = false, reclassifyIdsSet = null, 
     furnitureSkuIndex = null;
   }
 }
+
+app.get("/google/status", (req, res) => {
+  const cfg = getGoogleMerchantConfig();
+  const flag = String(process.env.GOOGLE_MERCHANT_ENABLED || "").trim();
+  res.json({
+    enabled: googleMerchantEnabled(),
+    enabledFlag: flag || null,
+    merchantIdConfigured: !!cfg.merchantId,
+    dataSourceConfigured: !!cfg.dataSource,
+    credentialsConfigured: !!(cfg.clientEmail && cfg.privateKey),
+    apiMode: cfg.apiMode,
+  });
+});
 
 app.get("/sync-all/status", (req, res) => {
   const elapsedMs =
