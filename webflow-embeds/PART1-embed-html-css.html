@@ -17,20 +17,22 @@ to remain visible inside the Webflow Designer.
 .w-embed:has(.lf-calc){display:block!important;width:100%!important;max-width:100%!important}
 .lf-calc,.lf-calc *{box-sizing:border-box}
 .lf-calc{width:100%;max-width:980px;margin:22px auto;font-family:Arial,Helvetica,sans-serif;color:var(--lf-text);line-height:1.45}
-.lf-hero,.lf-step{border:1px solid var(--lf-border);border-radius:9px;background:var(--lf-white);box-shadow:0 3px 14px rgba(0,0,0,.045)}
-.lf-hero{padding:25px;text-align:center;background:var(--lf-cream)}
-.lf-kicker{display:inline-block;margin-bottom:9px;padding:5px 9px;border-radius:3px;background:var(--lf-navy);color:#fff;font-size:10px;font-weight:800;letter-spacing:.4px;text-transform:uppercase}
-.lf-hero h1{margin:0 0 10px;color:var(--lf-navy);font-size:clamp(26px,4vw,40px);line-height:1.08}
-.lf-hero>p{max-width:760px;margin:0 auto;font-size:14px;color:#303030}
-.lf-notice{margin-top:14px;padding:11px 13px;border:1px solid #e3ddd0;border-left:4px solid var(--lf-olive);border-radius:5px;background:var(--lf-soft);font-size:11.5px;text-align:left}
-.lf-progress{display:grid;grid-template-columns:repeat(5,1fr);gap:7px;margin:15px 0}
-.lf-progress div{padding:8px 6px;border:1px solid var(--lf-border);border-radius:5px;background:#fff;color:var(--lf-muted);text-align:center;font-size:10px;font-weight:800}
-.lf-progress div.active{border-color:var(--lf-navy);background:var(--lf-navy);color:#fff}
-.lf-step{padding:20px;margin-top:12px}
+.lf-hero,.lf-step{border:1px solid var(--lf-border);border-radius:12px;background:var(--lf-white);box-shadow:0 4px 20px rgba(7,18,124,.04)}
+.lf-hero{padding:28px 26px 24px;text-align:center;background:linear-gradient(180deg,#fbfaf6 0%,#f7f4ec 100%)}
+.lf-kicker{display:inline-block;margin-bottom:10px;padding:5px 10px;border-radius:999px;background:var(--lf-navy);color:#fff;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+.lf-hero h1{margin:0 0 10px;color:var(--lf-navy);font-size:clamp(26px,4vw,38px);line-height:1.1;letter-spacing:-.02em}
+.lf-hero>p{max-width:640px;margin:0 auto;font-size:14px;line-height:1.55;color:#3a3a3a}
+.lf-notice{margin-top:16px;padding:12px 14px;border:1px solid #e3ddd0;border-left:3px solid var(--lf-olive);border-radius:8px;background:rgba(255,255,255,.72);font-size:12px;line-height:1.5;text-align:left;color:#3a3a3a}
+.lf-progress{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin:14px 0 4px}
+.lf-progress div{padding:9px 6px;border:1px solid transparent;border-radius:999px;background:var(--lf-soft);color:var(--lf-muted);text-align:center;font-size:10px;font-weight:800;letter-spacing:.02em}
+.lf-progress div.active{border-color:var(--lf-navy);background:var(--lf-navy);color:#fff;box-shadow:0 2px 8px rgba(7,18,124,.18)}
+.lf-step{padding:22px 22px 20px;margin-top:12px}
 .lf-step[hidden]{display:none!important}
-.lf-head{margin-bottom:14px}
-.lf-head h2{margin:0 0 5px;color:var(--lf-navy);font-size:20px;line-height:1.2}
-.lf-head p{margin:0;color:var(--lf-muted);font-size:12px}
+.lf-head{margin-bottom:16px}
+.lf-head h2{margin:0 0 6px;color:var(--lf-navy);font-size:22px;line-height:1.2;letter-spacing:-.02em}
+.lf-head p{margin:0;color:var(--lf-muted);font-size:13px;line-height:1.45;max-width:40em}
+.lf-step-note{margin:18px 0 0;padding:13px 15px;border:1px solid var(--lf-border);border-radius:10px;background:var(--lf-soft);color:#333;font-size:12.5px;line-height:1.55}
+.lf-step-note strong{color:var(--lf-navy);font-weight:800}
 .lf-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .lf-grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
 .lf-span{grid-column:1/-1}
@@ -42,17 +44,18 @@ to remain visible inside the Webflow Designer.
 .lf-help{margin-top:4px;color:var(--lf-muted);font-size:10px}
 .lf-error{min-height:13px;margin-top:3px;color:var(--lf-red);font-size:10px;font-weight:700}
 .lf-required{color:var(--lf-red)}
-.lf-choice-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
-.lf-path-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+.lf-choice-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.lf-path-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
 @media(max-width:900px){.lf-path-grid{grid-template-columns:1fr}}
-.lf-choice{position:relative}
-.lf-choice input{position:absolute;opacity:0}
-.lf-choice label{display:block;height:100%;min-height:0;padding:14px;border:1px solid var(--lf-border);border-radius:7px;background:var(--lf-cream);cursor:pointer;transition:.15s}
-.lf-choice label:hover{transform:translateY(-1px);border-color:#aaa294}
+.lf-choice{position:relative;height:100%}
+.lf-choice input{position:absolute;opacity:0;pointer-events:none}
+.lf-choice label{display:block;height:100%;min-height:0;padding:16px;border:1px solid var(--lf-border);border-radius:12px;background:#fff;cursor:pointer;transition:border-color .18s ease,background .18s ease,box-shadow .18s ease,transform .18s ease}
+.lf-choice label:hover{transform:translateY(-2px);border-color:#b8b1a4;box-shadow:0 8px 22px rgba(21,21,21,.06)}
 .lf-choice input:focus+label{box-shadow:0 0 0 3px rgba(7,18,124,.12)}
 .lf-choice input:checked+label{border:2px solid var(--lf-navy);background:#f4f6ff}
-.lf-choice strong{display:block;margin:0;color:var(--lf-navy);font-size:14px;line-height:1.25}
-.lf-choice span{display:block;color:#383838;font-size:11px;line-height:1.45}
+.lf-choice-kicker{display:block;margin:0 0 4px;font-size:9px;font-weight:800;font-style:normal;letter-spacing:.1em;text-transform:uppercase;color:var(--lf-muted)}
+.lf-choice strong{display:block;margin:0;color:var(--lf-navy);font-size:15px;line-height:1.25}
+.lf-choice span{display:block;color:#444;font-size:12px;line-height:1.5}
 .lf-subtitle{margin:16px 0 8px;color:var(--lf-navy);font-size:13px;font-weight:800}
 .lf-items{display:grid;gap:12px}
 .lf-item{padding:15px;border:1px solid var(--lf-border);border-radius:7px;background:var(--lf-cream)}
@@ -63,12 +66,14 @@ to remain visible inside the Webflow Designer.
 .lf-lookup-message{display:none;margin:9px 0 0;padding:9px 10px;border:1px solid #b8cbb1;border-radius:5px;background:#f7fbf5;color:#29462b;font-size:11px}
 .lf-lookup-message.show{display:block}
 .lf-lookup-message.bad{border-color:#d5b4b4;background:#fff7f7;color:var(--lf-red)}
-.lf-btn{min-height:44px;padding:10px 16px;border:1px solid var(--lf-navy);border-radius:5px;background:var(--lf-navy);color:#fff;cursor:pointer;font:inherit;font-size:12px;font-weight:800;transition:.15s}
-.lf-btn:hover{transform:translateY(-1px)}
-.lf-btn:disabled{opacity:.55;cursor:not-allowed;transform:none}
-.lf-btn.secondary{border-color:#aaa294;background:#fff;color:var(--lf-text)}
+.lf-btn{min-height:46px;padding:11px 18px;border:1px solid var(--lf-navy);border-radius:8px;background:var(--lf-navy);color:#fff;cursor:pointer;font:inherit;font-size:13px;font-weight:800;letter-spacing:.01em;transition:transform .15s ease,box-shadow .15s ease,opacity .15s ease}
+.lf-btn:hover{transform:translateY(-1px);box-shadow:0 6px 16px rgba(7,18,124,.18)}
+.lf-btn:disabled{opacity:.55;cursor:not-allowed;transform:none;box-shadow:none}
+.lf-btn.secondary{border-color:#c4bdb0;background:#fff;color:var(--lf-text);box-shadow:none}
+.lf-btn.secondary:hover{box-shadow:0 4px 12px rgba(0,0,0,.06)}
 .lf-btn.olive{border-color:var(--lf-olive);background:var(--lf-olive)}
-.lf-actions{display:flex;justify-content:space-between;gap:9px;margin-top:16px}
+.lf-actions{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:18px}
+.lf-step[data-step="1"] .lf-actions{margin-top:16px;padding-top:4px}
 .lf-actions-right{display:flex;gap:8px;margin-left:auto}
 .lf-fieldset{margin:0;padding:0;border:0}
 .lf-access-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
@@ -149,22 +154,28 @@ to remain visible inside the Webflow Designer.
    Makes every customer choice easy to identify
    ========================================================= */
 
-/* Radio-card selections: title + SELECT on one row; description full width below */
+/* Path / radio cards: kicker + title + SELECT; description below */
 .lf-choice label {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   column-gap: 10px;
-  row-gap: 6px;
+  row-gap: 4px;
   align-content: start;
   position: relative;
-  padding: 14px;
-  border-width: 2px;
+  padding: 16px;
+  border-width: 1.5px;
+}
+
+.lf-choice-kicker {
+  grid-column: 1;
+  grid-row: 1;
+  align-self: center;
 }
 
 .lf-choice strong {
   grid-column: 1;
-  grid-row: 1;
-  align-self: center;
+  grid-row: 2;
+  align-self: start;
   padding-right: 0;
   margin: 0;
 }
@@ -172,21 +183,20 @@ to remain visible inside the Webflow Designer.
 .lf-choice label::after {
   content: "SELECT";
   grid-column: 2;
-  grid-row: 1;
+  grid-row: 1 / span 2;
   position: static;
-  align-self: center;
+  align-self: start;
   justify-self: end;
-  top: auto;
-  right: auto;
-  min-width: 66px;
-  padding: 5px 7px;
-  border: 1px solid #c9c3b8;
+  margin-top: 1px;
+  min-width: 70px;
+  padding: 6px 8px;
+  border: 1px solid #d2cbc0;
   border-radius: 999px;
-  background: #ffffff;
-  color: #666;
-  font-size: 8.5px;
+  background: #fff;
+  color: #6a6a6a;
+  font-size: 9px;
   font-weight: 800;
-  letter-spacing: .45px;
+  letter-spacing: .06em;
   line-height: 1;
   text-align: center;
   white-space: nowrap;
@@ -194,32 +204,36 @@ to remain visible inside the Webflow Designer.
 
 .lf-choice span {
   grid-column: 1 / -1;
-  grid-row: 2;
-  margin: 0;
+  grid-row: 3;
+  margin: 6px 0 0;
 }
 
 .lf-choice input:checked + label {
-  border: 3px solid var(--lf-navy);
-  background: #eef1ff;
-  box-shadow: 0 0 0 4px rgba(7, 18, 124, .10);
+  border-width: 2px;
+  border-color: var(--lf-navy);
+  background: #f3f5ff;
+  box-shadow: 0 0 0 3px rgba(7, 18, 124, .08);
 }
 
 .lf-choice input:checked + label::after {
-  content: "✓ SELECTED";
+  content: "SELECTED";
   border-color: var(--lf-navy);
   background: var(--lf-navy);
-  color: #ffffff;
+  color: #fff;
+}
+
+.lf-choice input:checked + label .lf-choice-kicker {
+  color: var(--lf-navy);
 }
 
 .lf-choice input:checked + label strong {
   color: var(--lf-navy);
 }
 
-/* Make the two main paths visually distinct when selected */
 #lfLocal:checked + label {
   border-color: var(--lf-green);
-  background: #f0f8ef;
-  box-shadow: 0 0 0 4px rgba(47, 90, 50, .11);
+  background: #f3faf2;
+  box-shadow: 0 0 0 3px rgba(47, 90, 50, .1);
 }
 
 #lfLocal:checked + label::after {
@@ -227,10 +241,14 @@ to remain visible inside the Webflow Designer.
   background: var(--lf-green);
 }
 
+#lfLocal:checked + label .lf-choice-kicker {
+  color: var(--lf-green);
+}
+
 #lfPickup:checked + label {
   border-color: var(--lf-olive);
-  background: #f3f5ef;
-  box-shadow: 0 0 0 4px rgba(81, 96, 68, .11);
+  background: #f5f6f1;
+  box-shadow: 0 0 0 3px rgba(81, 96, 68, .1);
 }
 
 #lfPickup:checked + label::after {
@@ -238,20 +256,13 @@ to remain visible inside the Webflow Designer.
   background: var(--lf-olive);
 }
 
+#lfPickup:checked + label .lf-choice-kicker {
+  color: var(--lf-olive);
+}
+
 #lfNational:checked + label {
   border-color: var(--lf-navy);
-  background: #eef1ff;
-}
-
-#lfQuote:checked + label {
-  border-color: var(--lf-olive);
-  background: #f3f5ef;
-  box-shadow: 0 0 0 4px rgba(81, 96, 68, .11);
-}
-
-#lfQuote:checked + label::after {
-  border-color: var(--lf-olive);
-  background: var(--lf-olive);
+  background: #f3f5ff;
 }
 
 /* Access and handling choices */
@@ -474,15 +485,15 @@ to remain visible inside the Webflow Designer.
 
 <div class="lf-calc" id="lfCalc">
   <div class="lf-hero">
-    <span class="lf-kicker">Local Delivery · Consignor Pickup · Nationwide</span>
-    <h1>Delivery, Pickup &amp; Freight Calculator</h1>
-    <p>For items without automatic shipping at checkout, or for consignor pickups, enter the details below for a preliminary local estimate or a freight-ready nationwide request.</p>
-    <div class="lf-notice"><strong>Best estimate only:</strong> Final pricing can change after item measurements, actual travel time, stairs, access, labor, carrier pricing, packaging, insurance, and special handling are confirmed. Contact Lost &amp; Found Resale for the most accurate pricing.</div>
+    <span class="lf-kicker">Scottsdale showroom</span>
+    <h1>Delivery, Pickup &amp; Freight</h1>
+    <p>Get a preliminary estimate for local delivery, consignor pickup, or nationwide freight — then we’ll confirm final pricing with you.</p>
+    <div class="lf-notice"><strong>Preliminary only.</strong> Final pricing can change after measurements, travel time, access, labor, carrier rates, packaging, and special handling are confirmed. Lost &amp; Found Resale is able to confirm final pricing once they have all the information.</div>
   </div>
 
   <div class="lf-progress" aria-label="Calculator progress">
-    <div class="active" data-progress="1">1. Request</div>
-    <div data-progress="2">2. Delivery</div>
+    <div class="active" data-progress="1">1. Path</div>
+    <div data-progress="2">2. Address</div>
     <div data-progress="3">3. Items</div>
     <div data-progress="4">4. Access</div>
     <div data-progress="5">5. Review</div>
@@ -492,16 +503,40 @@ to remain visible inside the Webflow Designer.
     <div class="lf-hidden" aria-hidden="true"><label>Leave blank<input name="company_website" tabindex="-1" autocomplete="off"></label></div>
 
     <section class="lf-step" data-step="1">
-      <div class="lf-head"><h2>What do you need?</h2><p>Choose delivery, consignor pickup, or nationwide freight.</p></div>
+      <div class="lf-head">
+        <h2>Choose your path</h2>
+        <p>One clear option — local delivery, consignor pickup, or nationwide freight.</p>
+      </div>
 
       <div class="lf-choice-grid lf-path-grid">
-        <div class="lf-choice"><input id="lfLocal" type="radio" name="delivery_path" value="local_az" checked><label for="lfLocal"><strong>Local Arizona Delivery</strong><span>We deliver from our Scottsdale showroom to you. $95.00/hour — total time is calculated as a round trip, not one way, and includes wrapping and preparing the freight, loading and securing, offloading, and placement.</span></label></div>
-        <div class="lf-choice"><input id="lfPickup" type="radio" name="delivery_path" value="pickup_az"><label for="lfPickup"><strong>Consignor Pickup</strong><span>We pick up from your Arizona location and bring the item to our Scottsdale showroom. Same $95.00/hour — total time is calculated as a round trip, not one way, and includes preparing the freight, loading and securing, offloading, and placement.</span></label></div>
-        <div class="lf-choice"><input id="lfNational" type="radio" name="delivery_path" value="nationwide"><label for="lfNational"><strong>Nationwide Freight</strong><span>We prepare the pallet, freight class, and accessorial details needed for a FreightCenter quote.</span></label></div>
+        <div class="lf-choice">
+          <input id="lfLocal" type="radio" name="delivery_path" value="local_az" checked>
+          <label for="lfLocal">
+            <em class="lf-choice-kicker">Local Arizona</em>
+            <strong>Delivery to you</strong>
+            <span>$95/hour round-trip from our Scottsdale showroom — wrapping, loading, delivery, and placement.</span>
+          </label>
+        </div>
+        <div class="lf-choice">
+          <input id="lfPickup" type="radio" name="delivery_path" value="pickup_az">
+          <label for="lfPickup">
+            <em class="lf-choice-kicker">Consignor</em>
+            <strong>Pickup to showroom</strong>
+            <span>$95/hour round-trip Arizona pickup — prep, loading, return to Scottsdale, and placement.</span>
+          </label>
+        </div>
+        <div class="lf-choice">
+          <input id="lfNational" type="radio" name="delivery_path" value="nationwide">
+          <label for="lfNational">
+            <em class="lf-choice-kicker">Nationwide</em>
+            <strong>Freight shipping</strong>
+            <span>Pallet-ready details and freight options — we get you a confirmed quote.</span>
+          </label>
+        </div>
       </div>
 
       <input type="hidden" name="request_mode" id="lfRequestMode" value="estimate">
-      <p class="lf-fine" style="margin:14px 0 0;">You’ll get a preliminary estimate on screen, and we email the full request to you and our team so we can confirm pricing.</p>
+      <div class="lf-step-note"><strong>What happens next:</strong> You’ll see a preliminary estimate, and we email the full request to you and our team so we can confirm pricing.</div>
 
       <div class="lf-actions"><div></div><button class="lf-btn" type="button" data-next>Continue</button></div>
     </section>
