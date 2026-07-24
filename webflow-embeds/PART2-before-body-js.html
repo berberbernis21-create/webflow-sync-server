@@ -181,6 +181,15 @@ This script will run on the published Webflow staging and production sites.
     }
     el.innerHTML="<strong>What happens next:</strong> "+body;
 
+    const addressNext=$("#lfAddressWhatNext");
+    if(addressNext){
+      if(p==="pickup_az"){
+        addressNext.innerHTML="<strong>What happens next:</strong> Next, enter each piece you’re having picked up as Item 1, Item 2, and so on — a short description, dimensions, and weight. Website lookup isn’t available for pickup because these items aren’t listed yet.";
+      }else{
+        addressNext.innerHTML="<strong>What happens next:</strong> Next, add your item(s) by copying and pasting the entire product title from the website — or the full product page URL — into the lookup field. You can also enter an item manually if needed.";
+      }
+    }
+
     const itemsNext=$("#lfItemsWhatNext");
     if(itemsNext){
       let itemsBody="";
@@ -193,6 +202,43 @@ This script will run on the published Webflow staging and production sites.
       }
       itemsNext.innerHTML="<strong>What happens next:</strong> "+itemsBody;
     }
+
+    updateItemsCopy(p);
+  }
+
+  function applyItemFieldCopy(node,pickup){
+    if(!node)return;
+    const label=$(".lf-title-label",node);
+    const help=$(".lf-title-help",node);
+    const title=$(".lf-title",node);
+    const lookup=$(".lf-lookup",node);
+    if(pickup){
+      if(label)label.innerHTML='Item description / name <span class="lf-required">*</span>';
+      if(help)help.textContent="Enter a clear description for this piece (for example: “Ethan Allen sleigh bed”). Add a separate item card for each additional piece.";
+      if(title)title.placeholder="Example: Ethan Allen American Impressions Full Sleigh Bed";
+      if(lookup)lookup.hidden=true;
+      if($(".lf-source",node))$(".lf-source",node).value="manual";
+    }else{
+      if(label)label.innerHTML='Website listing title or product URL <span class="lf-required">*</span>';
+      if(help)help.textContent="Copy the full title from the listing page (not a shortened name), or paste the full lostandfoundresale.com product link from your browser. Then click Find Item. You can still fill in dimensions manually if nothing is found.";
+      if(title)title.placeholder="Copy and paste the entire product title, or the full product page URL";
+      if(lookup)lookup.hidden=false;
+    }
+  }
+
+  function updateItemsCopy(path){
+    const p=path||$('input[name="delivery_path"]:checked')?.value||"local_az";
+    const pickup=p==="pickup_az";
+    const headHelp=$("#lfItemsHeadHelp");
+    const howTo=$("#lfItemsHowTo");
+    if(pickup){
+      if(headHelp)headHelp.innerHTML="Consignor pickups aren’t on the website yet, so enter each piece here manually as <strong>Item 1</strong>, <strong>Item 2</strong>, and so on. Use <strong>+ Add Another Item</strong> for more pieces.";
+      if(howTo)howTo.innerHTML="<strong>How to enter items:</strong> For each piece, type a short description/name, then fill in width, depth, height, and weight. Add another item card for every additional piece the truck should pick up.";
+    }else{
+      if(headHelp)headHelp.innerHTML='Copy and paste the <strong>entire product title</strong> from the website listing, or paste the <strong>full product page URL</strong>. Then click Find Item. You can still enter everything manually if nothing is found.';
+      if(howTo)howTo.innerHTML="<strong>How to look up an item:</strong> On the product page, select the full title and copy it, then paste it here — or copy the full website address from your browser’s address bar and paste that instead. Partial titles often won’t match.";
+    }
+    $$(".lf-item",itemsWrap).forEach(node=>applyItemFieldCopy(node,pickup));
   }
 
   function updatePathDefaults(){
@@ -235,19 +281,18 @@ This script will run on the published Webflow staging and production sites.
     $$(".lf-pickup-only").forEach(el=>{el.hidden=!pickup});
 
     if(pickup){
-      if($("#lfRoom"))$("#lfRoom").checked=false;
       if($("#lfUnpack"))$("#lfUnpack").checked=false;
       if($("#lfWhiteGlove"))$("#lfWhiteGlove").checked=false;
       if($("#lfRoc"))$("#lfRoc").checked=false;
       if($("#lfWarehousePickup"))$("#lfWarehousePickup").checked=false;
-    }else if($("#lfCarryOut")){
-      $("#lfCarryOut").checked=false;
+      if($("#lfDock"))$("#lfDock").checked=false;
     }
     if(nationwide){
       if($("#lfInside"))$("#lfInside").checked=false;
-      if($("#lfRoom"))$("#lfRoom").checked=false;
       if($("#lfUnpack"))$("#lfUnpack").checked=false;
       if($("#lfCrew"))$("#lfCrew").checked=false;
+    }else if($("#lfDock")&&!nationwide){
+      $("#lfDock").checked=false;
     }
 
     const setText=(sel,htmlOrText,asHtml)=>{
@@ -259,7 +304,6 @@ This script will run on the published Webflow staging and production sites.
 
     if(pickup){
       setText("#lfInsideLabel","Inside pickup (item is inside the home or building)");
-      setText("#lfDockLabel","Confirmed loading dock at pickup");
       setText("#lfCrewHelp","Lost & Found will review the item, weight, size, and access conditions. If more than two movers or a specialized pickup crew is required, the pickup price will increase and we will provide an updated estimated range for approval before scheduling.");
       setText("#lfDisassemblyLabel","Disassembly may be required to get the item out");
       setText("#lfLongCarryLabel","Long carry from entrance to the truck");
@@ -287,7 +331,6 @@ This script will run on the published Webflow staging and production sites.
       setText("#lfAccessHeadHelp","Nationwide freight is different from local truck delivery. Choose White Glove / Room of Choice only if needed, and tell us about dock, liftgate, and warehouse pickup options that change the carrier rate.");
     }else{
       setText("#lfInsideLabel","Inside delivery requested");
-      setText("#lfDockLabel","Confirmed loading dock at delivery");
       setText("#lfCrewHelp","Lost & Found will review the item, weight, size, and access conditions. If more than two movers or a specialized delivery crew is required, the delivery price will increase and we will provide an updated estimated range for approval before scheduling.");
       setText("#lfDisassemblyLabel","Disassembly or assembly may be required");
       setText("#lfLongCarryLabel","Long carry from truck to entrance");
@@ -347,6 +390,7 @@ This script will run on the published Webflow staging and production sites.
     });
 
     itemsWrap.appendChild(node);
+    applyItemFieldCopy(node,$('input[name="delivery_path"]:checked')?.value==="pickup_az");
     updatePallet(node);
   }
 
@@ -446,7 +490,7 @@ This script will run on the published Webflow staging and production sites.
     const path=$('input[name="delivery_path"]:checked')?.value||"local_az";
     const mode=value("#lfRequestMode")||$('input[name="request_mode"]:checked')?.value||"estimate";
     const destinationType=value("#lfType")||"residential";
-    const dock=bool("#lfDock");
+    const dock=path==="nationwide"&&bool("#lfDock");
     const address=compact({
       street:value("#lfStreet"),unit:value("#lfUnit"),city:value("#lfCity"),
       state:value("#lfState").toUpperCase(),zip:value("#lfZip")
@@ -476,12 +520,8 @@ This script will run on the published Webflow staging and production sites.
       tight_turns_or_narrow_halls:bool("#lfTight"),
       gated_access:bool("#lfGate"),
       gate_code_or_instructions:value("#lfGateCode"),
-      inside_delivery:path==="pickup_az"
-        ?(bool("#lfInside")||bool("#lfCarryOut"))
-        :path==="nationwide"?whiteGlove:bool("#lfInside"),
-      room_placement:path==="pickup_az"
-        ?bool("#lfCarryOut")
-        :path==="nationwide"?(roomOfChoice||whiteGlove):bool("#lfRoom"),
+      inside_delivery:path==="nationwide"?whiteGlove:bool("#lfInside"),
+      room_placement:path==="nationwide"?(roomOfChoice||whiteGlove):false,
       unpacking_or_debris_removal:path==="pickup_az"||path==="nationwide"?false:bool("#lfUnpack"),
       disassembly_or_assembly:bool("#lfDisassembly"),
       long_carry:bool("#lfLongCarry"),
@@ -494,7 +534,7 @@ This script will run on the published Webflow staging and production sites.
       no_liftgate:!liftgateDelivery,
       liftgate_pickup_staff_to_confirm:path==="nationwide",
       notes:value("#lfNotes"),
-      liftgate_pickup:path==="nationwide"?!storeLoading:(path==="pickup_az"?!dock:false),
+      liftgate_pickup:path==="nationwide"?!storeLoading:path==="pickup_az",
       liftgate_delivery:liftgateDelivery
     };
 

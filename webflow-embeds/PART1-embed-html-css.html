@@ -565,8 +565,8 @@ to remain visible inside the Webflow Designer.
 
     <section class="lf-step" data-step="3" hidden>
       <div class="lf-head">
-        <h2>Add the Item or Items</h2>
-        <p>Copy and paste the <strong>entire product title</strong> from the website listing, or paste the <strong>full product page URL</strong>. Then click Find Item. You can still enter everything manually if nothing is found.</p>
+        <h2 id="lfItemsHeadTitle">Add the Item or Items</h2>
+        <p id="lfItemsHeadHelp">Copy and paste the <strong>entire product title</strong> from the website listing, or paste the <strong>full product page URL</strong>. Then click Find Item. You can still enter everything manually if nothing is found.</p>
       </div>
       <div class="lf-step-note" id="lfItemsHowTo"><strong>How to look up an item:</strong> On the product page, select the full title and copy it, then paste it here — or copy the full website address from your browser’s address bar and paste that instead. Partial titles often won’t match.</div>
       <div class="lf-items" id="lfItems"></div>
@@ -626,9 +626,7 @@ to remain visible inside the Webflow Designer.
 
           <label class="lf-check"><input id="lfTight" type="checkbox"> Tight turns, narrow halls, or narrow doorways</label>
           <label class="lf-check lf-local-truck-only" id="lfInsideWrap"><input id="lfInside" type="checkbox"> <span id="lfInsideLabel">Inside delivery requested</span></label>
-          <label class="lf-check lf-delivery-only lf-local-truck-only" id="lfRoomWrap"><input id="lfRoom" type="checkbox"> Room placement requested</label>
           <label class="lf-check lf-delivery-only lf-local-truck-only" id="lfUnpackWrap"><input id="lfUnpack" type="checkbox"> Unpacking or debris removal requested</label>
-          <label class="lf-check lf-pickup-only" id="lfCarryOutWrap" hidden><input id="lfCarryOut" type="checkbox"> Item needs to be carried out from inside the home or a specific room</label>
         </div>
 
         <div class="lf-access-card">
@@ -650,7 +648,7 @@ to remain visible inside the Webflow Designer.
             </div>
           </div>
 
-          <label class="lf-check" id="lfDockWrap"><input id="lfDock" type="checkbox"> <span id="lfDockLabel">Confirmed loading dock at delivery</span></label>
+          <label class="lf-check lf-nationwide-only" id="lfDockWrap" hidden><input id="lfDock" type="checkbox"> <span id="lfDockLabel">Confirmed loading dock or forklift at delivery (helps avoid liftgate)</span></label>
         </div>
 
         <div class="lf-access-card">
@@ -773,7 +771,7 @@ to remain visible inside the Webflow Designer.
   <article class="lf-item">
     <div class="lf-item-head"><h3>Item <span class="lf-item-number"></span></h3><button class="lf-remove" type="button">Remove</button></div>
     <div class="lf-lookup-row">
-      <div class="lf-field"><label>Website listing title or product URL <span class="lf-required">*</span></label><input class="lf-title" required placeholder="Copy and paste the entire product title, or the full product page URL"><div class="lf-help">Copy the full title from the listing page (not a shortened name), or paste the full lostandfoundresale.com product link from your browser. Then click Find Item. You can still fill in dimensions manually if nothing is found.</div><div class="lf-error"></div></div>
+      <div class="lf-field"><label class="lf-title-label">Website listing title or product URL <span class="lf-required">*</span></label><input class="lf-title" required placeholder="Copy and paste the entire product title, or the full product page URL"><div class="lf-help lf-title-help">Copy the full title from the listing page (not a shortened name), or paste the full lostandfoundresale.com product link from your browser. Then click Find Item. You can still fill in dimensions manually if nothing is found.</div><div class="lf-error"></div></div>
       <button class="lf-btn lf-lookup" type="button">Find Item</button>
     </div>
     <div class="lf-lookup-message"></div>
