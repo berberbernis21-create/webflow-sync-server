@@ -74,7 +74,7 @@ function buildLocalDisplay(submission, local) {
   let label = isPickup
     ? "Your Preliminary Pickup Estimate"
     : "Your Preliminary Delivery Estimate";
-  if (oversize) label = "Preliminary Estimate (Size-Based 3-Person — Confirm)";
+  if (oversize) label = "Preliminary Estimate (Size-Based 3-Person)";
   else if (longHaul) label = "Best-Guess Estimate (Out of town — callout)";
   else if (extraPeople >= 2) label = "Two-Truck Estimate";
   else if (extraPeople === 1 || extraCrew) label = "3-Person Crew Estimate";

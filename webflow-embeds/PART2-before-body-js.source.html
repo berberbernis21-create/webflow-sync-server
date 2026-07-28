@@ -1407,7 +1407,7 @@
       const oversize=Boolean(preview?.local_estimate?.oversize_confirm||est?.oversize_confirm);
       const longHaul=Boolean(preview?.local_estimate?.long_haul||est?.long_haul||(Number.isFinite(miles)&&miles*2>LOCAL.longHaulRoundTripMiles));
       const priceLabel=oversize
-        ?"Preliminary Estimate (Size-Based 3-Person — Confirm): "
+        ?"Preliminary Estimate (Size-Based 3-Person): "
         :longHaul
           ?"Best-Guess Estimate (Out of town — callout): "
           :extraPeople>=2
@@ -1430,7 +1430,7 @@
         :"Your estimated time is round-trip and includes wrapping and preparation, loading and securing, delivery, unloading, and placement.";
       const buyHtml=buyItemsHtml(payload.items,isPickup);
       const oversizeHtml=oversize
-        ?'<p class="lf-estimate-banner warn"><strong>Size-based 3-person estimate (confirm).</strong> This quote assumes three people may be needed because at least one item is 299+ lb and over 72&quot; high, or over 550 lb — even if you did not select extra crew. Final rates are often lower if the delivery team confirms two people are enough (typically closer to our $95/hour rate). <strong>Please confirm with the delivery team before scheduling. This is an estimate only.</strong></p>'
+        ?'<p class="lf-estimate-banner warn"><strong>Size-based 3-person estimate.</strong> This quote assumes three people may be needed because at least one item is 299+ lb and over 72&quot; high, or over 550 lb — even if you did not select extra crew. Final rates are often lower if the delivery team confirms two people are enough (typically closer to our $95/hour rate). <strong>Please confirm with the delivery team before scheduling. This is an estimate only.</strong></p>'
         :"";
       const longHaulHtml=longHaul
         ?'<p class="lf-estimate-banner"><strong>Out of town callout (100+ mile round trip).</strong> Longer Arizona trips (like farther cities) can still work with our local truck, but confirm pricing before scheduling. This is an estimate only.</p>'
