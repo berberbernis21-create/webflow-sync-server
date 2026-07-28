@@ -1,0 +1,985 @@
+<!--
+LOST & FOUND DELIVERY & FREIGHT CALCULATOR
+PART 1 OF 2: VISIBLE WEBFLOW EMBED
+
+Paste this file into the Webflow Embed element on the page.
+This portion contains only HTML and CSS, so it remains visible in the Webflow Designer.
+
+Then place Part 2 in:
+Page Settings > Custom Code > Before </body>
+
+Do not paste the JavaScript back into this same Embed if you want the design
+to remain visible inside the Webflow Designer.
+-->
+
+<style>
+:root{--lf-navy:#07127c;--lf-olive:#516044;--lf-cream:#fbfaf6;--lf-soft:#f5f2eb;--lf-border:#d8d2c6;--lf-text:#151515;--lf-muted:#5c5c5c;--lf-green:#2f5a32;--lf-orange:#8a4f08;--lf-red:#9c2f2f;--lf-white:#fff}
+.w-embed:has(.lf-calc){display:block!important;width:100%!important;max-width:100%!important}
+.lf-calc,.lf-calc *{box-sizing:border-box}
+.lf-calc{width:100%;max-width:980px;margin:22px auto;font-family:Arial,Helvetica,sans-serif;color:var(--lf-text);line-height:1.45}
+.lf-hero,.lf-step{border:1px solid var(--lf-border);border-radius:12px;background:var(--lf-white);box-shadow:0 4px 20px rgba(7,18,124,.04)}
+.lf-hero{padding:28px 26px 24px;text-align:center;background:linear-gradient(180deg,#fbfaf6 0%,#f7f4ec 100%)}
+.lf-kicker{display:inline-block;margin-bottom:10px;padding:5px 10px;border-radius:999px;background:var(--lf-navy);color:#fff;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+.lf-hero h1{margin:0 0 10px;color:var(--lf-navy);font-size:clamp(26px,4vw,38px);line-height:1.1;letter-spacing:-.02em}
+.lf-hero>p{max-width:640px;margin:0 auto;font-size:14px;line-height:1.55;color:#3a3a3a}
+.lf-notice{margin-top:16px;padding:12px 14px;border:1px solid #e3ddd0;border-left:3px solid var(--lf-olive);border-radius:8px;background:rgba(255,255,255,.72);font-size:12px;line-height:1.5;text-align:left;color:#3a3a3a}
+.lf-progress{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin:14px 0 4px}
+.lf-progress div{padding:9px 6px;border:1px solid transparent;border-radius:999px;background:var(--lf-soft);color:var(--lf-muted);text-align:center;font-size:10px;font-weight:800;letter-spacing:.02em}
+.lf-progress div.active{border-color:var(--lf-navy);background:var(--lf-navy);color:#fff;box-shadow:0 2px 8px rgba(7,18,124,.18)}
+.lf-step{padding:22px 22px 20px;margin-top:12px}
+.lf-step[hidden]{display:none!important}
+.lf-head{margin-bottom:16px}
+.lf-head h2{margin:0 0 6px;color:var(--lf-navy);font-size:22px;line-height:1.2;letter-spacing:-.02em}
+.lf-head p{margin:0;color:var(--lf-muted);font-size:13px;line-height:1.45;max-width:40em}
+.lf-step-note{margin:18px 0 0;padding:13px 15px;border:1px solid var(--lf-border);border-radius:10px;background:var(--lf-soft);color:#333;font-size:12.5px;line-height:1.55}
+.lf-step-note strong{color:var(--lf-navy);font-weight:800}
+.lf-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.lf-grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.lf-span{grid-column:1/-1}
+.lf-field label,.lf-fieldset legend{display:block;margin-bottom:5px;font-size:11px;font-weight:800}
+.lf-field input,.lf-field select,.lf-field textarea{width:100%;min-height:44px;padding:10px 11px;border:1px solid #cbc5ba;border-radius:5px;background:#fff;color:var(--lf-text);font:inherit;font-size:13px;outline:none}
+.lf-field textarea{min-height:90px;resize:vertical}
+.lf-field input:focus,.lf-field select:focus,.lf-field textarea:focus{border-color:var(--lf-navy);box-shadow:0 0 0 3px rgba(7,18,124,.1)}
+.lf-field input[aria-invalid=true],.lf-field select[aria-invalid=true],.lf-field textarea[aria-invalid=true]{border-color:var(--lf-red);box-shadow:0 0 0 3px rgba(156,47,47,.08)}
+.lf-help{margin-top:4px;color:var(--lf-muted);font-size:10px}
+.lf-error{min-height:13px;margin-top:3px;color:var(--lf-red);font-size:10px;font-weight:700}
+.lf-required{color:var(--lf-red)}
+.lf-choice-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.lf-path-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+@media(max-width:900px){.lf-path-grid{grid-template-columns:1fr}}
+.lf-choice{position:relative;height:100%}
+.lf-choice input{position:absolute;opacity:0;pointer-events:none}
+.lf-choice label{display:block;height:100%;min-height:0;padding:16px;border:1px solid var(--lf-border);border-radius:12px;background:#fff;cursor:pointer;transition:border-color .18s ease,background .18s ease,box-shadow .18s ease,transform .18s ease}
+.lf-choice label:hover{transform:translateY(-2px);border-color:#b8b1a4;box-shadow:0 8px 22px rgba(21,21,21,.06)}
+.lf-choice input:focus+label{box-shadow:0 0 0 3px rgba(7,18,124,.12)}
+.lf-choice input:checked+label{border:2px solid var(--lf-navy);background:#f4f6ff}
+.lf-choice-kicker{display:block;margin:0 0 4px;font-size:9px;font-weight:800;font-style:normal;letter-spacing:.1em;text-transform:uppercase;color:var(--lf-muted)}
+.lf-choice strong{display:block;margin:0;color:var(--lf-navy);font-size:15px;line-height:1.25}
+.lf-choice span{display:block;color:#444;font-size:12px;line-height:1.5}
+.lf-subtitle{margin:16px 0 8px;color:var(--lf-navy);font-size:13px;font-weight:800}
+.lf-items{display:grid;gap:12px}
+.lf-item{padding:15px;border:1px solid var(--lf-border);border-radius:7px;background:var(--lf-cream)}
+.lf-item-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:11px}
+.lf-item-head h3{margin:0;color:var(--lf-navy);font-size:15px}
+.lf-remove{padding:5px 8px;border:1px solid #d5b4b4;border-radius:4px;background:#fff7f7;color:var(--lf-red);cursor:pointer;font-size:10px;font-weight:800}
+.lf-lookup-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:end}
+.lf-lookup-message{display:none;margin:9px 0 0;padding:9px 10px;border:1px solid #b8cbb1;border-radius:5px;background:#f7fbf5;color:#29462b;font-size:11px}
+.lf-lookup-message.show{display:block}
+.lf-lookup-message.bad{border-color:#d5b4b4;background:#fff7f7;color:var(--lf-red)}
+.lf-btn{min-height:46px;padding:11px 18px;border:1px solid var(--lf-navy);border-radius:8px;background:var(--lf-navy);color:#fff;cursor:pointer;font:inherit;font-size:13px;font-weight:800;letter-spacing:.01em;transition:transform .15s ease,box-shadow .15s ease,opacity .15s ease}
+.lf-btn:hover{transform:translateY(-1px);box-shadow:0 6px 16px rgba(7,18,124,.18)}
+.lf-btn:disabled{opacity:.55;cursor:not-allowed;transform:none;box-shadow:none}
+.lf-btn.secondary{border-color:#c4bdb0;background:#fff;color:var(--lf-text);box-shadow:none}
+.lf-btn.secondary:hover{box-shadow:0 4px 12px rgba(0,0,0,.06)}
+.lf-btn.olive{border-color:var(--lf-olive);background:var(--lf-olive)}
+.lf-actions{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:18px}
+.lf-step[data-step="1"] .lf-actions{margin-top:16px;padding-top:4px}
+.lf-actions-right{display:flex;gap:8px;margin-left:auto}
+.lf-fieldset{margin:0;padding:0;border:0}
+.lf-access-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.lf-access-card{padding:12px;border:1px solid var(--lf-border);border-radius:6px;background:var(--lf-cream)}
+.lf-access-card h3{margin:0 0 8px;color:var(--lf-navy);font-size:12px}
+.lf-check{display:flex;align-items:flex-start;gap:8px;margin:7px 0;font-size:11px}
+.lf-check input{width:16px;height:16px;margin-top:1px;flex:0 0 auto}
+.lf-conditional{margin-top:9px}
+.lf-conditional[hidden]{display:none!important}
+.lf-pallet{margin-top:10px;padding:10px;border:1px solid #e1dccf;border-radius:5px;background:#fff;font-size:10.5px}
+.lf-pallet strong{color:var(--lf-navy)}
+.lf-summary{display:grid;gap:10px}
+.lf-summary-card{padding:13px;border:1px solid var(--lf-border);border-radius:6px;background:var(--lf-cream)}
+.lf-summary-card h3{margin:0 0 7px;color:var(--lf-navy);font-size:13px}
+.lf-summary-card p,.lf-summary-card ul{margin:4px 0;font-size:11px}
+.lf-result{display:none;margin-top:13px;padding:16px;border:2px solid var(--lf-olive);border-radius:8px;background:#fbfef9}
+.lf-result.show{display:block}
+.lf-result h2{margin:0 0 7px;color:var(--lf-green);font-size:19px}
+.lf-price{margin:7px 0;color:var(--lf-navy);font-size:27px;font-weight:800}
+.lf-route-map{margin:12px 0;border:1px solid var(--lf-border);border-radius:8px;overflow:hidden;background:#fff}
+.lf-route-map img{display:block;width:100%;height:auto}
+.lf-route-map a{display:inline-block;margin:10px 12px 12px;font-size:12px;font-weight:700;color:var(--lf-navy)}
+.lf-route-map-fallback{display:none;margin:0;padding:18px 14px;background:var(--lf-cream);color:var(--lf-text);font-size:12px;line-height:1.5}
+.lf-route-map.is-fallback .lf-route-map-fallback{display:block}
+.lf-route-map.is-fallback img{display:none}
+.lf-drive-stats{margin:6px 0 10px;font-size:13px;font-weight:700;color:var(--lf-navy)}
+.lf-social-follow{margin:18px 0;padding:20px 18px;border:1px solid var(--lf-border);border-radius:14px;background:linear-gradient(165deg,#fbfaf6 0%,#f3efe6 100%);color:var(--lf-text);box-shadow:0 1px 0 rgba(255,255,255,.8) inset}
+.lf-social-follow h3{margin:0 0 6px;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--lf-navy)}
+.lf-social-follow>p{margin:0 0 16px;font-size:13px;line-height:1.55;color:#3a3a3a;max-width:42em}
+.lf-social-brand-block{margin:0 0 14px;padding:14px;border:1px solid rgba(7,18,124,.08);border-radius:12px;background:rgba(255,255,255,.72)}
+.lf-social-brand-block:last-of-type{margin-bottom:0}
+.lf-social-brand-name{margin:0 0 4px;font-size:14px;font-weight:800;color:var(--lf-navy)}
+.lf-social-brand-help{margin:0 0 12px;font-size:12px;line-height:1.45;color:#555}
+.lf-social-links{display:flex;flex-wrap:wrap;gap:10px}
+.lf-social-links-stack{flex-direction:column}
+.lf-social-links-stack .lf-social-chip{width:100%;justify-content:center;min-height:46px;box-sizing:border-box;padding:12px 16px}
+.lf-social-chip{display:inline-flex;align-items:center;gap:8px;padding:10px 16px 10px 12px;border-radius:10px;border:1px solid transparent;font-size:13px;font-weight:800;text-decoration:none;letter-spacing:.02em;transition:transform .15s ease,box-shadow .15s ease;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+.lf-social-chip:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,0,0,.1)}
+.lf-social-chip img,.lf-social-chip svg{display:block;width:22px;height:22px;flex:0 0 auto;border-radius:6px}
+.lf-social-chip.lf-social-fb{background:#1877F2;border-color:#1877F2;color:#fff}
+.lf-social-chip.lf-social-ig{background:linear-gradient(135deg,#f58529,#dd2a7b 55%,#515bd4);border-color:#dd2a7b;color:#fff}
+.lf-social-chip.lf-social-light{background:#fff;border:1.5px solid var(--lf-navy);color:var(--lf-navy)}
+.lf-social-chip.lf-social-light svg{width:20px;height:20px}
+
+/* Product buy cards on estimate confirmation */
+.lf-buy-block{margin:14px 0 4px}
+.lf-buy-block>p{margin:0 0 10px;font-size:13px;font-weight:800;color:var(--lf-navy)}
+.lf-buy-cards{display:flex;flex-direction:column;gap:10px}
+.lf-buy-card{display:flex;gap:12px;align-items:stretch;padding:12px;border:1px solid var(--lf-border);border-radius:10px;background:var(--lf-cream)}
+.lf-buy-card-img{flex:0 0 96px;width:96px;height:96px;border-radius:8px;overflow:hidden;border:1px solid var(--lf-border);background:#fff;line-height:0;text-decoration:none}
+.lf-buy-card-img img{display:block;width:100%;height:100%;object-fit:cover}
+.lf-buy-card-body{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:6px}
+.lf-buy-card-title{margin:0;font-size:14px;font-weight:800;color:var(--lf-text);line-height:1.35}
+.lf-buy-card-meta{margin:0;font-size:12px;color:var(--lf-muted)}
+.lf-buy-card-cta{display:inline-flex;align-items:center;justify-content:center;align-self:flex-start;margin-top:4px;padding:10px 16px;border-radius:8px;background:var(--lf-navy);color:#fff!important;font-size:13px;font-weight:800;text-decoration:none;letter-spacing:.02em}
+.lf-buy-card-cta:hover{opacity:.92}
+@media screen and (max-width:480px){
+  .lf-buy-card{flex-direction:column}
+  .lf-buy-card-img{width:100%;height:160px;flex-basis:auto}
+}
+.lf-alert{display:none;margin-top:12px;padding:10px 11px;border-radius:5px;font-size:11px;font-weight:700}
+.lf-alert.show{display:block}
+.lf-alert.error{border:1px solid #d5b4b4;background:#fff7f7;color:var(--lf-red)}
+.lf-alert.success{border:1px solid #b8cbb1;background:#f7fbf5;color:var(--lf-green)}
+.lf-fine{margin:12px 0 0;color:var(--lf-muted);font-size:10px}
+.lf-hidden{position:absolute!important;left:-10000px!important;width:1px!important;height:1px!important;overflow:hidden!important}
+.lf-spin{display:inline-block;width:13px;height:13px;margin-right:6px;border:2px solid rgba(255,255,255,.45);border-top-color:#fff;border-radius:50%;vertical-align:-2px;animation:lfspin .7s linear infinite}
+@keyframes lfspin{to{transform:rotate(360deg)}}
+@media(max-width:767px){
+ .lf-hero,.lf-step{padding:15px}
+ .lf-grid,.lf-grid3,.lf-choice-grid,.lf-access-grid,.lf-lookup-row{grid-template-columns:1fr}
+ .lf-progress{grid-template-columns:1fr}
+ .lf-progress div{display:none}.lf-progress div.active{display:block}
+ .lf-actions,.lf-actions-right{flex-direction:column;width:100%;margin-left:0}
+ .lf-btn{width:100%;min-height:48px;font-size:15px}
+ .lf-field input,.lf-field select,.lf-field textarea{font-size:16px;min-height:48px}
+ .lf-check{padding:12px 10px;gap:12px;font-size:13px;line-height:1.4}
+ .lf-check input{width:20px;height:20px;margin-top:2px}
+ .lf-social-links{flex-wrap:wrap}
+ .lf-social-chip{width:100%;justify-content:center;min-height:46px;box-sizing:border-box}
+ .lf-price{font-size:24px;word-break:break-word}
+ .lf-review-email-note{text-align:left}
+ .lf-buy-card-cta{width:100%;box-sizing:border-box;min-height:46px}
+}
+
+/* =========================================================
+   STRONG SELECTED STATES
+   Makes every customer choice easy to identify
+   ========================================================= */
+
+/* Path / radio cards: kicker + title + SELECT; description below */
+.lf-choice label {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 10px;
+  row-gap: 4px;
+  align-content: start;
+  position: relative;
+  padding: 16px;
+  border-width: 1.5px;
+}
+
+.lf-choice-kicker {
+  grid-column: 1;
+  grid-row: 1;
+  align-self: center;
+}
+
+.lf-choice strong {
+  grid-column: 1;
+  grid-row: 2;
+  align-self: start;
+  padding-right: 0;
+  margin: 0;
+}
+
+.lf-choice label::after {
+  content: "SELECT";
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  position: static;
+  align-self: start;
+  justify-self: end;
+  margin-top: 1px;
+  min-width: 70px;
+  padding: 6px 8px;
+  border: 1px solid #d2cbc0;
+  border-radius: 999px;
+  background: #fff;
+  color: #6a6a6a;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .06em;
+  line-height: 1;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.lf-choice span {
+  grid-column: 1 / -1;
+  grid-row: 3;
+  margin: 6px 0 0;
+}
+
+.lf-choice input:checked + label {
+  border-width: 2px;
+  border-color: var(--lf-navy);
+  background: #f3f5ff;
+  box-shadow: 0 0 0 3px rgba(7, 18, 124, .08);
+}
+
+.lf-choice input:checked + label::after {
+  content: "SELECTED";
+  border-color: var(--lf-navy);
+  background: var(--lf-navy);
+  color: #fff;
+}
+
+.lf-choice input:checked + label .lf-choice-kicker {
+  color: var(--lf-navy);
+}
+
+.lf-choice input:checked + label strong {
+  color: var(--lf-navy);
+}
+
+#lfLocal:checked + label {
+  border-color: var(--lf-green);
+  background: #f3faf2;
+  box-shadow: 0 0 0 3px rgba(47, 90, 50, .1);
+}
+
+#lfLocal:checked + label::after {
+  border-color: var(--lf-green);
+  background: var(--lf-green);
+}
+
+#lfLocal:checked + label .lf-choice-kicker {
+  color: var(--lf-green);
+}
+
+#lfPickup:checked + label {
+  border-color: var(--lf-olive);
+  background: #f5f6f1;
+  box-shadow: 0 0 0 3px rgba(81, 96, 68, .1);
+}
+
+#lfPickup:checked + label::after {
+  border-color: var(--lf-olive);
+  background: var(--lf-olive);
+}
+
+#lfPickup:checked + label .lf-choice-kicker {
+  color: var(--lf-olive);
+}
+
+#lfNational:checked + label {
+  border-color: var(--lf-navy);
+  background: #f3f5ff;
+}
+
+/* Access and handling choices */
+.lf-check {
+  position: relative;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 2px solid #ded8cc;
+  border-radius: 6px;
+  background: #ffffff;
+  cursor: pointer;
+  transition: border-color .15s ease, background .15s ease, box-shadow .15s ease, transform .15s ease;
+}
+
+.lf-check:hover {
+  border-color: #aaa294;
+  transform: translateY(-1px);
+}
+
+.lf-check input[type="checkbox"],
+.lf-check input[type="radio"] {
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  accent-color: var(--lf-navy);
+  cursor: pointer;
+}
+
+.lf-check:has(input:checked) {
+  border-color: var(--lf-navy);
+  background: #eef1ff;
+  box-shadow: 0 0 0 3px rgba(7, 18, 124, .08);
+  color: #07127c;
+  font-weight: 800;
+}
+
+.lf-check:has(input:checked)::after {
+  content: "SELECTED";
+  margin-left: auto;
+  align-self: center;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: var(--lf-navy);
+  color: #ffffff;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: .35px;
+  line-height: 1;
+}
+
+/* Keep the final acknowledgement cleaner */
+.lf-step[data-step="5"] > .lf-check:has(input:checked)::after {
+  content: "CONFIRMED";
+}
+
+/* Selected dropdowns and completed inputs */
+.lf-field select:focus,
+.lf-field select:valid {
+  border-color: #9ba696;
+}
+
+/* Mobile adjustments */
+@media screen and (max-width: 767px) {
+  .lf-choice label {
+    padding: 12px;
+  }
+
+  .lf-check:has(input:checked)::after {
+    display: none;
+  }
+}
+
+/* Mobile footer spacing */
+@media screen and (max-width: 767px) {
+  .lf-calc {
+    margin-bottom: 0;
+    padding-bottom: 52px;
+  }
+
+  .lf-step {
+    margin-bottom: 0;
+  }
+
+  .lf-actions {
+    padding-bottom: 8px;
+  }
+}
+
+/* Estimate submission and confirmation */
+.lf-estimate-confirmation {
+  border-color: #c6bda9;
+  background: #fffdf8;
+}
+
+.lf-estimate-banner {
+  margin: 8px 0 12px;
+  padding: 12px 14px;
+  background: #fff8e8;
+  border: 2px solid #c9a227;
+  border-radius: 8px;
+  color: #5c4a10;
+  font-size: 14px;
+  line-height: 1.45;
+}
+.lf-estimate-banner.warn {
+  background: #fff1f0;
+  border-color: #c0392b;
+  color: #5c2a24;
+}
+.lf-rate-confirm {
+  margin: 16px 0;
+  padding: 16px 18px;
+  background: #fff8e8;
+  border: 2px solid #c9a227;
+  border-radius: 12px;
+}
+.lf-rate-confirm.strong { border-width: 3px; }
+.lf-rate-confirm h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  color: #8a6d12;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.lf-rate-confirm p {
+  margin: 0 0 12px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #333;
+}
+.lf-rate-stack {
+  display: grid;
+  gap: 10px;
+}
+.lf-rate-card-panel {
+  background: #fff;
+  border: 1px solid #e5e1d8;
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.lf-rate-card {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  text-decoration: none;
+  color: inherit;
+}
+.lf-rate-thumb {
+  width: 72px;
+  height: 72px;
+  border-radius: 10px;
+  object-fit: cover;
+  display: block;
+  flex: 0 0 auto;
+  border: 1px solid #e5e1d8;
+  background: #0b1f3a;
+}
+.lf-rate-store {
+  background: #f3f1ea;
+}
+.lf-rate-kicker {
+  display: block;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #8a6d12;
+  margin-bottom: 2px;
+}
+.lf-rate-card strong {
+  display: block;
+  font-size: 15px;
+  color: #07127c;
+}
+.lf-rate-name {
+  color: #07127c;
+  text-decoration: none;
+}
+.lf-rate-phone {
+  display: block;
+  margin-top: 3px;
+  font-size: 17px;
+  font-weight: 800;
+  color: #111;
+  text-decoration: underline;
+}
+.lf-rate-shop-line {
+  display: block;
+  margin-top: 6px;
+  font-size: 13px;
+  color: #444;
+}
+.lf-rate-shop-line a {
+  color: #07127c;
+  font-weight: 800;
+  text-decoration: underline;
+}
+.lf-rate-sub {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #666;
+}
+.lf-crew-extra .lf-check { margin-bottom: 6px; }
+.lf-price-estimate-tag {
+  display: inline-block;
+  margin-left: 6px;
+  font-size: 14px;
+  font-weight: 800;
+  color: #8a6d12;
+}
+
+.lf-review-email-note {
+  margin: 8px 0 0;
+  text-align: right;
+}
+
+.lf-confirmation-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  margin-bottom: 14px;
+  padding: 16px;
+  border: 1px solid #b8cbb1;
+  border-radius: 8px;
+  background: #f7fbf5;
+}
+
+.lf-confirmation-head h2 {
+  margin: 0 0 5px;
+  color: var(--lf-green);
+  font-size: 21px;
+  line-height: 1.2;
+}
+
+.lf-confirmation-head p {
+  margin: 0;
+  color: #303030;
+  font-size: 12px;
+}
+
+.lf-confirmation-icon {
+  display: flex;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--lf-green);
+  color: #fff;
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.lf-next-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.lf-link-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  text-align: center;
+}
+
+@media screen and (max-width: 767px) {
+  .lf-review-email-note {
+    text-align: left;
+  }
+
+  .lf-confirmation-head {
+    display: block;
+  }
+
+  .lf-confirmation-icon {
+    margin-bottom: 10px;
+  }
+
+  .lf-next-actions {
+    grid-template-columns: 1fr;
+  }
+}
+
+.lf-request-details-heading {
+  margin: 20px 0 10px;
+}
+
+.lf-request-details-heading h2 {
+  margin: 0 0 4px;
+  color: var(--lf-navy);
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.lf-request-details-heading p {
+  margin: 0;
+  color: var(--lf-muted);
+  font-size: 11px;
+}
+
+.lf-step[data-step="5"] .lf-result {
+  margin-top: 0;
+  margin-bottom: 4px;
+}
+
+/* Keep the estimate amount visible immediately after submission */
+.lf-step[data-step="5"] .lf-confirmation-head {
+  margin-bottom: 8px;
+}
+
+.lf-step[data-step="5"] .lf-result {
+  margin-top: 0;
+  margin-bottom: 14px;
+  padding: 14px 16px;
+}
+
+.lf-step[data-step="5"] .lf-result h2 {
+  margin-bottom: 5px;
+  font-size: 17px;
+}
+
+.lf-step[data-step="5"] .lf-price {
+  margin: 4px 0 8px;
+  font-size: clamp(27px, 4vw, 34px);
+  line-height: 1.1;
+}
+
+.lf-step[data-step="5"] .lf-request-details-heading {
+  margin-top: 16px;
+}
+
+</style>
+
+<div class="lf-calc" id="lfCalc">
+  <div class="lf-hero">
+    <span class="lf-kicker">Scottsdale showroom</span>
+    <h1>Delivery, Pickup &amp; Freight</h1>
+    <p>Get a preliminary estimate for local delivery, consignor pickup, or nationwide freight — then we’ll confirm final pricing with you.</p>
+    <div class="lf-notice"><strong>Preliminary only.</strong> Final pricing can change after measurements, travel time, access, labor, carrier rates, packaging, and special handling are confirmed. Lost &amp; Found Resale is able to confirm final pricing once we have all the information.</div>
+  </div>
+
+  <div class="lf-progress" aria-label="Calculator progress">
+    <div class="active" data-progress="1">1. Path</div>
+    <div data-progress="2">2. Address</div>
+    <div data-progress="3">3. Items</div>
+    <div data-progress="4">4. Access</div>
+    <div data-progress="5">5. Review</div>
+  </div>
+
+  <form id="lfForm" novalidate>
+    <div class="lf-hidden" aria-hidden="true"><label>Leave blank<input name="company_website" tabindex="-1" autocomplete="off"></label></div>
+
+    <section class="lf-step" data-step="1">
+      <div class="lf-head">
+        <h2>Choose your path</h2>
+        <p>One clear option — local delivery, consignor pickup, or nationwide freight.</p>
+      </div>
+
+      <div class="lf-choice-grid lf-path-grid">
+        <div class="lf-choice">
+          <input id="lfLocal" type="radio" name="delivery_path" value="local_az" checked>
+          <label for="lfLocal">
+            <em class="lf-choice-kicker">Local Arizona</em>
+            <strong>Delivery to you</strong>
+            <span>$95/hour round-trip from our Scottsdale showroom — wrapping, loading, delivery, and placement.</span>
+          </label>
+        </div>
+        <div class="lf-choice">
+          <input id="lfPickup" type="radio" name="delivery_path" value="pickup_az">
+          <label for="lfPickup">
+            <em class="lf-choice-kicker">Consignor</em>
+            <strong>Pickup to showroom</strong>
+            <span>$95/hour round-trip Arizona pickup — prep, loading, return to Scottsdale, and placement.</span>
+          </label>
+        </div>
+        <div class="lf-choice">
+          <input id="lfNational" type="radio" name="delivery_path" value="nationwide">
+          <label for="lfNational">
+            <em class="lf-choice-kicker">Nationwide</em>
+            <strong>Freight shipping</strong>
+            <span>Pallet-ready details and freight options — we get you a confirmed quote.</span>
+          </label>
+        </div>
+      </div>
+
+      <input type="hidden" name="request_mode" id="lfRequestMode" value="estimate">
+      <div class="lf-step-note" id="lfWhatNext"><strong>What happens next:</strong> Now we enter where it’s going, then your item details, then access needs, then you review — and we email a preliminary estimate so we can confirm final pricing.</div>
+
+      <div class="lf-actions"><div></div><button class="lf-btn" type="button" data-next>Continue</button></div>
+    </section>
+
+    <section class="lf-step" data-step="2" hidden>
+      <div class="lf-head" id="lfAddressHead"><h2>Contact &amp; Delivery Address</h2><p id="lfAddressHelp">A valid email and complete delivery address are required.</p></div>
+      <div class="lf-grid">
+        <div class="lf-field"><label for="lfName">Full name <span class="lf-required">*</span></label><input id="lfName" name="customer_name" autocomplete="name" required><div class="lf-error"></div></div>
+        <div class="lf-field">
+          <label for="lfEmail">Email <span class="lf-required">*</span></label>
+          <input id="lfEmail" name="customer_email" type="email" autocomplete="email" required>
+          <div class="lf-help">Required. Your estimate summary and email receipt will be sent to this address.</div>
+          <div class="lf-error"></div>
+        </div>
+        <div class="lf-field"><label for="lfPhone">Phone</label><input id="lfPhone" name="customer_phone" type="tel" autocomplete="tel"><div class="lf-error"></div></div>
+        <div class="lf-field"><label for="lfType" id="lfTypeLabel">Delivery location <span class="lf-required">*</span></label><select id="lfType" name="destination_type" required><option value="residential" selected>Residential</option><option value="commercial">Commercial</option></select><div class="lf-error"></div></div>
+        <div class="lf-field lf-span"><label for="lfStreet" id="lfStreetLabel">Street address <span class="lf-required">*</span></label><input id="lfStreet" name="street" autocomplete="street-address" required><div class="lf-error"></div></div>
+        <div class="lf-field"><label for="lfUnit">Unit, suite, building</label><input id="lfUnit" name="unit" autocomplete="address-line2"><div class="lf-error"></div></div>
+        <div class="lf-field"><label for="lfCity">City <span class="lf-required">*</span></label><input id="lfCity" name="city" autocomplete="address-level2" required><div class="lf-error"></div></div>
+        <div class="lf-field"><label for="lfState">State <span class="lf-required">*</span></label><input id="lfState" name="state" maxlength="2" value="AZ" autocomplete="address-level1" required><div class="lf-help">Use the two-letter state abbreviation.</div><div class="lf-error"></div></div>
+        <div class="lf-field"><label for="lfZip">ZIP code <span class="lf-required">*</span></label><input id="lfZip" name="zip" inputmode="numeric" autocomplete="postal-code" required><div class="lf-error"></div></div>
+      </div>
+      <div class="lf-step-note" id="lfAddressWhatNext"><strong>What happens next:</strong> Next, add your item(s) by copying and pasting the entire product title from the website — or the full product page URL — into the lookup field. You can also enter an item manually if needed.</div>
+      <div class="lf-actions"><button class="lf-btn secondary" type="button" data-back>Back</button><button class="lf-btn" type="button" data-next>Continue</button></div>
+    </section>
+
+    <section class="lf-step" data-step="3" hidden>
+      <div class="lf-head">
+        <h2 id="lfItemsHeadTitle">Add the Item or Items</h2>
+        <p id="lfItemsHeadHelp">Copy and paste the <strong>entire product title</strong> from the website listing, or paste the <strong>full product page URL</strong>. Then click Find Item. You can still enter everything manually if nothing is found.</p>
+      </div>
+      <div class="lf-step-note" id="lfItemsHowTo"><strong>How to look up an item:</strong> On the product page, select the full title and copy it, then paste it here — or copy the full website address from your browser’s address bar and paste that instead. Partial titles often won’t match.</div>
+      <div class="lf-items" id="lfItems"></div>
+      <div style="margin-top:11px"><button class="lf-btn secondary" id="lfAddItem" type="button">+ Add Another Item</button></div>
+      <div class="lf-step-note" id="lfItemsWhatNext"><strong>What happens next:</strong> After your items, we’ll ask about stairs, access, and handling — then you review, and we email a preliminary estimate so we can confirm final pricing.</div>
+      <div class="lf-actions"><button class="lf-btn secondary" type="button" data-back>Back</button><button class="lf-btn" type="button" data-next>Continue</button></div>
+    </section>
+
+    <section class="lf-step" data-step="4" hidden>
+      <div class="lf-head"><h2>Access &amp; Handling</h2><p id="lfAccessHeadHelp">Tell us about stairs, interior access, building access, and handling needs so the estimate is as accurate as possible.</p></div>
+
+      <div class="lf-access-grid">
+        <div class="lf-access-card lf-nationwide-only" hidden>
+          <h3>Nationwide freight service</h3>
+          <label class="lf-check"><input id="lfWhiteGlove" type="checkbox"> White Glove delivery (into the home + careful placement)</label>
+          <div class="lf-help" style="margin:-2px 4px 10px 4px;">
+            White Glove <strong>increases freight cost significantly</strong> versus standard threshold / curbside freight. Only select it if you need it.
+          </div>
+          <label class="lf-check"><input id="lfWarehousePickup" type="checkbox"> I can pick the freight up from a warehouse / terminal near me</label>
+          <div class="lf-help" style="margin:-2px 4px 10px 4px;">
+            Warehouse or terminal pickup typically lowers the quote by about <strong>$150–$200</strong>. Even if you skip this, we will mention the option when we confirm your exact rate.
+          </div>
+          <label class="lf-check"><input id="lfLiftgateDelivery" type="checkbox" checked> Liftgate needed at delivery</label>
+          <div class="lf-help" style="margin:-2px 4px 10px 4px;">
+            A <strong>liftgate</strong> is a hydraulic platform on the delivery truck that lowers the pallet to the ground when there is no loading dock. Most residential deliveries need one; a dock/forklift usually does not. Uncheck this if you have a loading dock or commercial receiving.
+          </div>
+          <div class="lf-notice" style="margin:4px 0 0;">
+            <strong>Pickup loading at Lost &amp; Found:</strong> Lost &amp; Found will determine if a liftgate is needed at our Scottsdale warehouse / showroom when we send your final quote. <strong>For now we assume yes.</strong><br>Pickup / loading hours: <strong>10am–5pm, Monday–Saturday</strong>.
+          </div>
+        </div>
+
+        <div class="lf-access-card" id="lfStairsInteriorCard">
+          <h3 id="lfStairsInteriorHead">Stairs &amp; Interior Access</h3>
+
+          <label class="lf-check">
+            <input id="lfStairs" type="checkbox">
+            Are there stairs?
+          </label>
+
+          <div class="lf-conditional" id="lfStairDetails" hidden>
+            <div class="lf-estimate-banner" id="lfStairsEstimateBanner" hidden>
+              <strong>ESTIMATE ONLY.</strong> Stairs change final pricing. First flight is free; each flight after that adds $75. Call the shop or Cruz Pro Line to confirm.
+            </div>
+            <div class="lf-field">
+              <label for="lfFlights">How many flights? <span class="lf-required">*</span></label>
+              <input id="lfFlights" type="number" min="1" max="20" step="1" placeholder="Example: 1">
+              <div class="lf-help">First flight is free. Each additional flight adds $75 to the estimate. As a guide, one flight is about 7 stairs.</div>
+              <div class="lf-error"></div>
+            </div>
+
+            <div class="lf-field" style="margin-top:9px">
+              <label for="lfStairNotes">Stair details or notes</label>
+              <textarea id="lfStairNotes" placeholder="Example: three exterior steps, one full flight, narrow landing, or stairs only at the entrance."></textarea>
+              <div class="lf-help">Optional notes help the crew prepare.</div>
+              <div class="lf-error"></div>
+            </div>
+          </div>
+
+          <label class="lf-check"><input id="lfTight" type="checkbox"> Tight turns, narrow halls, or narrow doorways</label>
+          <label class="lf-check lf-local-truck-only" id="lfInsideWrap"><input id="lfInside" type="checkbox"> <span id="lfInsideLabel">Inside delivery requested</span></label>
+          <label class="lf-check lf-delivery-only" id="lfUnpackWrap"><input id="lfUnpack" type="checkbox"> Unpacking or debris removal requested</label>
+        </div>
+
+        <div class="lf-access-card">
+          <h3>Building Access</h3>
+
+          <label class="lf-check"><input id="lfGate" type="checkbox"> Gated community or controlled access</label>
+          <div class="lf-conditional" id="lfGateDetails" hidden>
+            <div class="lf-field">
+              <label for="lfGateCode">Gate code or access instructions</label>
+              <input id="lfGateCode" placeholder="Gate code, guard instructions, or call-box details">
+            </div>
+          </div>
+
+          <label class="lf-check"><input id="lfElevator" type="checkbox"> Freight elevator is available</label>
+          <div class="lf-conditional" id="lfElevatorDetails" hidden>
+            <div class="lf-field">
+              <label for="lfElevatorNotes">Elevator restrictions or reservation details</label>
+              <input id="lfElevatorNotes" placeholder="Reservation, loading hours, size limits, or building requirements">
+            </div>
+          </div>
+
+          <label class="lf-check lf-nationwide-only" id="lfDockWrap" hidden><input id="lfDock" type="checkbox"> <span id="lfDockLabel">Confirmed loading dock or forklift at delivery</span></label>
+          <div class="lf-help lf-nationwide-only" id="lfDockHelp" hidden style="margin:-2px 4px 8px 4px;">
+            A <strong>loading dock</strong> is a raised bay where a freight truck backs up so the pallet can roll straight off at truck-bed height. A <strong>forklift</strong> can lift the pallet off the truck onto the ground or into a warehouse. Either one usually means you do <strong>not</strong> need a liftgate. Most homes do not have a dock or forklift.
+          </div>
+        </div>
+
+        <div class="lf-access-card">
+          <h3>Labor &amp; Item Handling</h3>
+          <label class="lf-check lf-local-truck-only" id="lfCrewWrap"><input id="lfCrew" type="checkbox"> <span id="lfCrewLabel">In your opinion, would this need more than two people?</span></label>
+          <div class="lf-help lf-local-truck-only" id="lfCrewHelp" style="margin:-2px 4px 8px 4px;">
+            This is your opinion only — assume the crew has straps, dollies, and normal moving equipment. If you check yes, choose 1 extra person or 2 extra people, then briefly explain why.
+          </div>
+          <div class="lf-conditional lf-local-truck-only" id="lfCrewDetails" hidden>
+            <div class="lf-estimate-banner" id="lfCrewEstimateBanner">
+              <strong>ESTIMATE ONLY.</strong> Extra crew pricing is a best guess. Call the shop or Cruz Pro Line to confirm final rates before scheduling.
+            </div>
+            <fieldset class="lf-crew-extra" style="margin:10px 0 8px;border:0;padding:0;">
+              <legend style="font-size:14px;font-weight:700;margin:0 0 8px;">How many extra people? <span class="lf-required">*</span></legend>
+              <label class="lf-check"><input type="radio" name="lf_extra_people" id="lfExtra1" value="1"> 1 extra person (3 total) — estimate uses $130/hour</label>
+              <label class="lf-check"><input type="radio" name="lf_extra_people" id="lfExtra2" value="2"> 2 extra people — two trucks needed (2× the estimate)</label>
+              <div class="lf-error" id="lfExtraPeopleError"></div>
+            </fieldset>
+            <div class="lf-field" style="margin-top:8px">
+              <label for="lfCrewWhy">Why do you think more than two people are needed? <span class="lf-required">*</span></label>
+              <textarea id="lfCrewWhy" placeholder="Example: solid wood armoire that feels very heavy, tight stairwell, awkward shape, etc."></textarea>
+              <div class="lf-help">A short explanation helps us match your expectations before we confirm the crew size.</div>
+              <div class="lf-error"></div>
+            </div>
+          </div>
+          <label class="lf-check"><input id="lfFragile" type="checkbox"> Fragile, antique, glass, artwork, wicker, cane, rattan, or high-end item</label>
+          <label class="lf-check" id="lfDisassemblyWrap"><input id="lfDisassembly" type="checkbox"> <span id="lfDisassemblyLabel">Disassembly or assembly may be required</span></label>
+          <label class="lf-check" id="lfLongCarryWrap"><input id="lfLongCarry" type="checkbox"> <span id="lfLongCarryLabel">Long carry from truck to entrance</span></label>
+          <div class="lf-help" id="lfLongCarryHelp" style="margin:-2px 4px 8px 4px;">
+            A long carry means the movers must carry the item an extended distance, generally about 75 feet or more, from where the truck can park to the entrance, elevator, or delivery area.
+          </div>
+        </div>
+
+        <div class="lf-access-card">
+          <h3>Parking &amp; Other Restrictions</h3>
+          <label class="lf-check" id="lfParkingWrap"><input id="lfParking" type="checkbox"> <span id="lfParkingLabel">Limited truck parking, low clearance, or restricted delivery hours</span></label>
+          <div class="lf-field" style="margin-top:9px">
+            <label for="lfNotes">Other access notes</label>
+            <textarea id="lfNotes" placeholder="Share anything else the delivery team or carrier should know."></textarea>
+          </div>
+        </div>
+      </div>
+
+      <div class="lf-notice" id="lfSmartDefaults" style="margin-top:12px"><strong>Note:</strong> Residential delivery is the default. Check any stairs, access, or handling items that apply so we can price the job accurately.</div>
+      <div class="lf-alert error" id="lfReviewAlert"></div>
+
+      <label class="lf-check lf-estimate-confirmation" style="margin-top:14px;">
+        <input id="lfReviewAgree" type="checkbox">
+        <span id="lfAgreeLabel">I understand this is a preliminary estimate and final pricing must be confirmed before delivery or freight is scheduled.</span>
+      </label>
+
+      <p class="lf-fine lf-review-email-note">
+        When you continue, your completed request summary will be emailed to you and Lost &amp; Found Resale.
+      </p>
+
+      <div class="lf-actions">
+        <button class="lf-btn secondary" type="button" data-back>Back</button>
+        <button class="lf-btn" id="lfReviewSubmit" type="button">Submit &amp; Email My Receipt</button>
+      </div>
+    </section>
+
+    <section class="lf-step" data-step="5" hidden>
+      <div class="lf-confirmation-head">
+        <div class="lf-confirmation-icon" aria-hidden="true">✓</div>
+        <div>
+          <h2>Your Request Has Been Sent</h2>
+          <p>
+            Your summary appears directly below. We also emailed a receipt to
+            <strong id="lfReceiptEmail"></strong>, and Lost &amp; Found received the complete request for review.
+          </p>
+        </div>
+      </div>
+
+      <div class="lf-result" id="lfResult"></div>
+
+      <div class="lf-social-follow" id="lfSocialFollow">
+        <h3>Follow Lost &amp; Found</h3>
+        <p class="lf-social-buyer" id="lfSocialBuyerCopy">Stay in the loop. Lots of new pieces and items show up and get featured here, and we post multiple times a day.</p>
+        <p class="lf-social-pickup" id="lfSocialPickupCopy" hidden>Once your item is priced and live, it will be featured on our pages and across many of our other sales channels. Follow, like, subscribe, and share so you catch it when it goes live.</p>
+
+        <div class="lf-social-brand-block">
+          <p class="lf-social-brand-name">Lost &amp; Found Resale</p>
+          <p class="lf-social-brand-help">Furniture, finds, and daily drops from the Scottsdale showroom.</p>
+          <div class="lf-social-links lf-social-links-stack">
+            <a class="lf-social-chip lf-social-fb" href="https://www.facebook.com/LostAndFoundResale/" target="_blank" rel="noopener" aria-label="Lost &amp; Found Resale on Facebook">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M14.5 8.5V6.8c0-.8.2-1.3 1.4-1.3H17V3h-2.3C11.9 3 11 4.5 11 6.6v1.9H9v2.7h2V21h3.5v-9.8h2.4l.4-2.7h-2.8z"/></svg>
+              Facebook
+            </a>
+            <a class="lf-social-chip lf-social-ig" href="https://www.instagram.com/lostandfoundresale/" target="_blank" rel="noopener" aria-label="Lost &amp; Found Resale on Instagram">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7.5 3h9A4.5 4.5 0 0 1 21 7.5v9A4.5 4.5 0 0 1 16.5 21h-9A4.5 4.5 0 0 1 3 16.5v-9A4.5 4.5 0 0 1 7.5 3zm0 1.7A2.8 2.8 0 0 0 4.7 7.5v9a2.8 2.8 0 0 0 2.8 2.8h9a2.8 2.8 0 0 0 2.8-2.8v-9a2.8 2.8 0 0 0-2.8-2.8h-9zm9.4 1.2a1.05 1.05 0 1 1 0 2.1 1.05 1.05 0 0 1 0-2.1zM12 8.2A3.8 3.8 0 1 1 8.2 12 3.8 3.8 0 0 1 12 8.2zm0 1.7A2.1 2.1 0 1 0 14.1 12 2.1 2.1 0 0 0 12 9.9z"/></svg>
+              Instagram
+            </a>
+          </div>
+        </div>
+
+        <div class="lf-social-brand-block">
+          <p class="lf-social-brand-name">Luxury division</p>
+          <p class="lf-social-brand-help">Designer handbags and accessories.</p>
+          <div class="lf-social-links lf-social-links-stack">
+            <a class="lf-social-chip lf-social-light" href="https://www.lostandfoundhandbags.com/" target="_blank" rel="noopener" aria-label="Shop luxury handbags">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7 7V6a5 5 0 0 1 10 0v1h2.2c.7 0 1.3.6 1.3 1.3v11.4c0 .7-.6 1.3-1.3 1.3H4.8c-.7 0-1.3-.6-1.3-1.3V8.3C3.5 7.6 4.1 7 4.8 7H7zm1.7 0h6.6V6a3.3 3.3 0 0 0-6.6 0v1zM5.2 8.7v10.6h13.6V8.7H5.2z"/></svg>
+              Shop Handbags
+            </a>
+            <a class="lf-social-chip lf-social-fb" href="https://www.facebook.com/people/Lost-and-Found-Luxury-Resale/61584002517357/" target="_blank" rel="noopener" aria-label="Luxury Facebook">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M14.5 8.5V6.8c0-.8.2-1.3 1.4-1.3H17V3h-2.3C11.9 3 11 4.5 11 6.6v1.9H9v2.7h2V21h3.5v-9.8h2.4l.4-2.7h-2.8z"/></svg>
+              Facebook
+            </a>
+            <a class="lf-social-chip lf-social-ig" href="https://www.instagram.com/lostandfoundhandbags/" target="_blank" rel="noopener" aria-label="Luxury Instagram">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M7.5 3h9A4.5 4.5 0 0 1 21 7.5v9A4.5 4.5 0 0 1 16.5 21h-9A4.5 4.5 0 0 1 3 16.5v-9A4.5 4.5 0 0 1 7.5 3zm0 1.7A2.8 2.8 0 0 0 4.7 7.5v9a2.8 2.8 0 0 0 2.8 2.8h9a2.8 2.8 0 0 0 2.8-2.8v-9a2.8 2.8 0 0 0-2.8-2.8h-9zm9.4 1.2a1.05 1.05 0 1 1 0 2.1 1.05 1.05 0 0 1 0-2.1zM12 8.2A3.8 3.8 0 1 1 8.2 12 3.8 3.8 0 0 1 12 8.2zm0 1.7A2.1 2.1 0 1 0 14.1 12 2.1 2.1 0 0 0 12 9.9z"/></svg>
+              Instagram
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <div class="lf-request-details-heading">
+        <h2>Here Was Your Request Summary</h2>
+        <p id="lfSummaryHelp">Below are the delivery address, item information, and access details you submitted.</p>
+      </div>
+
+      <div class="lf-summary" id="lfSummary"></div>
+
+      <div class="lf-alert success show" id="lfSentMessage">
+        Please keep the email receipt for your records. Our team will follow up if pricing, access, labor, freight class, or carrier details need to be confirmed.
+      </div>
+
+      <div class="lf-next-actions">
+        <a class="lf-btn olive lf-link-btn" href="https://www.lostandfoundresale.com/all-for-sale">Shop All</a>
+        <a class="lf-btn secondary lf-link-btn" href="https://www.lostandfoundresale.com/faq">Visit FAQ</a>
+      </div>
+
+      <p class="lf-fine">
+        This is a preliminary estimate only. Final delivery or freight pricing must be confirmed before scheduling.
+      </p>
+    </section>
+  </form>
+</div>
+
+<template id="lfItemTemplate">
+  <article class="lf-item">
+    <div class="lf-item-head"><h3>Item <span class="lf-item-number"></span></h3><button class="lf-remove" type="button">Remove</button></div>
+    <div class="lf-lookup-row">
+      <div class="lf-field"><label class="lf-title-label">Website listing title or product URL <span class="lf-required">*</span></label><input class="lf-title" required placeholder="Copy and paste the entire product title, or the full product page URL"><div class="lf-help lf-title-help">Copy the full title from the listing page (not a shortened name), or paste the full lostandfoundresale.com product link from your browser. Then click Find Item. You can still fill in dimensions manually if nothing is found.</div><div class="lf-error"></div></div>
+      <button class="lf-btn lf-lookup" type="button">Find Item</button>
+    </div>
+    <div class="lf-lookup-message"></div>
+    <div class="lf-grid3" style="margin-top:11px">
+      <div class="lf-field"><label>Width (in.) <span class="lf-required">*</span></label><input class="lf-width" type="number" min="1" step=".1" required><div class="lf-error"></div></div>
+      <div class="lf-field"><label>Depth (in.) <span class="lf-required">*</span></label><input class="lf-depth" type="number" min="1" step=".1" required><div class="lf-error"></div></div>
+      <div class="lf-field"><label>Height (in.) <span class="lf-required">*</span></label><input class="lf-height" type="number" min="1" step=".1" required><div class="lf-error"></div></div>
+      <div class="lf-field"><label>Estimated weight (lb.) <span class="lf-required">*</span></label><input class="lf-weight" type="number" min="1" step="1" required><div class="lf-error"></div></div>
+      <div class="lf-field"><label>Quantity</label><input class="lf-quantity" type="number" min="1" step="1" value="1"><div class="lf-help">Use 1 when the listing already represents a set. Raise qty for multiples of the same piece — local delivery/pickup counts qty toward overall handling; nationwide may ask about flip/stack on one pallet.</div></div>
+      <div class="lf-field"><label>Listed price</label><input class="lf-price-input" type="number" min="0" step=".01"></div>
+      <div class="lf-field">
+  <label>Freight class <span style="font-weight:400">(if known)</span></label>
+  <select class="lf-class">
+    <option value="" selected>Not sure — Lost &amp; Found will confirm</option>
+<option value="50">Class 50</option>
+<option value="55">Class 55</option>
+<option value="60">Class 60</option>
+<option value="65">Class 65</option>
+<option value="70">Class 70</option>
+<option value="77.5">Class 77.5</option>
+<option value="85">Class 85</option>
+<option value="92.5">Class 92.5</option>
+<option value="100">Class 100</option>
+<option value="110">Class 110</option>
+<option value="125">Class 125</option>
+<option value="150">Class 150</option>
+<option value="175">Class 175</option>
+<option value="200">Class 200</option>
+<option value="250">Class 250</option>
+<option value="300">Class 300</option>
+<option value="400">Class 400</option>
+<option value="500">Class 500</option>
+  </select>
+  <div class="lf-help">Freight classes range from 50 to 500. Leave this as “Not sure” unless the class has been confirmed.</div>
+</div>
+      <div class="lf-field"><label>Product link</label><input class="lf-url" type="url" placeholder="https://..."></div>
+      <div class="lf-field"><label>Source</label><select class="lf-source"><option value="manual">Manual entry</option><option value="listing">Website lookup</option></select></div>
+      <input class="lf-image-url" type="hidden" value="">
+    </div>
+    <div class="lf-stack-ask" hidden>
+      <fieldset class="lf-crew-extra" style="margin:10px 0 6px;border:0;padding:0;">
+        <legend style="font-size:13px;font-weight:800;margin:0 0 8px;">Nationwide · qty 2+. Can these pieces be flipped and stacked on <strong>one</strong> pallet? <span class="lf-required">*</span></legend>
+        <label class="lf-check"><input type="radio" class="lf-flip-stack" name="" value="yes"> Yes — flip/stack on one pallet (same footprint; height only goes up a little)</label>
+        <label class="lf-check"><input type="radio" class="lf-flip-stack" name="" value="no"> No — too tall, awkward, or should not be stacked</label>
+        <label class="lf-check"><input type="radio" class="lf-flip-stack" name="" value="unsure"> Not sure</label>
+        <div class="lf-error lf-flip-stack-error"></div>
+      </fieldset>
+      <div class="lf-estimate-banner" style="margin-top:8px;">
+        <strong>Team must confirm.</strong> Stacking is only a best guess from what you select. Lost &amp; Found will verify before final freight rates.
+      </div>
+    </div>
+    <label class="lf-check"><input class="lf-nonstack" type="checkbox"> Treat as non-stackable / fragile freight</label>
+    <div class="lf-help" style="margin:4px 0 0;">Leave unchecked when pieces can be stacked for freight (pairs of chairs usually stack — freight height stays near one piece plus stack padding, not double height). Non-stackable adds about $50 on nationwide estimates.</div>
+    <div class="lf-pallet">Enter dimensions and weight to see the SOP freight entry.</div>
+  </article>
+</template>
