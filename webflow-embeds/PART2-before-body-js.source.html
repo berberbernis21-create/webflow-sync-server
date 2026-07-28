@@ -457,6 +457,31 @@
     updateAddressCopy(path);
     updateAccessCopy(path);
     updateWhatNext(path);
+    updateHeroNotice(path);
+  }
+
+  function updateHeroNotice(path){
+    const p=path||$('input[name="delivery_path"]:checked')?.value||"local_az";
+    const notice=$("#lfHeroNotice");
+    if(!notice)return;
+    if(p==="nationwide"){
+      notice.innerHTML='<strong>Estimate only.</strong> Your result is based on pallet freight rates across multiple carriers and is intended as a helpful pricing guide. Final pricing may move up or down based on carrier capacity, confirmed pallet dimensions and weight, residential or terminal service, liftgate requirements, access conditions, and special handling.';
+    }else{
+      notice.innerHTML='<strong>Estimate only.</strong> Your result is based on the information provided and is intended as a helpful pricing guide. Final pricing may change after measurements, travel time, labor, packaging, carrier rates, access requirements, and special handling are confirmed.';
+    }
+  }
+
+  function updateConfirmationCopy(path,email){
+    const copy=$("#lfConfirmationCopy");
+    const mailEl=$("#lfReceiptEmail");
+    if(mailEl)mailEl.textContent=email||"";
+    if(!copy)return;
+    const safeEmail=escapeHtml(email||"");
+    if(path==="nationwide"){
+      copy.innerHTML='Your freight request was submitted successfully. A receipt was emailed to <strong id="lfReceiptEmail">'+safeEmail+'</strong>, and Lost &amp; Found received the complete details for review.';
+    }else{
+      copy.innerHTML='Your summary appears directly below. We also emailed a receipt to <strong id="lfReceiptEmail">'+safeEmail+'</strong>, and Lost &amp; Found received the complete request for review.';
+    }
   }
 
   function updateAddressCopy(path){
@@ -1133,7 +1158,7 @@
 
   function oversizedPalletNoteHtml(items){
     if(!(items||[]).some(exceedsStandardPallet))return"";
-    return '<div class="lf-notice" style="margin:12px 0;"><strong>Oversized for a standard 48″×40″ pallet.</strong> We may be able to maneuver or re-orient this so it fits a standard pallet, which can bring the freight cost down a lot. We will follow up after we review.</div>';
+    return '<div class="lf-notice lf-result-notice" style="margin:10px 0;"><strong>Oversized for a standard 48 × 40-inch pallet.</strong> We may be able to adjust the item orientation or pallet configuration to reduce the final freight cost. Our team will review the details before requesting confirmed rates.</div>';
   }
 
   function renderSummary(payload,preview){
@@ -1233,35 +1258,41 @@
       const hasRange=Number.isFinite(low)&&Number.isFinite(high)&&low>0&&high>=low;
       const miles=Number(rate.distance_miles??rate.route?.distance_miles??display.distance_miles??preview?.route?.distance_miles);
       const milesLine=Number.isFinite(miles)&&miles>0
-        ? '<p class="lf-drive-stats">About '+miles+' miles from our Scottsdale showroom</p>'
-        : '<p>Distance confirmed on review.</p>';
+        ? '<p class="lf-drive-stats" style="margin:6px 0 8px;">About '+miles+' miles from our Scottsdale showroom</p>'
+        : '<p class="lf-drive-stats" style="margin:6px 0 8px;">Distance confirmed on review.</p>';
       const mapUrl=preview?.route?.map_image_url||display?.map_image_url||rate?.route?.map_image_url||"";
       const dirUrl=preview?.route?.directions_url||display?.directions_url||rate?.route?.directions_url||"";
       const mapHtml=routeMapHtml(mapUrl,dirUrl);
-      const rangeText=hasRange?money(low)+" - "+money(high):"Freight-Ready";
+      const rangeText=hasRange?money(low)+" – "+money(high):"Freight-Ready";
       const buyHtml=buyItemsHtml(payload.items,false);
       const oversizeHtml=oversizedPalletNoteHtml(payload.items);
       const liftgateYes=!!payload.access.liftgate_delivery;
-      const notes=[
-        '<p>This is a <strong>preliminary range</strong> only. Every carrier prices freight differently — <strong>we will get you a confirmed quote</strong> by email. You can also call FreightCenter anytime at <a href="tel:8007167608"><strong>800-716-7608</strong></a>.</p>',
+      const whiteGloveHtml=payload.access.white_glove
+        ?'<p style="margin:0 0 8px;font-size:13px;line-height:1.5;color:#333;"><strong>White Glove selected</strong> — that raises the quote versus standard threshold / curbside freight.</p>'
+        :"";
+      const warehouseHtml=payload.access.warehouse_pickup
+        ?'<p style="margin:0 0 8px;font-size:13px;line-height:1.5;color:#333;"><strong>Tip:</strong> Warehouse / terminal pickup was selected. That option can often reduce cost versus residential delivery; confirmed savings will appear with your rates.</p>'
+        :'<p style="margin:0 0 8px;font-size:13px;line-height:1.5;color:#333;"><strong>Tip:</strong> Picking up from a nearby freight terminal may save approximately $150–$200 compared with residential delivery. Available options will be included with your confirmed rates.</p>';
+      const notesHtml=[
         oversizeHtml,
-        payload.access.white_glove
-          ?'<p><strong>White Glove selected</strong> — that raises the quote versus standard threshold / curbside freight.</p>'
-          :"",
-        payload.access.warehouse_pickup
-          ?'<p><strong>Warehouse / terminal pickup selected</strong> — that usually saves about $150–$200.</p>'
-          :'<p>Tip: picking up from a warehouse/terminal near you usually saves about <strong>$150–$200</strong>. We will mention this with your quote.</p>',
-        '<p><strong>Liftgate at delivery:</strong> '+(liftgateYes?"Yes":"No")+' (your choice). <strong>Pickup loading at Lost &amp; Found:</strong> we will determine if a liftgate is needed when we send your final quote — <strong>for now we assume yes</strong>.</p>',
-        '<p><strong>Pickup / loading hours:</strong> 10am–5pm, Monday–Saturday.</p>',
-        '<p><strong>We do not hold items.</strong> Purchase now and we can confirm delivery and freight shortly. If you need rates ASAP, please reach out to us: '+LF_MAIL+' · '+LF_TEL+'.</p>'
+        whiteGloveHtml,
+        warehouseHtml,
+        '<p style="margin:0 0 6px;font-size:13px;line-height:1.5;color:#333;"><strong>Liftgate at delivery:</strong> '+(liftgateYes?"Yes":"No")+'</p>',
+        '<p style="margin:0 0 6px;font-size:13px;line-height:1.5;color:#333;"><strong>Pickup loading at Lost &amp; Found:</strong> We will confirm whether a liftgate is required when requesting final carrier rates.</p>',
+        '<p style="margin:0 0 10px;font-size:13px;line-height:1.5;color:#333;"><strong>Pickup and loading hours:</strong> 10:00 AM–5:00 PM, Monday–Saturday.</p>',
+        '<p style="margin:0 0 6px;font-size:13px;line-height:1.5;color:#333;">We do not hold items. Purchase the item online to secure it while our team confirms the available freight options.</p>',
+        '<p style="margin:0;font-size:13px;line-height:1.5;color:#333;">Questions? Email '+LF_MAIL+' or call '+LF_TEL+'.</p>'
       ].filter(Boolean).join("");
+
       result.innerHTML=
-        '<h2>Your Preliminary Nationwide Freight Range</h2>'+
-        '<div class="lf-price">'+rangeText+'</div>'+
+        '<h2 style="margin:0 0 4px;">Your Preliminary Nationwide Freight Range</h2>'+
+        '<div class="lf-price" style="margin:2px 0 6px;">'+rangeText+'</div>'+
         milesLine+
+        '<p style="margin:0 0 6px;font-size:14px;line-height:1.5;color:#333;text-align:center;">Our team will review your submitted details and email you confirmed carrier options and the best available rates.</p>'+
+        '<p style="margin:0 0 12px;font-size:13px;line-height:1.45;color:#555;text-align:center;">Questions about freight? Call FreightCenter at <a href="tel:8007167608"><strong>800-716-7608</strong></a>.</p>'+
+        buyHtml+
         mapHtml+
-        '<div class="lf-result-notes" style="margin-top:14px;">'+notes+'</div>'+
-        buyHtml;
+        '<div class="lf-result-notes" style="margin-top:10px;">'+notesHtml+'</div>';
     }
     result.classList.add("show");
   }
@@ -1387,6 +1418,7 @@
       }
 
       $("#lfReceiptEmail").textContent=payload.customer_email;
+      updateConfirmationCopy(payload.delivery_path,payload.customer_email);
       const pickup=payload.delivery_path==="pickup_az";
       const buyerCopy=$("#lfSocialBuyerCopy");
       const pickupCopy=$("#lfSocialPickupCopy");
@@ -1485,6 +1517,7 @@
     updateAddressCopy(path);
     updateAccessCopy(path);
     updateWhatNext(path);
+    updateHeroNotice(path);
     syncHeavyAccessPrompts();
     refreshPathMismatchPanel();
     // Flip/stack ask is nationwide-only; hide/clear when switching to local/pickup.
@@ -1506,6 +1539,7 @@
   updateAddressCopy();
   updateAccessCopy();
   updateWhatNext();
+  updateHeroNotice();
   addItem();
 })();
 </script>
