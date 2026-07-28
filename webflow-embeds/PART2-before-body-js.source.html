@@ -7,6 +7,7 @@
   const LOOKUP_URL=API_BASE+"/api/listing";
   const PREVIEW_URL=API_BASE+"/api/freight-quote/preview";
   const SUBMIT_URL=API_BASE+"/api/freight-quote";
+  const ZIP_URL=API_BASE+"/api/freight-zip";
   const MARKUP_URL=API_BASE+"/embeds/freight-part1.html";
   const ORIGIN_ADDRESS="15530 N Greenway Hayden Loop Ste 100, Scottsdale, AZ 85260";
   const REDIRECT_URL="https://www.lostandfoundresale.com/faq";
@@ -24,6 +25,8 @@
   let step=1,itemCounter=0,lastPreview=null,submitting=false;
   let pathMismatchAcknowledged=false;
   let pendingPathMismatch=null;
+  let zipLookupTimer=null;
+  let zipLookupSeq=0;
 
   const $=(s,r=document)=>r.querySelector(s);
   const $$=(s,r=document)=>Array.from(r.querySelectorAll(s));
@@ -308,6 +311,17 @@
       fieldError(input,msg);
       if(msg)valid=false;
     });
+    if(n===2){
+      const path=$('input[name="delivery_path"]:checked')?.value||"local_az";
+      if(path==="nationwide"){
+        const excluded=nationwideExclusion(value("#lfState"),value("#lfZip"));
+        if(excluded){
+          valid=false;
+          fieldError($("#lfZip"),excluded.message);
+          refreshPathMismatchPanel();
+        }
+      }
+    }
     if(n===3&&$$(".lf-item",itemsWrap).length===0){valid=false;alert("Add at least one item.");}
     if(n===3){
       const nationwide=$('input[name="delivery_path"]:checked')?.value==="nationwide";
@@ -473,10 +487,46 @@
     return n>=85001&&n<=86556;
   }
 
+  function normalizeZip5(zip){
+    const z=String(zip||"").replace(/\D/g,"");
+    return z.length>=5?z.slice(0,5):"";
+  }
+
+  /** Nationwide quotes: contiguous US only — not Hawaii or Alaska. */
+  function nationwideExclusion(state,zip){
+    const st=String(state||"").trim().toUpperCase();
+    const z=normalizeZip5(zip);
+    const n=z?Number(z):NaN;
+    if(st==="HI"||st==="HAWAII"||(Number.isFinite(n)&&n>=96701&&n<=96898)){
+      return{
+        required:true,
+        suggested:null,
+        switchLabel:"",
+        message:"Nationwide freight quotes are not available for Hawaii. Please contact Lost & Found for shipping options to Hawaii."
+      };
+    }
+    if(st==="AK"||st==="ALASKA"||(Number.isFinite(n)&&n>=99501&&n<=99950)){
+      return{
+        required:true,
+        suggested:null,
+        switchLabel:"",
+        message:"Nationwide freight quotes are not available for Alaska. Please contact Lost & Found for shipping options to Alaska."
+      };
+    }
+    return null;
+  }
+
   function getPathAddressMismatch(){
     const path=$('input[name="delivery_path"]:checked')?.value||"local_az";
     const state=value("#lfState").toUpperCase();
     const zip=value("#lfZip");
+    if(!state&&!zip)return null;
+
+    if(path==="nationwide"){
+      const excluded=nationwideExclusion(state,zip);
+      if(excluded)return excluded;
+    }
+
     if(!state||!zip)return null;
     const inAz=isArizonaStateOrZip(state,zip);
     if((path==="local_az"||path==="pickup_az")&&!inAz){
@@ -522,7 +572,11 @@
     if(!box||!msg||!mismatch)return;
     pendingPathMismatch=mismatch;
     msg.textContent=mismatch.message;
-    if(switchBtn)switchBtn.textContent=mismatch.switchLabel||"Switch path";
+    if(switchBtn){
+      const canSwitch=Boolean(mismatch.suggested);
+      switchBtn.hidden=!canSwitch;
+      switchBtn.textContent=mismatch.switchLabel||"Switch path";
+    }
     if(stayBtn){
       stayBtn.hidden=!!mismatch.required;
       stayBtn.textContent="Keep nationwide freight";
@@ -530,6 +584,40 @@
     box.hidden=false;
     box.classList.add("show");
     box.scrollIntoView({behavior:"smooth",block:"nearest"});
+  }
+
+  async function lookupZipAndFill(opts={}){
+    const zipInput=$("#lfZip");
+    const cityInput=$("#lfCity");
+    const stateInput=$("#lfState");
+    if(!zipInput)return;
+    const zip5=normalizeZip5(zipInput.value);
+    if(!/^\d{5}$/.test(zip5))return;
+    const seq=++zipLookupSeq;
+    try{
+      const res=await fetch(ZIP_URL+"?zip="+encodeURIComponent(zip5),{headers:{Accept:"application/json"}});
+      const data=await res.json().catch(()=>({}));
+      if(seq!==zipLookupSeq)return;
+      if(!res.ok||!data?.ok){
+        if(opts.showError)fieldError(zipInput,data?.error||"We could not find that ZIP code.");
+        return;
+      }
+      fieldError(zipInput,"");
+      if(cityInput)cityInput.value=data.city||"";
+      if(stateInput)stateInput.value=String(data.state||"").toUpperCase();
+      pathMismatchAcknowledged=false;
+      refreshPathMismatchPanel();
+    }catch(_err){
+      if(opts.showError)fieldError(zipInput,"ZIP lookup is temporarily unavailable.");
+    }
+  }
+
+  function scheduleZipLookup(){
+    clearTimeout(zipLookupTimer);
+    zipLookupTimer=setTimeout(()=>{
+      const zip5=normalizeZip5(value("#lfZip"));
+      if(zip5.length===5)lookupZipAndFill({showError:false});
+    },350);
   }
 
   function refreshPathMismatchPanel(){
@@ -1350,6 +1438,19 @@
     el.addEventListener("change",()=>{pathMismatchAcknowledged=false;refreshPathMismatchPanel()});
     el.addEventListener("blur",()=>{refreshPathMismatchPanel()});
   });
+  const zipEl=$("#lfZip");
+  if(zipEl){
+    zipEl.addEventListener("input",()=>{
+      const digits=String(zipEl.value||"").replace(/\D/g,"").slice(0,10);
+      if(zipEl.value!==digits)zipEl.value=digits;
+      scheduleZipLookup();
+    });
+    zipEl.addEventListener("blur",()=>{
+      const zip5=normalizeZip5(zipEl.value);
+      if(zip5.length===5)lookupZipAndFill({showError:true});
+      else refreshPathMismatchPanel();
+    });
+  }
   $("#lfStairs").addEventListener("change",e=>{
     $("#lfStairDetails").hidden=!e.target.checked;
     if(!e.target.checked){

@@ -14,6 +14,7 @@ import {
   setIdempotentResponse,
 } from "../lib/freightQuoteSecurity.js";
 import { verifyMapRequest, fetchStaticMapBytes } from "../lib/freightRouteMap.js";
+import { lookupUsZipCityState } from "../lib/freightZipLookup.js";
 
 const router = express.Router();
 const jsonParser = express.json({ limit: "1mb" });
@@ -21,6 +22,18 @@ const jsonParser = express.json({ limit: "1mb" });
 router.use((req, res, next) => {
   applyConsignmentCorsHeaders(req, res);
   next();
+});
+
+/** GET /api/freight-zip?zip=85001 — city/state autofill for the estimator. */
+router.get("/freight-zip", async (req, res) => {
+  const result = await lookupUsZipCityState(req.query?.zip || req.query?.postal || "");
+  if (!result.ok) {
+    return res.status(result.status || 400).json({
+      ok: false,
+      error: result.error || "ZIP lookup failed.",
+    });
+  }
+  return res.json(result);
 });
 
 function formatSubmittedAt(date = new Date()) {
