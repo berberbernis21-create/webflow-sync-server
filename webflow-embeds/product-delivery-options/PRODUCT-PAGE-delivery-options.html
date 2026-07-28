@@ -1,0 +1,567 @@
+<!--
+  Lost & Found — Product page: Delivery, Pickup & Freight Options
+  Paste into a Webflow Embed on the Product template (below Add to Cart / shipping area).
+  Do not change the product JSON-LD Before </body> block.
+  Update CALC_URL below if your estimator lives on a different path.
+-->
+<style>
+  .lf-delivery-wrap {
+    font-family: Arial, Helvetica, sans-serif;
+    color: #151515;
+    background: #ffffff;
+    border: 1px solid #d8d2c6;
+    border-radius: 8px;
+    padding: 18px;
+    margin: 18px 0 0 0;
+    line-height: 1.45;
+    font-size: 13px;
+    box-shadow: 0 3px 12px rgba(0, 0, 0, 0.05);
+    width: 100%;
+    max-width: 100%;
+  }
+  .lf-delivery-wrap * { box-sizing: border-box; }
+  .lf-delivery-wrap h2,
+  .lf-delivery-wrap h3,
+  .lf-delivery-wrap h4,
+  .lf-delivery-wrap p { margin-top: 0; }
+
+  .lf-delivery-header {
+    border-bottom: 1px solid #111;
+    padding: 0 0 12px 0;
+    margin: 0 0 14px 0;
+  }
+  .lf-delivery-title {
+    font-size: 21px;
+    font-weight: 800;
+    color: #07127c;
+    margin: 0 0 7px 0;
+    letter-spacing: .1px;
+    line-height: 1.2;
+  }
+  .lf-delivery-subtitle {
+    font-size: 11.5px;
+    color: #333;
+    margin: 0;
+    line-height: 1.5;
+  }
+
+  .lf-intro {
+    font-size: 13.5px;
+    margin: 0 0 13px 0;
+    line-height: 1.55;
+  }
+  .lf-intro strong { font-weight: 800; }
+
+  .lf-highlight {
+    background: #f5f2eb;
+    border: 1px solid #e3ddd0;
+    border-left: 4px solid #516044;
+    border-radius: 5px;
+    padding: 12px 13px;
+    margin: 0 0 14px 0;
+    font-size: 13px;
+    line-height: 1.55;
+  }
+  .lf-highlight a {
+    color: #07127c;
+    font-weight: 800;
+  }
+
+  .lf-hold-note {
+    background: #fff8e8;
+    border: 1px solid #e5d4a8;
+    border-left: 4px solid #c9a227;
+    border-radius: 5px;
+    padding: 11px 13px;
+    margin: 0 0 14px 0;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: #333;
+  }
+  .lf-hold-note strong {
+    color: #111;
+    font-weight: 800;
+  }
+
+  .lf-help-box {
+    background: #111;
+    color: #fff;
+    border-radius: 5px;
+    padding: 12px 14px;
+    text-align: center;
+    margin: 0 0 16px 0;
+    font-size: 12px;
+  }
+  .lf-help-box strong {
+    display: block;
+    font-size: 13px;
+    margin-bottom: 5px;
+  }
+  .lf-help-box a {
+    color: #fff;
+    font-weight: 800;
+    text-decoration: underline;
+  }
+
+  .lf-cta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 0 4px 0;
+  }
+  .lf-cta {
+    display: inline-block;
+    padding: 10px 14px;
+    border-radius: 6px;
+    background: #07127c;
+    color: #fff !important;
+    font-size: 12.5px;
+    font-weight: 800;
+    text-decoration: none !important;
+    line-height: 1.2;
+  }
+  .lf-cta.secondary {
+    background: #fff;
+    color: #07127c !important;
+    border: 1px solid #07127c;
+  }
+
+  .lf-process-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    margin: 0;
+    width: 100%;
+  }
+  .lf-process-step {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    background: #ffffff;
+    border: 1px solid #d7e2ec;
+    border-radius: 6px;
+    padding: 10px 11px;
+    width: 100%;
+  }
+  .lf-step-number {
+    min-width: 24px;
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: #07127c;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 800;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    margin-top: 1px;
+  }
+  .lf-process-step strong {
+    display: block;
+    color: #07127c;
+    margin-bottom: 2px;
+    font-size: 12.5px;
+  }
+
+  .lf-small {
+    font-size: 11px;
+    color: #4b4b4b;
+    margin-bottom: 0;
+  }
+
+  .lf-policy-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 9px;
+    margin: 11px 0 8px 0;
+  }
+  .lf-policy-item {
+    border: 1px solid #ddd8ce;
+    background: #faf9f6;
+    border-radius: 5px;
+    padding: 10px 11px;
+  }
+  .lf-policy-item strong {
+    display: block;
+    color: #07127c;
+    font-size: 12px;
+    margin-bottom: 2px;
+  }
+
+  .lf-list {
+    padding-left: 17px;
+    margin: 8px 0 0 0;
+  }
+  .lf-list li { margin-bottom: 5px; }
+
+  .lf-muted-note {
+    background: #fff;
+    border: 1px solid #e5e1d8;
+    border-radius: 5px;
+    padding: 9px 10px;
+    margin-top: 9px;
+    font-size: 11px;
+    color: #333;
+  }
+
+  .lf-option-label {
+    display: inline-block;
+    background: #07127c;
+    color: #fff;
+    border-radius: 3px;
+    font-size: 9px;
+    font-weight: 800;
+    text-transform: uppercase;
+    padding: 4px 8px;
+    margin-bottom: 8px;
+    letter-spacing: .35px;
+  }
+
+  .lf-option-card h4,
+  .lf-panel h4 {
+    color: #07127c;
+    font-size: 14px;
+    font-weight: 800;
+    margin: 0 0 7px 0;
+  }
+
+  .lf-final {
+    border: 1px solid #111;
+    border-radius: 6px;
+    padding: 13px;
+    background: #fbfbfa;
+    margin-top: 16px;
+  }
+  .lf-final h3 {
+    color: #07127c;
+    font-size: 15px;
+    font-weight: 800;
+    margin: 0 0 8px 0;
+  }
+  .lf-final p { margin-bottom: 10px; }
+  .lf-final p:last-child { margin-bottom: 0; }
+  .lf-final strong { font-weight: 800; }
+
+  .lf-accordion {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 9px;
+    margin-top: 14px;
+  }
+  .lf-accordion details {
+    border: 1px solid #d7d2c8;
+    background: #fbfbfa;
+    border-radius: 7px;
+    overflow: hidden;
+  }
+  .lf-accordion > details[open] {
+    background: #ffffff;
+    box-shadow: 0 2px 8px rgba(0,0,0,.04);
+  }
+  .lf-accordion > details > summary {
+    cursor: pointer;
+    list-style: none;
+    padding: 13px 14px;
+    color: #07127c;
+    font-weight: 800;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .lf-accordion > details > summary::-webkit-details-marker { display: none; }
+  .lf-accordion > details > summary::after {
+    content: "+";
+    color: #fff;
+    background: #07127c;
+    border-radius: 50%;
+    width: 22px;
+    min-width: 22px;
+    height: 22px;
+    line-height: 22px;
+    text-align: center;
+    font-weight: 800;
+  }
+  .lf-accordion > details[open] > summary::after { content: "-"; }
+
+  .lf-panel {
+    border-top: 1px solid #e0dacd;
+    padding: 13px 14px 15px 14px;
+  }
+
+  .lf-sub-accordion {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .lf-sub-accordion > details {
+    border: 1px solid #e0dacd;
+    background: #fff;
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .lf-sub-accordion > details > summary {
+    cursor: pointer;
+    list-style: none;
+    padding: 11px 12px;
+    color: #07127c;
+    font-weight: 800;
+    font-size: 12.5px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+  }
+  .lf-sub-accordion > details > summary::-webkit-details-marker { display: none; }
+  .lf-sub-accordion > details > summary::after {
+    content: "+";
+    color: #07127c;
+    background: #f5f2eb;
+    border: 1px solid #d8d2c6;
+    border-radius: 50%;
+    width: 20px;
+    min-width: 20px;
+    height: 20px;
+    line-height: 18px;
+    text-align: center;
+    font-weight: 800;
+  }
+  .lf-sub-accordion > details[open] > summary::after { content: "-"; }
+  .lf-sub-panel {
+    border-top: 1px solid #e8e2d8;
+    padding: 11px 12px 13px 12px;
+  }
+
+  .lf-start-steps > summary { background: #f4f7fb; color: #1f4e79; }
+  .lf-start-steps > summary::after { background: #1f4e79; }
+  .lf-start-steps[open] { border-color: #7fa0bd; }
+
+  .lf-schedule-req > summary { background: #fbf7f1; color: #6c4a19; }
+  .lf-schedule-req > summary::after { background: #6c4a19; }
+  .lf-schedule-req[open] { border-color: #c7a46a; }
+
+  .lf-option-self > summary { background: #f7fbf5; color: #2f5a32; }
+  .lf-option-self > summary::after { background: #2f5a32; }
+  .lf-option-self[open] { border-color: #8ca783; }
+  .lf-option-self .lf-option-label { background: #2f5a32; }
+  .lf-option-self .lf-panel { background: #fbfef9; }
+
+  .lf-option-local > summary { background: #fff8ef; color: #8a4f08; }
+  .lf-option-local > summary::after { background: #8a4f08; }
+  .lf-option-local[open] { border-color: #d8aa6d; }
+  .lf-option-local .lf-option-label { background: #8a4f08; }
+  .lf-option-local .lf-panel { background: #fffbf5; }
+
+  .lf-option-freight > summary { background: #f4f6ff; color: #07127c; }
+  .lf-option-freight > summary::after { background: #07127c; }
+  .lf-option-freight[open] { border-color: #07127c; }
+  .lf-option-freight .lf-panel { background: #fbfcff; }
+
+  @media screen and (max-width: 767px) {
+    .lf-delivery-wrap { padding: 14px; font-size: 12.5px; }
+    .lf-delivery-title { font-size: 18px; }
+    .lf-intro { font-size: 13px; }
+    .lf-policy-grid { grid-template-columns: 1fr; }
+    .lf-cta { width: 100%; text-align: center; }
+  }
+</style>
+
+<div class="lf-delivery-wrap">
+  <div class="lf-delivery-header">
+    <h2 class="lf-delivery-title">Delivery, Pickup &amp; Freight Options</h2>
+    <p class="lf-delivery-subtitle">
+      Choose the checkout option shown for this item, then use our estimator when you need a preliminary delivery or freight quote.
+    </p>
+  </div>
+
+  <p class="lf-intro">
+    <strong>Available options appear at checkout.</strong>
+    If this item qualifies for standard calculated shipping, that option will show automatically.
+  </p>
+
+  <div class="lf-highlight">
+    <strong>Large or bulky items without auto-calculated shipping:</strong>
+    Select <strong>Freight Preparation</strong> at checkout when shown, then use our
+    <a href="https://www.lostandfoundresale.com/delivery-freight" target="_blank" rel="noopener">Delivery, Pickup &amp; Freight estimator</a>
+    to get a preliminary quote. Our team follows up to confirm final pricing and scheduling with the delivery partner or freight partners.
+  </div>
+
+  <div class="lf-hold-note">
+    <strong>We do not hold items.</strong>
+    Purchase reserves the piece. Pickup, local delivery, or freight must be scheduled promptly after purchase (see policy below). Unpurchased items remain available for sale.
+  </div>
+
+  <div class="lf-cta-row">
+    <a class="lf-cta" href="https://www.lostandfoundresale.com/delivery-freight" target="_blank" rel="noopener">Open delivery &amp; freight estimator</a>
+  </div>
+
+  <div class="lf-help-box">
+    <strong>Questions?</strong>
+    Call <a href="tel:4805887006">480-588-7006</a>
+    or email <a href="mailto:info@lostandfoundresale.com">info@lostandfoundresale.com</a>
+  </div>
+
+  <div class="lf-accordion">
+    <details class="lf-start-steps">
+      <summary>Start Here: Customer Steps</summary>
+      <div class="lf-panel">
+        <div class="lf-process-grid">
+          <div class="lf-process-step">
+            <div class="lf-step-number">1</div>
+            <div>
+              <strong>Check checkout options</strong>
+              Use standard shipping if it appears. For large or bulky pieces without auto shipping, choose Freight Preparation when shown.
+            </div>
+          </div>
+          <div class="lf-process-step">
+            <div class="lf-step-number">2</div>
+            <div>
+              <strong>Get a preliminary quote</strong>
+              Open the
+              <a href="https://www.lostandfoundresale.com/delivery-freight" target="_blank" rel="noopener">online estimator</a>
+              for local Arizona delivery, consignor pickup, or a nationwide freight range.
+            </div>
+          </div>
+          <div class="lf-process-step">
+            <div class="lf-step-number">3</div>
+            <div>
+              <strong>Place your order</strong>
+              Complete checkout for the item (and Freight Preparation when required). You will receive an order confirmation.
+            </div>
+          </div>
+          <div class="lf-process-step">
+            <div class="lf-step-number">4</div>
+            <div>
+              <strong>Confirm &amp; schedule</strong>
+              Final pricing and timing are confirmed with Cruz Pro Line (local) or our freight partners (nationwide). Tracking is sent when the carrier provides it.
+            </div>
+          </div>
+        </div>
+      </div>
+    </details>
+
+    <details class="lf-schedule-req">
+      <summary>Scheduling &amp; Storage</summary>
+      <div class="lf-panel">
+        <p>
+          Pickup, delivery, or freight must be coordinated within <strong>72 hours of purchase</strong>.
+          We do not hold unsold inventory for pending quotes.
+        </p>
+        <p>
+          Items not picked up or scheduled within 72 hours may be subject to storage fees unless prior arrangements are made with the store.
+        </p>
+        <div class="lf-policy-grid">
+          <div class="lf-policy-item">
+            <strong>Storage fee</strong>
+            $10.00 per day
+          </div>
+          <div class="lf-policy-item">
+            <strong>Maximum storage</strong>
+            14 days
+          </div>
+        </div>
+        <p class="lf-small">
+          Orders placed after hours, on weekends, or on holidays may need extra response time.
+        </p>
+      </div>
+    </details>
+
+    <details class="lf-option-self">
+      <summary>Option 1: Self Pickup</summary>
+      <div class="lf-panel">
+        <span class="lf-option-label">Option 1</span>
+        <h4>Self Pickup</h4>
+        <p>Select <strong>Pick Up</strong> if you will collect the item at our Scottsdale showroom.</p>
+        <ul class="lf-list">
+          <li>We email next steps after purchase.</li>
+          <li>Self pickup does not include wrapping, palletizing, or transport prep.</li>
+          <li>Bring the right vehicle, help, blankets, and straps for large or awkward pieces.</li>
+        </ul>
+      </div>
+    </details>
+
+    <details class="lf-option-local">
+      <summary>Option 2: Local Arizona Delivery</summary>
+      <div class="lf-panel">
+        <span class="lf-option-label">Option 2</span>
+        <h4>Local Delivery</h4>
+        <p>
+          Use our
+          <a href="https://www.lostandfoundresale.com/delivery-freight" target="_blank" rel="noopener">estimator</a>
+          for a preliminary local delivery quote, then confirm final pricing with <strong>Cruz Pro Line</strong> before scheduling.
+        </p>
+        <ul class="lf-list">
+          <li><strong>Typical rate:</strong> $95/hour (two movers + box truck).</li>
+          <li>Stairs, access, item size, extra crew, or longer trips can change the final amount.</li>
+          <li>Delivery charges are paid to the delivery company — not included in the item price.</li>
+        </ul>
+        <div class="lf-muted-note">
+          Cruz Pro Line: <a href="tel:4803769485"><strong>480-376-9485</strong></a>
+          · Lost &amp; Found shop: <a href="tel:4805887006"><strong>480-588-7006</strong></a>
+        </div>
+      </div>
+    </details>
+
+    <details class="lf-option-freight">
+      <summary>Option 3: Freight Preparation &amp; Nationwide</summary>
+      <div class="lf-panel">
+        <span class="lf-option-label">Option 3</span>
+        <h4>Freight Preparation</h4>
+        <p>
+          When standard shipping is not auto-calculated, select <strong>Freight Preparation</strong> at checkout, then run the
+          <a href="https://www.lostandfoundresale.com/delivery-freight" target="_blank" rel="noopener">nationwide estimator</a>
+          for a preliminary freight range. We use that information to confirm a final rate with our freight partners.
+        </p>
+        <ul class="lf-list">
+          <li><strong>Preparation fee:</strong> $10.00</li>
+          <li>Includes prep/palletizing when needed, staging, condition photos, and staff coordination for the pickup window.</li>
+          <li>Does <strong>not</strong> include carrier booking, freight charges, insurance, or delivery charges.</li>
+          <li>Freight pickups need at least <strong>48 hours notice</strong> so we can stage the piece.</li>
+        </ul>
+
+        <div class="lf-sub-accordion">
+          <details>
+            <summary>What the estimator helps with</summary>
+            <div class="lf-sub-panel">
+              <ul class="lf-list">
+                <li>Pallet-ready dimensions and weight for quoting.</li>
+                <li>A preliminary nationwide price range (not a locked carrier booking).</li>
+                <li>Access details (liftgate, residential, stairs, White Glove, and more).</li>
+              </ul>
+              <div class="lf-muted-note">
+                Final freight rates are confirmed with freight partners after review. Estimates can move with carrier capacity, confirmed dims/weight, and access.
+              </div>
+            </div>
+          </details>
+
+          <details>
+            <summary>Customer responsibility</summary>
+            <div class="lf-sub-panel">
+              <p>Customers are responsible for confirmed freight/delivery charges and carrier terms once a provider is booked.</p>
+              <ul class="lf-list">
+                <li>Shipping, delivery, freight, and insurance costs.</li>
+                <li>Accessorials (missed pickup, redelivery, residential, storage, return, etc.).</li>
+                <li>Damage, loss, or delay after the carrier takes possession.</li>
+              </ul>
+            </div>
+          </details>
+        </div>
+      </div>
+    </details>
+  </div>
+
+  <div class="lf-final">
+    <h3>Important Notice</h3>
+    <p><strong>All sales are final. No refunds or exchanges.</strong></p>
+    <p>
+      We do not hold items for unpaid quotes. Shipping availability depends on size, weight, fragility, and handling needs.
+    </p>
+    <p>
+      If an item looks unavailable for shipping but is not sold, contact us — we can review the listing and update options when appropriate.
+    </p>
+  </div>
+</div>

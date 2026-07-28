@@ -24,3 +24,11 @@ See [`consign-submit/README.md`](./consign-submit/README.md).
 | `consign-submit/INSIDE-HEAD-styles.html` | Inside `<head>` |
 | `consign-submit/PART1-embed-html-css.html` | Page Embed |
 | `consign-submit/PART2-before-body-js.html` | Before `</body>` |
+
+## Product page — Delivery options block
+
+See [`product-delivery-options/README.md`](./product-delivery-options/README.md).
+
+| File | Webflow location |
+|------|------------------|
+| `product-delivery-options/PRODUCT-PAGE-delivery-options.html` | Product template Embed |
