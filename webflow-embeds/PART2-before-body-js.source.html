@@ -17,7 +17,7 @@
   const LF_STORE=API_BASE+"/brand/showroom-exterior-v2.png";
   const crewHelp=_k=>"This is your opinion only — assume straps, dollies, and normal gear. If yes, choose 1 or 2 extra people and briefly explain why.";
 
-  const LOCAL={baseMinutes:15,basePrice:95,referenceMinutes:8,referencePrice:15,threePersonHourly:130,longHaulRoundTripMiles:100,longHaulFactor:0.8,stairFeePerExtraFlight:7,oversizeWeight:299,oversizeHeight:72,oversizeWidth:72};
+  const LOCAL={baseMinutes:15,basePrice:95,referenceMinutes:8,referencePrice:15,threePersonHourly:130,longHaulRoundTripMiles:100,longHaulFactor:0.8,stairFeePerExtraFlight:7,oversizeWeight:299,oversizeHeight:72,oversizeAlwaysWeight:550};
   const DRAFT_KEY="lfFreightDraft_v1";
   let step=1,itemCounter=0,lastPreview=null,submitting=false;
   let pathMismatchAcknowledged=false;
@@ -178,8 +178,10 @@
     const roundTripMiles=Number.isFinite(distanceMiles)&&distanceMiles>0?distanceMiles*2:null;
     const longHaul=roundTripMiles!=null&&roundTripMiles>LOCAL.longHaulRoundTripMiles;
     const oversize=items.some(it=>{
-      const w=Number(it.weight),h=Number(it.height),wd=Number(it.width);
-      return (Number.isFinite(w)&&w>=LOCAL.oversizeWeight)||(Number.isFinite(h)&&h>LOCAL.oversizeHeight)||(Number.isFinite(wd)&&wd>LOCAL.oversizeWidth);
+      const w=Number(it.weight),h=Number(it.height);
+      const heavyAndTall=Number.isFinite(w)&&w>=LOCAL.oversizeWeight&&Number.isFinite(h)&&h>LOCAL.oversizeHeight;
+      const alwaysHeavy=Number.isFinite(w)&&w>LOCAL.oversizeAlwaysWeight;
+      return heavyAndTall||alwaysHeavy;
     });
     let extraPeople=Number(access.extra_people)||0;
     if(!access.needs_more_than_two_people&&!oversize)extraPeople=0;
@@ -1388,7 +1390,7 @@
         :"Your estimated time is round-trip and includes wrapping and preparation, loading and securing, delivery, unloading, and placement.";
       const buyHtml=buyItemsHtml(payload.items,isPickup);
       const oversizeHtml=oversize
-        ?'<p class="lf-estimate-banner warn"><strong>Needs confirmation due to item size.</strong> At least one item is 299+ lb or over 72&quot; high or 72&quot; wide. Confirm pricing before scheduling. <strong>This is an estimate only.</strong></p>'
+        ?'<p class="lf-estimate-banner warn"><strong>Needs confirmation due to item size.</strong> At least one item is 299+ lb and over 72&quot; high, or over 550 lb. Confirm pricing before scheduling. <strong>This is an estimate only.</strong></p>'
         :"";
       const longHaulHtml=longHaul
         ?'<p class="lf-estimate-banner"><strong>Out of town callout (100+ mile round trip).</strong> Longer Arizona trips (like farther cities) can still work with our local truck, but confirm pricing before scheduling. This is an estimate only.</p>'

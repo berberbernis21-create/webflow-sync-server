@@ -441,9 +441,9 @@ test("local pricing: round trip over 100 miles uses 80% of $95", () => {
   assert.equal(est.estimated_price, 80);
 });
 
-test("local pricing: oversize item forces $130/hr", () => {
+test("local pricing: oversize needs 299+ lb and over 72 H, or over 550 lb", () => {
   const both = calculateLocalRouteEstimate(15, {
-    items: [{ title: "Huge armoire", width: 80, height: 80, weight: 300 }],
+    items: [{ title: "Huge armoire", width: 40, height: 80, weight: 300 }],
   });
   assert.equal(both.oversize_confirm, true);
   assert.equal(both.hourly_rate, 130);
@@ -452,14 +452,26 @@ test("local pricing: oversize item forces $130/hr", () => {
   const tallOnly = calculateLocalRouteEstimate(15, {
     items: [{ title: "Tall cabinet", width: 56, height: 92, weight: 200 }],
   });
-  assert.equal(tallOnly.oversize_confirm, true);
-  assert.equal(tallOnly.hourly_rate, 130);
+  assert.equal(tallOnly.oversize_confirm, false);
+  assert.equal(tallOnly.hourly_rate, 95);
 
   const heavyOnly = calculateLocalRouteEstimate(15, {
     items: [{ title: "Heavy chest", width: 40, height: 40, weight: 300 }],
   });
-  assert.equal(heavyOnly.oversize_confirm, true);
-  assert.equal(heavyOnly.hourly_rate, 130);
+  assert.equal(heavyOnly.oversize_confirm, false);
+  assert.equal(heavyOnly.hourly_rate, 95);
+
+  const wideCouch = calculateLocalRouteEstimate(15, {
+    items: [{ title: "Sofa", width: 90, height: 34, weight: 180 }],
+  });
+  assert.equal(wideCouch.oversize_confirm, false);
+  assert.equal(wideCouch.hourly_rate, 95);
+
+  const veryHeavy = calculateLocalRouteEstimate(15, {
+    items: [{ title: "Safe", width: 30, height: 40, weight: 551 }],
+  });
+  assert.equal(veryHeavy.oversize_confirm, true);
+  assert.equal(veryHeavy.hourly_rate, 130);
 });
 
 test("local validation requires extra_people when more than two selected", () => {
