@@ -27,7 +27,7 @@
 
   .lf-delivery-header {
     border-bottom: 1px solid #111;
-    padding: 0 0 12px 0;
+    padding: 0 0 14px 0;
     margin: 0 0 14px 0;
   }
   .lf-delivery-title {
@@ -38,11 +38,80 @@
     letter-spacing: .1px;
     line-height: 1.2;
   }
+  .lf-delivery-title a {
+    color: #07127c;
+    text-decoration: none;
+  }
+  .lf-delivery-title a:hover {
+    text-decoration: underline;
+  }
   .lf-delivery-subtitle {
     font-size: 11.5px;
     color: #333;
-    margin: 0;
+    margin: 0 0 12px 0;
     line-height: 1.5;
+  }
+  .lf-delivery-subtitle a {
+    color: #07127c;
+    font-weight: 800;
+  }
+
+  .lf-calc-link {
+    color: #07127c;
+    font-weight: 800;
+    text-decoration: underline;
+  }
+
+  .lf-cta-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin: 0;
+  }
+  .lf-cta {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 13px 14px;
+    border-radius: 8px;
+    background: #07127c;
+    color: #fff !important;
+    font-size: 13px;
+    font-weight: 800;
+    text-decoration: none !important;
+    line-height: 1.25;
+    text-align: center;
+    box-shadow: 0 2px 8px rgba(7, 18, 124, 0.2);
+    transition: background .15s ease, transform .15s ease;
+  }
+  .lf-cta:hover {
+    background: #0a1a9e;
+  }
+  .lf-cta.secondary {
+    background: #fff;
+    color: #07127c !important;
+    border: 2px solid #07127c;
+    box-shadow: none;
+  }
+  .lf-cta.secondary:hover {
+    background: #f4f6ff;
+  }
+  .lf-cta-icon {
+    display: inline-block;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: rgba(255,255,255,.2);
+    color: #fff;
+    font-size: 11px;
+    line-height: 18px;
+    text-align: center;
+    font-weight: 800;
+  }
+  .lf-cta.secondary .lf-cta-icon {
+    background: #07127c;
+    color: #fff;
   }
 
   .lf-intro {
@@ -51,6 +120,7 @@
     line-height: 1.55;
   }
   .lf-intro strong { font-weight: 800; }
+  .lf-intro a { color: #07127c; font-weight: 800; }
 
   .lf-highlight {
     background: #f5f2eb;
@@ -101,29 +171,6 @@
     color: #fff;
     font-weight: 800;
     text-decoration: underline;
-  }
-
-  .lf-cta-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    margin: 0 0 4px 0;
-  }
-  .lf-cta {
-    display: inline-block;
-    padding: 10px 14px;
-    border-radius: 6px;
-    background: #07127c;
-    color: #fff !important;
-    font-size: 12.5px;
-    font-weight: 800;
-    text-decoration: none !important;
-    line-height: 1.2;
-  }
-  .lf-cta.secondary {
-    background: #fff;
-    color: #07127c !important;
-    border: 1px solid #07127c;
   }
 
   .lf-process-grid {
@@ -366,16 +413,30 @@
     .lf-delivery-title { font-size: 18px; }
     .lf-intro { font-size: 13px; }
     .lf-policy-grid { grid-template-columns: 1fr; }
-    .lf-cta { width: 100%; text-align: center; }
+    .lf-cta-row { grid-template-columns: 1fr; }
   }
 </style>
 
 <div class="lf-delivery-wrap">
   <div class="lf-delivery-header">
-    <h2 class="lf-delivery-title">Delivery, Pickup &amp; Freight Options</h2>
+    <h2 class="lf-delivery-title">
+      <a href="https://www.lostandfoundresale.com/delivery-freight-calculator" target="_blank" rel="noopener">Delivery, Pickup &amp; Freight Options</a>
+    </h2>
     <p class="lf-delivery-subtitle">
-      Choose the checkout option shown for this item, then use our estimator when you need a preliminary delivery or freight quote.
+      Choose the checkout option shown for this item, then fill out our
+      <a class="lf-calc-link" href="https://www.lostandfoundresale.com/delivery-freight-calculator" target="_blank" rel="noopener">Delivery, Pickup &amp; Freight calculator</a>
+      when you need a preliminary quote.
     </p>
+    <div class="lf-cta-row">
+      <a class="lf-cta" href="https://www.lostandfoundresale.com/delivery-freight-calculator" target="_blank" rel="noopener">
+        <span class="lf-cta-icon">→</span>
+        Local delivery estimator
+      </a>
+      <a class="lf-cta secondary" href="https://www.lostandfoundresale.com/delivery-freight-calculator" target="_blank" rel="noopener">
+        <span class="lf-cta-icon">→</span>
+        Freight estimator
+      </a>
+    </div>
   </div>
 
   <p class="lf-intro">
@@ -385,18 +446,16 @@
 
   <div class="lf-highlight">
     <strong>Large or bulky items without auto-calculated shipping:</strong>
-    Select <strong>Freight Preparation</strong> at checkout when shown, then use our
-    <a href="https://www.lostandfoundresale.com/delivery-freight" target="_blank" rel="noopener">Delivery, Pickup &amp; Freight estimator</a>
-    to get a preliminary quote. Our team follows up to confirm final pricing and scheduling with the delivery partner or freight partners.
+    Select <strong>Freight Preparation</strong> at checkout when shown, then fill out our
+    <a class="lf-calc-link" href="https://www.lostandfoundresale.com/delivery-freight-calculator" target="_blank" rel="noopener">Delivery, Pickup &amp; Freight calculator</a>
+    to get a preliminary quote. Our team follows up to confirm final pricing and scheduling.
   </div>
 
   <div class="lf-hold-note">
     <strong>We do not hold items.</strong>
-    Purchase reserves the piece. Pickup, local delivery, or freight must be scheduled promptly after purchase (see policy below). Unpurchased items remain available for sale.
-  </div>
-
-  <div class="lf-cta-row">
-    <a class="lf-cta" href="https://www.lostandfoundresale.com/delivery-freight" target="_blank" rel="noopener">Open delivery &amp; freight estimator</a>
+    The best way to secure an item is to buy it. After purchase, schedule pickup,
+    <a class="lf-calc-link" href="https://www.lostandfoundresale.com/delivery-freight-calculator" target="_blank" rel="noopener">delivery</a>,
+    or freight promptly (see policy below).
   </div>
 
   <div class="lf-help-box">
@@ -420,10 +479,10 @@
           <div class="lf-process-step">
             <div class="lf-step-number">2</div>
             <div>
-              <strong>Get a preliminary quote</strong>
+              <strong>Fill out the calculator</strong>
               Open the
-              <a href="https://www.lostandfoundresale.com/delivery-freight" target="_blank" rel="noopener">online estimator</a>
-              for local Arizona delivery, consignor pickup, or a nationwide freight range.
+              <a class="lf-calc-link" href="https://www.lostandfoundresale.com/delivery-freight-calculator" target="_blank" rel="noopener">Delivery, Pickup &amp; Freight calculator</a>
+              and complete the form for local Arizona delivery, consignor pickup, or a nationwide freight range.
             </div>
           </div>
           <div class="lf-process-step">
@@ -436,8 +495,8 @@
           <div class="lf-process-step">
             <div class="lf-step-number">4</div>
             <div>
-              <strong>Fill out &amp; submit the estimator</strong>
-              Complete the online form with your address, items, and access details. That gives you a preliminary estimate and notifies our team to confirm final rates. Tracking is sent when available.
+              <strong>Submit for confirmation</strong>
+              Submitting the form gives you a preliminary estimate and notifies our team to confirm final rates. Tracking is sent when available.
             </div>
           </div>
         </div>
@@ -449,7 +508,7 @@
       <div class="lf-panel">
         <p>
           Pickup, delivery, or freight must be coordinated within <strong>72 hours of purchase</strong>.
-          We do not hold unsold inventory for pending quotes.
+          We do not hold items — the best way to secure an item is to buy it.
         </p>
         <p>
           Items not picked up or scheduled within 72 hours may be subject to storage fees unless prior arrangements are made with the store.
@@ -491,8 +550,8 @@
         <h4>Local Delivery</h4>
         <p>
           Select the local delivery option shown at checkout, then
-          <strong>fill out</strong> our
-          <a href="https://www.lostandfoundresale.com/delivery-freight" target="_blank" rel="noopener">delivery estimator</a>
+          <strong>fill out</strong> the
+          <a class="lf-calc-link" href="https://www.lostandfoundresale.com/delivery-freight-calculator" target="_blank" rel="noopener">Delivery, Pickup &amp; Freight calculator</a>
           with your address, item details, and access information.
         </p>
         <ul class="lf-list">
@@ -504,7 +563,7 @@
           <li>Delivery charges are paid to the delivery company — not included in the item price.</li>
         </ul>
         <div class="lf-muted-note">
-          Please fill out the estimator first — that is the fastest way for us to confirm pricing.
+          Please fill out the calculator first — that is the fastest way for us to confirm pricing.
           Questions? <a href="tel:4805887006"><strong>480-588-7006</strong></a>
           · <a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a>
         </div>
@@ -517,8 +576,8 @@
         <span class="lf-option-label">Option 3</span>
         <h4>Freight Preparation</h4>
         <p>
-          When standard shipping is not auto-calculated, select <strong>Freight Preparation</strong> at checkout, then run the
-          <a href="https://www.lostandfoundresale.com/delivery-freight" target="_blank" rel="noopener">nationwide estimator</a>
+          When standard shipping is not auto-calculated, select <strong>Freight Preparation</strong> at checkout, then fill out the
+          <a class="lf-calc-link" href="https://www.lostandfoundresale.com/delivery-freight-calculator" target="_blank" rel="noopener">Delivery, Pickup &amp; Freight calculator</a>
           for a preliminary freight range. We use that information to confirm a final rate with our freight partners.
         </p>
         <ul class="lf-list">
@@ -530,7 +589,7 @@
 
         <div class="lf-sub-accordion">
           <details>
-            <summary>What the estimator helps with</summary>
+            <summary>What the calculator helps with</summary>
             <div class="lf-sub-panel">
               <ul class="lf-list">
                 <li>Pallet-ready dimensions and weight for quoting.</li>
@@ -563,7 +622,8 @@
     <h3>Important Notice</h3>
     <p><strong>All sales are final. No refunds or exchanges.</strong></p>
     <p>
-      We do not hold items for unpaid quotes. Shipping availability depends on size, weight, fragility, and handling needs.
+      <strong>We do not hold items.</strong> The best way to secure an item is to buy it.
+      Shipping availability depends on size, weight, fragility, and handling needs.
     </p>
     <p>
       If an item looks unavailable for shipping but is not sold, contact us — we can review the listing and update options when appropriate.

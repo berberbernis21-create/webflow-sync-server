@@ -17,6 +17,6 @@ Paste `PRODUCT-PAGE-delivery-options.html` into a **Webflow Embed** on the Produ
 
 Links point to:
 
-`https://www.lostandfoundresale.com/delivery-freight`
+`https://www.lostandfoundresale.com/delivery-freight-calculator`
 
 If your live calculator page slug is different, search-replace that URL in the HTML before pasting.
