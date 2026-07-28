@@ -15,6 +15,7 @@ import {
 } from "../lib/freightQuoteSecurity.js";
 import { verifyMapRequest, fetchStaticMapBytes } from "../lib/freightRouteMap.js";
 import { lookupUsZipCityState } from "../lib/freightZipLookup.js";
+import { describeStackConfirmNeed } from "../lib/freightPalletize.js";
 
 const router = express.Router();
 const jsonParser = express.json({ limit: "1mb" });
@@ -166,24 +167,26 @@ async function buildQuoteContext(submission) {
   const isNationwide = submission.delivery_path === "nationwide";
   const stackConfirmReasons = isNationwide
     ? (submission.items || [])
-        .filter(
-          (it) =>
-            (Number(it.quantity) || 1) >= 2 ||
-            it.pallet?.stack_confirm_required ||
-            it.packing?.stack_confirm_required
-        )
         .map((it) => {
-          const claim = it.flip_stack_claimed || it.pallet?.flip_stack_claimed || "unanswered";
-          const claimLabel =
-            claim === "yes"
-              ? "customer says YES flip/stack"
-              : claim === "no"
-                ? "customer says NO stack"
-                : claim === "unsure"
-                  ? "customer NOT SURE"
-                  : "stack answer missing";
-          return `CONFIRM STACKING: ${it.title || "Item"} (qty ${it.quantity || 1}) — ${claimLabel}. Warehouse must verify before final freight rates.`;
+          const need = describeStackConfirmNeed(it);
+          if (!need) return null;
+          if (need.kind === "set_listing") {
+            return `CONFIRM STACKING: ${it.title || "Item"} (qty ${need.quantity}, set of ${need.set_count}) — multi-piece set listing; customer was not asked about flip/stack. Warehouse must verify packing before final freight rates.`;
+          }
+          if (need.kind === "customer_qty") {
+            const claimLabel =
+              need.claim === "yes"
+                ? "customer says YES flip/stack"
+                : need.claim === "no"
+                  ? "customer says NO stack"
+                  : need.claim === "unsure"
+                    ? "customer NOT SURE"
+                    : "stack answer missing";
+            return `CONFIRM STACKING: ${it.title || "Item"} (qty ${need.quantity}) — ${claimLabel}. Warehouse must verify before final freight rates.`;
+          }
+          return `CONFIRM STACKING: ${it.title || "Item"} (qty ${need.quantity}). Warehouse must verify packing before final freight rates.`;
         })
+        .filter(Boolean)
     : [];
 
   if (submission.delivery_path === "nationwide") {

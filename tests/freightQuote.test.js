@@ -8,6 +8,7 @@ import {
   inferFreightClass,
   shouldMarkNonStackable,
   parseSetCountFromTitle,
+  describeStackConfirmNeed,
 } from "../lib/freightPalletize.js";
 import { validateFreightQuoteRequest } from "../lib/freightQuoteValidation.js";
 import { buildManualReviewReasons } from "../lib/freightLocalEstimate.js";
@@ -193,6 +194,27 @@ test("parseSetCountFromTitle", () => {
   assert.equal(parseSetCountFromTitle("Chairs- Set of 4- 26X23X30H"), 4);
   assert.equal(parseSetCountFromTitle("Pair of lamps"), 2);
   assert.equal(parseSetCountFromTitle("Single sofa"), 1);
+});
+
+test("stack confirm: set of 4 with qty 1 is not customer qty 2+", () => {
+  const setListing = describeStackConfirmNeed({
+    title: "Baker Furniture McGuire Passage Swivel Counter Stool- Set of 4",
+    quantity: 1,
+    set_count: 4,
+    pallet: { stack_confirm_required: true, set_count: 4 },
+  });
+  assert.equal(setListing.kind, "set_listing");
+  assert.equal(setListing.quantity, 1);
+  assert.equal(setListing.set_count, 4);
+  assert.equal(setListing.claim, null);
+
+  const customerQty = describeStackConfirmNeed({
+    title: "Recliner",
+    quantity: 2,
+    flip_stack_claimed: "yes",
+  });
+  assert.equal(customerQty.kind, "customer_qty");
+  assert.equal(customerQty.claim, "yes");
 });
 
 test("out-of-state as local_az rejected", () => {
