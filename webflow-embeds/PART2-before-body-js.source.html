@@ -459,6 +459,18 @@
     }
   }
 
+  function clearCrewFields(){
+    if($("#lfCrew"))$("#lfCrew").checked=false;
+    if($("#lfCrewDetails"))$("#lfCrewDetails").hidden=true;
+    if($("#lfCrewWhy")){
+      $("#lfCrewWhy").value="";
+      fieldError($("#lfCrewWhy"),"");
+    }
+    $$('input[name="lf_extra_people"]').forEach(r=>{r.checked=false});
+    const extraErr=$("#lfExtraPeopleError");
+    if(extraErr)extraErr.textContent="";
+  }
+
   function clearWhiteGloveAccessFields(){
     if($("#lfStairs"))$("#lfStairs").checked=false;
     if($("#lfStairDetails"))$("#lfStairDetails").hidden=true;
@@ -466,6 +478,23 @@
     if($("#lfStairNotes"))$("#lfStairNotes").value="";
     if($("#lfTight"))$("#lfTight").checked=false;
     if($("#lfUnpack"))$("#lfUnpack").checked=false;
+    clearCrewFields();
+  }
+
+  function syncCrewAskVisibility(path){
+    const p=path||$('input[name="delivery_path"]:checked')?.value||"local_az";
+    const nationwide=p==="nationwide";
+    const whiteGlove=nationwide&&bool("#lfWhiteGlove");
+    // Local/pickup always; nationwide only with White Glove.
+    const showCrew=!nationwide||whiteGlove;
+    $$(".lf-crew-ask").forEach(el=>{
+      if(el.id==="lfCrewDetails"){
+        el.hidden=!showCrew||!bool("#lfCrew");
+      }else{
+        el.hidden=!showCrew;
+      }
+    });
+    if(!showCrew)clearCrewFields();
   }
 
   function updateWhiteGloveAccess(path){
@@ -485,6 +514,19 @@
 
     const head=$("#lfStairsInteriorHead");
     if(head)head.textContent=whiteGlove?"White Glove access details":"Stairs & Interior Access";
+
+    syncCrewAskVisibility(p);
+    if(nationwide&&whiteGlove){
+      setTextSafe("#lfCrewLabel","In your opinion, would White Glove placement need more than two people?");
+      setTextSafe("#lfCrewHelp",crewHelp("delivery"));
+    }
+  }
+
+  function setTextSafe(sel,htmlOrText,asHtml){
+    const el=$(sel);
+    if(!el)return;
+    if(asHtml)el.innerHTML=htmlOrText;
+    else el.textContent=htmlOrText;
   }
 
   function updateAccessCopy(path){
@@ -492,7 +534,11 @@
     const pickup=p==="pickup_az";
     const nationwide=p==="nationwide";
     $$(".lf-nationwide-only").forEach(el=>{el.hidden=!nationwide});
-    $$(".lf-local-truck-only").forEach(el=>{el.hidden=nationwide||(el.classList.contains("lf-delivery-only")&&pickup)});
+    $$(".lf-local-truck-only").forEach(el=>{
+      // Crew ask is handled separately (nationwide + White Glove only).
+      if(el.classList.contains("lf-crew-ask"))return;
+      el.hidden=nationwide||(el.classList.contains("lf-delivery-only")&&pickup);
+    });
     $$(".lf-delivery-only").forEach(el=>{
       if(el.classList.contains("lf-nationwide-only"))return;
       if(el.id==="lfUnpackWrap")return;
@@ -508,69 +554,56 @@
     }
     if(nationwide){
       if($("#lfInside"))$("#lfInside").checked=false;
-      if($("#lfCrew")){
-        $("#lfCrew").checked=false;
-        if($("#lfCrewDetails"))$("#lfCrewDetails").hidden=true;
-        if($("#lfCrewWhy"))$("#lfCrewWhy").value="";
-        $$('input[name="lf_extra_people"]').forEach(r=>{r.checked=false});
-      }
     }else if($("#lfDock")&&!nationwide){
       $("#lfDock").checked=false;
     }
 
     updateWhiteGloveAccess(p);
 
-    const setText=(sel,htmlOrText,asHtml)=>{
-      const el=$(sel);
-      if(!el)return;
-      if(asHtml)el.innerHTML=htmlOrText;
-      else el.textContent=htmlOrText;
-    };
-
     if(pickup){
-      setText("#lfInsideLabel","Inside pickup (item is inside the home or building)");
-      setText("#lfCrewLabel","In your opinion, would this pickup need more than two people?");
-      setText("#lfCrewHelp",crewHelp("pickup"));
-      setText("#lfDisassemblyLabel","Disassembly may be required to get the item out");
-      setText("#lfLongCarryLabel","Long carry from entrance to the truck");
-      setText("#lfLongCarryHelp","Long carry = about 75+ feet from entrance/elevator/pickup area to where the truck can park.");
-      setText("#lfParkingLabel","Limited truck parking, low clearance, or restricted pickup hours");
-      setText("#lfSmartDefaults","<strong>Note:</strong> Residential pickup is the default. Check any stairs, access, or handling items that apply so we can price the job accurately.",true);
-      setText("#lfAgreeLabel","I understand this is a preliminary estimate and final pricing must be confirmed before pickup is scheduled.");
+      setTextSafe("#lfInsideLabel","Inside pickup (item is inside the home or building)");
+      setTextSafe("#lfCrewLabel","In your opinion, would this pickup need more than two people?");
+      setTextSafe("#lfCrewHelp",crewHelp("pickup"));
+      setTextSafe("#lfDisassemblyLabel","Disassembly may be required to get the item out");
+      setTextSafe("#lfLongCarryLabel","Long carry from entrance to the truck");
+      setTextSafe("#lfLongCarryHelp","Long carry = about 75+ feet from entrance/elevator/pickup area to where the truck can park.");
+      setTextSafe("#lfParkingLabel","Limited truck parking, low clearance, or restricted pickup hours");
+      setTextSafe("#lfSmartDefaults","<strong>Note:</strong> Residential pickup is the default. Check any stairs, access, or handling items that apply so we can price the job accurately.",true);
+      setTextSafe("#lfAgreeLabel","I understand this is a preliminary estimate and final pricing must be confirmed before pickup is scheduled.");
       const notes=$("#lfNotes");
       if(notes)notes.placeholder="Share anything else the pickup team should know.";
       const summaryHelp=$("#lfSummaryHelp");
       if(summaryHelp)summaryHelp.textContent="Below are the pickup address, item information, and access details you submitted.";
-      setText("#lfAccessHeadHelp","Tell us about stairs, interior access, building access, and handling needs for this pickup so the estimate is as accurate as possible.");
+      setTextSafe("#lfAccessHeadHelp","Tell us about stairs, interior access, building access, and handling needs for this pickup so the estimate is as accurate as possible.");
     }else if(nationwide){
-      setText("#lfDockLabel","Confirmed loading dock or forklift at delivery");
-      setText("#lfDockHelp","A dock is a raised bay so a pallet rolls off at truck height; a forklift lifts the pallet off. Either usually means no liftgate. Most homes have neither.");
-      setText("#lfDisassemblyLabel","Disassembly or assembly may be required");
-      setText("#lfLongCarryLabel","Long carry from truck / terminal to entrance");
-      setText("#lfLongCarryHelp","Long carry = about 75+ feet from truck/terminal to the entrance.");
-      setText("#lfParkingLabel","Limited truck parking, low clearance, appointment windows, or HOA restrictions");
-      setText("#lfSmartDefaults","<strong>Nationwide freight:</strong> This is a preliminary range — every carrier prices differently. <strong>We will get you a quote:</strong> our team reviews your request and emails you full rates. You can also call FreightCenter anytime. Lost &amp; Found pickup / loading hours: <strong>10am–5pm, Monday–Saturday</strong>.",true);
-      setText("#lfAgreeLabel","I understand this is a preliminary freight range only, and Lost &amp; Found will get me a confirmed quote before freight is booked.");
+      setTextSafe("#lfDockLabel","Confirmed loading dock or forklift at delivery");
+      setTextSafe("#lfDockHelp","A dock is a raised bay so a pallet rolls off at truck height; a forklift lifts the pallet off. Either usually means no liftgate. Most homes have neither.");
+      setTextSafe("#lfDisassemblyLabel","Disassembly or assembly may be required");
+      setTextSafe("#lfLongCarryLabel","Long carry from truck / terminal to entrance");
+      setTextSafe("#lfLongCarryHelp","Long carry = about 75+ feet from truck/terminal to the entrance.");
+      setTextSafe("#lfParkingLabel","Limited truck parking, low clearance, appointment windows, or HOA restrictions");
+      setTextSafe("#lfSmartDefaults","<strong>Nationwide freight:</strong> This is a preliminary range — every carrier prices differently. <strong>We will get you a quote:</strong> our team reviews your request and emails you full rates. You can also call FreightCenter anytime. Lost &amp; Found pickup / loading hours: <strong>10am–5pm, Monday–Saturday</strong>.",true);
+      setTextSafe("#lfAgreeLabel","I understand this is a preliminary freight range only, and Lost &amp; Found will get me a confirmed quote before freight is booked.");
       const notes=$("#lfNotes");
       if(notes)notes.placeholder="Share dock hours, appointment needs, HOA rules, or anything the carrier should know.";
       const summaryHelp=$("#lfSummaryHelp");
       if(summaryHelp)summaryHelp.textContent="Below are the delivery address, item information, and nationwide freight options you submitted.";
-      setText("#lfAccessHeadHelp","Standard freight is threshold / curbside. Choose White Glove only if you need placement inside the home — then we’ll ask about stairs and interior access. Also tell us about dock, liftgate, and warehouse pickup options.");
+      setTextSafe("#lfAccessHeadHelp","Standard freight is threshold / curbside. Choose White Glove only if you need placement inside the home — then we’ll ask about stairs and interior access. Also tell us about dock, liftgate, and warehouse pickup options.");
     }else{
-      setText("#lfInsideLabel","Inside delivery requested");
-      setText("#lfCrewLabel","In your opinion, would this need more than two people?");
-      setText("#lfCrewHelp",crewHelp("delivery"));
-      setText("#lfDisassemblyLabel","Disassembly or assembly may be required");
-      setText("#lfLongCarryLabel","Long carry from truck to entrance");
-      setText("#lfLongCarryHelp","Long carry = about 75+ feet from truck parking to entrance/elevator/delivery area.");
-      setText("#lfParkingLabel","Limited truck parking, low clearance, or restricted delivery hours");
-      setText("#lfSmartDefaults","<strong>Note:</strong> Residential delivery is the default. Check any stairs, access, or handling items that apply so we can price the job accurately.",true);
-      setText("#lfAgreeLabel","I understand this is a preliminary estimate and final pricing must be confirmed before delivery or freight is scheduled.");
+      setTextSafe("#lfInsideLabel","Inside delivery requested");
+      setTextSafe("#lfCrewLabel","In your opinion, would this need more than two people?");
+      setTextSafe("#lfCrewHelp",crewHelp("delivery"));
+      setTextSafe("#lfDisassemblyLabel","Disassembly or assembly may be required");
+      setTextSafe("#lfLongCarryLabel","Long carry from truck to entrance");
+      setTextSafe("#lfLongCarryHelp","Long carry = about 75+ feet from truck parking to entrance/elevator/delivery area.");
+      setTextSafe("#lfParkingLabel","Limited truck parking, low clearance, or restricted delivery hours");
+      setTextSafe("#lfSmartDefaults","<strong>Note:</strong> Residential delivery is the default. Check any stairs, access, or handling items that apply so we can price the job accurately.",true);
+      setTextSafe("#lfAgreeLabel","I understand this is a preliminary estimate and final pricing must be confirmed before delivery or freight is scheduled.");
       const notes=$("#lfNotes");
       if(notes)notes.placeholder="Share anything else the delivery team or carrier should know.";
       const summaryHelp=$("#lfSummaryHelp");
       if(summaryHelp)summaryHelp.textContent="Below are the delivery address, item information, and access details you submitted.";
-      setText("#lfAccessHeadHelp","Tell us about stairs, interior access, building access, and handling needs so the estimate is as accurate as possible.");
+      setTextSafe("#lfAccessHeadHelp","Tell us about stairs, interior access, building access, and handling needs so the estimate is as accurate as possible.");
     }
   }
 
@@ -762,6 +795,7 @@
       ?(bool("#lfLiftgateDelivery")&&!dock&&!warehousePickup)
       :false;
     const askInteriorAccess=path!=="nationwide"||whiteGlove;
+    const askCrew=path!=="nationwide"||whiteGlove;
 
     const access={
       residential:destinationType==="residential",
@@ -772,10 +806,10 @@
       stairs:askInteriorAccess&&bool("#lfStairs"),
       stair_flights:askInteriorAccess&&bool("#lfStairs")?num(value("#lfFlights")):0,
       stair_notes:askInteriorAccess&&bool("#lfStairs")?value("#lfStairNotes"):"",
-      needs_more_than_two_people:path==="nationwide"?false:bool("#lfCrew"),
-      extra_people:path==="nationwide"||!bool("#lfCrew")?0:num($('input[name="lf_extra_people"]:checked')?.value||0),
-      crew_review_required:path==="nationwide"?false:bool("#lfCrew"),
-      more_than_two_people_reason:path==="nationwide"||!bool("#lfCrew")?"":value("#lfCrewWhy"),
+      needs_more_than_two_people:askCrew&&bool("#lfCrew"),
+      extra_people:askCrew&&bool("#lfCrew")?num($('input[name="lf_extra_people"]:checked')?.value||0):0,
+      crew_review_required:askCrew&&bool("#lfCrew"),
+      more_than_two_people_reason:askCrew&&bool("#lfCrew")?value("#lfCrewWhy"):"",
       tight_turns_or_narrow_halls:askInteriorAccess&&bool("#lfTight"),
       gated_access:bool("#lfGate"),
       gate_code_or_instructions:value("#lfGateCode"),
