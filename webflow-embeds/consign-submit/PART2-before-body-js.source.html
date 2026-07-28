@@ -1,0 +1,1362 @@
+<!--
+LOST & FOUND CONSIGNMENT SUBMISSION
+PART 2: Before </body>
+
+Paste in Page Settings → Custom Code → Before </body>
+Requires PART1 embed on the page and INSIDE-HEAD-styles in <head>.
+-->
+<script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/compressorjs@1.3.0/dist/compressor.min.js"></script>
+<script>
+  (function () {
+    const API_URL = "https://webflow-sync-server.onrender.com/api/consignment-submission";
+    const form = document.getElementById("lf-submit-form");
+    const steps = Array.from(document.querySelectorAll(".lf-step"));
+    const prevBtn = document.getElementById("lf-prev-btn");
+    const nextBtn = document.getElementById("lf-next-btn");
+    const submitBtn = document.getElementById("lf-submit-btn");
+    const statusEl = document.getElementById("lf-status");
+    const stepLabel = document.getElementById("lf-step-label");
+    const progressPercent = document.getElementById("lf-progress-percent");
+    const progressFill = document.getElementById("lf-progress-fill");
+    const itemTitle = document.getElementById("lf-item-form-title");
+    const savedItemsEl = document.getElementById("lf-saved-items");
+    const reviewSummaryEl = document.getElementById("lf-review-summary");
+    const itemWarningEl = document.getElementById("lf-item-warning");
+    const individualItemTipEl = document.getElementById("lf-individual-item-tip");
+    const photoInputs = Array.from(document.querySelectorAll("[data-lf-photo-input]"));
+    const photoPreview = document.getElementById("lf-photo-preview");
+    const photoDebug = document.getElementById("lf-photo-debug");
+    const saveItemBtn = document.getElementById("lf-save-item");
+    const clearItemBtn = document.getElementById("lf-clear-item");
+    const useAddressBtn = document.getElementById("lf-use-address");
+    const differentAddressBtn = document.getElementById("lf-different-address");
+    const sameItemLocationInput = document.getElementById("lf-same-item-location");
+    const pickupLocationWrap = document.getElementById("lf-pickup-location-wrap");
+    const pickupLocationInput = document.getElementById("lf-pickup-location");
+    if (!form || !photoPreview || !photoInputs.length) {
+      return;
+    }
+    photoInputs.forEach(function (input) {
+      input.setAttribute("accept", "image/*,.heic,.heif,image/heic,image/heif");
+    });
+    if ("scrollRestoration" in history) {
+      history.scrollRestoration = "manual";
+    }
+    window.addEventListener("pageshow", function () {
+      if (!window.location.hash) {
+        window.scrollTo(0, 0);
+      }
+    });
+    let currentStep = 1;
+    const totalSteps = 4;
+    let items = [];
+    let editingIndex = null;
+    let selectedPhotoFiles = [];
+    let isProcessingPhotos = false;
+    const MAX_ITEMS_PER_SUBMISSION = 10;
+    const MAX_PHOTOS_PER_SUBMISSION = 30;
+    const INDIVIDUAL_ITEM_TIP =
+      "Finish the details and photos for this one item, tap Save Item, then add your next item the same way. That helps us review faster and gives you a better chance at approval.";
+    const itemFields = {
+      itemName: document.getElementById("lf-item-name"),
+      category: document.getElementById("lf-item-category"),
+      brand: document.getElementById("lf-item-brand"),
+      age: document.getElementById("lf-item-age"),
+      condition: document.getElementById("lf-item-condition"),
+      originalPrice: document.getElementById("lf-item-original-price"),
+      width: document.getElementById("lf-item-width"),
+      depth: document.getElementById("lf-item-depth"),
+      height: document.getElementById("lf-item-height"),
+      conditionNotes: document.getElementById("lf-item-condition-notes"),
+      notes: document.getElementById("lf-item-notes")
+    };
+    function createLfModal() {
+      if (document.getElementById("lf-custom-modal")) return;
+      const modalStyle = document.createElement("style");
+      modalStyle.textContent = `
+        .lf-modal-overlay {
+          position: fixed;
+          inset: 0;
+          z-index: 999999;
+          display: none;
+          align-items: center;
+          justify-content: center;
+          padding: 24px;
+          background: rgba(0, 0, 0, 0.58);
+        }
+        .lf-modal-overlay.is-visible {
+          display: flex;
+        }
+        .lf-modal-card {
+          width: min(520px, 100%);
+          background: #fff;
+          border: 1px solid #111;
+          box-shadow: 0 24px 80px rgba(0, 0, 0, 0.32);
+          padding: 34px 30px 28px;
+          text-align: center;
+          position: relative;
+        }
+        .lf-modal-card:before {
+          content: "";
+          position: absolute;
+          inset: 10px;
+          border: 1px solid rgba(17, 17, 17, 0.12);
+          pointer-events: none;
+        }
+        .lf-modal-icon {
+          width: 54px;
+          height: 54px;
+          margin: 0 auto 18px;
+          border: 1px solid #111;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 28px;
+          font-weight: 900;
+          background: #faf7f0;
+          color: #111;
+        }
+        .lf-modal-title {
+          margin: 0 0 10px;
+          font-size: 28px;
+          line-height: 1.15;
+          color: #141c96;
+        }
+        .lf-modal-message {
+          margin: 0 auto 22px;
+          max-width: 420px;
+          font-size: 15px;
+          line-height: 1.6;
+          color: #222;
+        }
+        .lf-modal-actions {
+          display: flex;
+          justify-content: center;
+          gap: 10px;
+          flex-wrap: wrap;
+        }
+        .lf-modal-btn {
+          border: 1px solid #111;
+          background: #111;
+          color: #fff;
+          padding: 13px 22px;
+          cursor: pointer;
+          font: inherit;
+          font-weight: 900;
+          min-width: 170px;
+        }
+        .lf-modal-btn:hover {
+          background: #fff;
+          color: #111;
+        }
+        .lf-modal-btn-secondary {
+          background: #fff;
+          color: #111;
+        }
+        .lf-modal-btn-secondary:hover {
+          background: #111;
+          color: #fff;
+        }
+        @media (max-width: 520px) {
+          .lf-modal-card {
+            padding: 30px 20px 24px;
+          }
+          .lf-modal-title {
+            font-size: 24px;
+          }
+          .lf-modal-btn {
+            width: 100%;
+          }
+        }
+      `;
+      document.head.appendChild(modalStyle);
+      const modal = document.createElement("div");
+      modal.id = "lf-custom-modal";
+      modal.className = "lf-modal-overlay";
+      modal.setAttribute("role", "dialog");
+      modal.setAttribute("aria-modal", "true");
+      modal.innerHTML = `
+        <div class="lf-modal-card">
+          <div class="lf-modal-icon" id="lf-modal-icon">✓</div>
+          <h3 class="lf-modal-title" id="lf-modal-title">Item Saved</h3>
+          <p class="lf-modal-message" id="lf-modal-message">Your item has been saved.</p>
+          <div class="lf-modal-actions" id="lf-modal-actions">
+            <button type="button" class="lf-modal-btn" id="lf-modal-primary">Continue</button>
+            <button type="button" class="lf-modal-btn lf-modal-btn-secondary" id="lf-modal-secondary" style="display:none;">Cancel</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(modal);
+      modal.addEventListener("click", function (event) {
+        if (event.target === modal) {
+          modal.classList.remove("is-visible");
+        }
+      });
+      document.addEventListener("keydown", function (event) {
+        if (event.key === "Escape") {
+          modal.classList.remove("is-visible");
+        }
+      });
+    }
+    function showLfModal(options) {
+      createLfModal();
+      const modal = document.getElementById("lf-custom-modal");
+      const icon = document.getElementById("lf-modal-icon");
+      const title = document.getElementById("lf-modal-title");
+      const message = document.getElementById("lf-modal-message");
+      const primaryBtn = document.getElementById("lf-modal-primary");
+      const secondaryBtn = document.getElementById("lf-modal-secondary");
+      icon.textContent = options.icon || "✓";
+      title.textContent = options.title || "Success";
+      message.textContent = options.message || "";
+      primaryBtn.textContent = options.primaryText || options.buttonText || "Continue";
+      secondaryBtn.textContent = options.secondaryText || "";
+      secondaryBtn.style.display = options.secondaryText ? "inline-block" : "none";
+      primaryBtn.onclick = function () {
+        modal.classList.remove("is-visible");
+        if (typeof options.onPrimary === "function") {
+          options.onPrimary();
+        }
+      };
+      secondaryBtn.onclick = function () {
+        modal.classList.remove("is-visible");
+        if (typeof options.onSecondary === "function") {
+          options.onSecondary();
+        }
+      };
+      modal.classList.add("is-visible");
+      primaryBtn.focus();
+    }
+    function showItemLimitMessage() {
+      showLfModal({
+        icon: "!",
+        title: "10-Item Limit Reached",
+        message:
+          "You've reached the 10-item limit. Please submit, then start a new submission.",
+        buttonText: "Got It"
+      });
+    }
+    function showPhotoLimitMessage() {
+      showLfModal({
+        icon: "!",
+        title: "30-Photo Limit Reached",
+        message:
+          "You've reached the 30-photo limit. Please submit, then start a new submission.",
+        buttonText: "Got It"
+      });
+    }
+    function getSavedPhotoCount(excludeIndex) {
+      return items.reduce(function (total, item, index) {
+        if (typeof excludeIndex === "number" && index === excludeIndex) {
+          return total;
+        }
+        return total + ((item.photos && item.photos.length) || 0);
+      }, 0);
+    }
+    function getTotalPhotoCountForSubmission() {
+      return items.reduce(function (total, item) {
+        return total + ((item.photos && item.photos.length) || 0);
+      }, 0);
+    }
+    function getRemainingPhotoSlotsForCurrentItem() {
+      const savedPhotosExcludingCurrentEdit =
+        editingIndex !== null ? getSavedPhotoCount(editingIndex) : getSavedPhotoCount();
+      return MAX_PHOTOS_PER_SUBMISSION - savedPhotosExcludingCurrentEdit - selectedPhotoFiles.length;
+    }
+    function updateFinalSubmissionCounts() {
+      const itemCountEl = document.getElementById("lf-final-item-count");
+      const photoCountEl = document.getElementById("lf-final-photo-count");
+      if (itemCountEl) {
+        itemCountEl.textContent = String(items.length);
+      }
+      if (photoCountEl) {
+        photoCountEl.textContent = String(getTotalPhotoCountForSubmission());
+      }
+    }
+    function updateIndividualItemTip() {
+      if (!individualItemTipEl) return;
+      const shouldShow = selectedPhotoFiles.length > 0;
+      if (shouldShow) {
+        individualItemTipEl.innerHTML =
+          "<strong>Upload each item individually:</strong><br>" +
+          escapeHtml(INDIVIDUAL_ITEM_TIP);
+      }
+      individualItemTipEl.classList.toggle("is-visible", shouldShow);
+    }
+    function showSubmissionConfirmationPage() {
+      const submitPage = document.getElementById("lf-submit-page");
+      const shell = submitPage ? submitPage.querySelector(".lf-submit-shell") : null;
+      const hero = submitPage ? submitPage.querySelector(".lf-submit-hero") : null;
+      const progressWrap = submitPage ? submitPage.querySelector(".lf-progress-wrap") : null;
+      if (!submitPage || !shell || !form) return;
+      if (hero) hero.style.display = "none";
+      if (progressWrap) progressWrap.style.display = "none";
+      form.style.display = "none";
+      let confirmationPage = document.getElementById("lf-submission-confirmation");
+      if (!confirmationPage) {
+        confirmationPage = document.createElement("section");
+        confirmationPage.id = "lf-submission-confirmation";
+        confirmationPage.className = "lf-confirmation-page";
+        confirmationPage.innerHTML = `
+          <div class="lf-card lf-confirmation-card">
+            <div class="lf-confirmation-icon">✓</div>
+            <div class="lf-card-heading">
+              <span class="lf-step-pill">Submission Received</span>
+              <h2>Thank You for Your Submission</h2>
+              <p>
+                Your consignment submission has been received. Thank you for choosing
+                Lost & Found Resale Interiors. We appreciate the opportunity to review your pieces.
+              </p>
+            </div>
+            <div class="lf-final-box">
+              <p>
+                Our team will carefully review the information and photos you submitted.
+                If your items are a good fit, we will follow up by email with next steps,
+                approved delivery window options, and available delivery options.
+              </p>
+              <p>
+                Submitting an item does not guarantee acceptance, but we carefully review every submission.
+                Clear photos, dimensions, condition details, and brand or maker information help us review
+                your items faster. Email is required because approvals, next steps, delivery windows,
+                consignment details, and inventory records are handled in writing.
+              </p>
+            </div>
+            <div class="lf-confirmation-actions">
+              <a href="/submit-items" class="lf-primary-btn lf-confirmation-link">
+                Submit Another Item
+              </a>
+              <a href="/" class="lf-secondary-btn lf-confirmation-link">
+                Return to Home
+              </a>
+            </div>
+          </div>
+        `;
+        shell.appendChild(confirmationPage);
+      }
+      confirmationPage.style.display = "block";
+      window.scrollTo({
+        top: submitPage.offsetTop,
+        behavior: "smooth"
+      });
+    }
+    function setStatus(message, type) {
+      if (!statusEl) return;
+      statusEl.textContent = message || "";
+      statusEl.className = type ? "is-" + type : "";
+    }
+    function showPhotoDebug(message) {
+      if (!photoDebug) return;
+      photoDebug.classList.add("is-visible");
+      photoDebug.innerHTML = message;
+    }
+    function clearPhotoDebug() {
+      if (!photoDebug) return;
+      photoDebug.classList.remove("is-visible");
+      photoDebug.innerHTML = "";
+    }
+    function updatePhotoDebug(nativeCount, addedCount) {
+      showPhotoDebug(
+        "<strong>Photo picker returned:</strong> " +
+          nativeCount +
+          " file" +
+          (nativeCount === 1 ? "" : "s") +
+          "<br><strong>Newly added:</strong> " +
+          addedCount +
+          " photo" +
+          (addedCount === 1 ? "" : "s") +
+          "<br><strong>Attached to item:</strong> " +
+          selectedPhotoFiles.length +
+          " photo" +
+          (selectedPhotoFiles.length === 1 ? "" : "s")
+      );
+    }
+    function updateStepUI() {
+      steps.forEach(function (step) {
+        step.classList.toggle("is-active", Number(step.dataset.step) === currentStep);
+      });
+      const percent = Math.round((currentStep / totalSteps) * 100);
+      stepLabel.textContent = "Step " + currentStep + " of " + totalSteps;
+      progressPercent.textContent = percent + "%";
+      progressFill.style.width = percent + "%";
+      prevBtn.disabled = currentStep === 1;
+      nextBtn.style.display = currentStep === totalSteps ? "none" : "inline-block";
+      updateAfterSaveHelper();
+    }
+    function scrollToActiveStep() {
+      const activeStep = document.querySelector(".lf-step.is-active");
+      const progressWrap = document.querySelector(".lf-progress-wrap");
+      const target = progressWrap || activeStep;
+      if (!target) return;
+      const top = target.getBoundingClientRect().top + window.pageYOffset - 16;
+      window.scrollTo({
+        top: top,
+        behavior: "smooth"
+      });
+    }
+    function scrollToItemEntry() {
+      const target = itemFields.itemName || document.querySelector('.lf-step[data-step="2"]');
+      if (!target) return;
+      const top = target.getBoundingClientRect().top + window.pageYOffset - 120;
+      window.scrollTo({
+        top: top,
+        behavior: "smooth"
+      });
+      setTimeout(function () {
+        if (itemFields.itemName) {
+          itemFields.itemName.focus();
+        }
+      }, 450);
+    }
+    function scrollToContinueButton() {
+      const target = nextBtn || document.querySelector(".lf-nav-buttons");
+      if (!target) return;
+      const top = target.getBoundingClientRect().top + window.pageYOffset - 140;
+      window.scrollTo({
+        top: top,
+        behavior: "smooth"
+      });
+    }
+    function updateAfterSaveHelper() {
+      const helper = document.getElementById("lf-after-save-helper");
+      const floatingBtn = document.getElementById("lf-floating-add-more");
+      const shouldShow = currentStep === 2 && items.length > 0 && items.length < MAX_ITEMS_PER_SUBMISSION;
+      if (helper) {
+        helper.classList.toggle("is-visible", items.length > 0);
+      }
+      if (floatingBtn) {
+        floatingBtn.classList.toggle("is-visible", shouldShow);
+      }
+    }
+    function showPostSaveChoiceModal() {
+      const remainingItems = MAX_ITEMS_PER_SUBMISSION - items.length;
+      const remainingPhotos = MAX_PHOTOS_PER_SUBMISSION - getTotalPhotoCountForSubmission();
+      if (remainingItems <= 0 || remainingPhotos <= 0) {
+        showLfModal({
+          icon: "✓",
+          title: "Item Saved",
+          message:
+            "This item has been saved. You have reached the limit for this submission. Tap Continue to review and submit. If you have more items or photos, start a new submission after this one is submitted.",
+          primaryText: "Go to Continue",
+          onPrimary: function () {
+            scrollToContinueButton();
+          }
+        });
+        return;
+      }
+      showLfModal({
+        icon: "✓",
+        title: "Item Saved",
+        message:
+          "Your item has been saved. You can add another item to this same submission, or continue when you are done. You can still add " +
+          remainingItems +
+          " more item" +
+          (remainingItems === 1 ? "" : "s") +
+          " and " +
+          remainingPhotos +
+          " more photo" +
+          (remainingPhotos === 1 ? "" : "s") +
+          ".",
+        primaryText: "Add Another Item",
+        secondaryText: "I'm Done, Continue",
+        onPrimary: function () {
+          scrollToItemEntry();
+        },
+        onSecondary: function () {
+          scrollToContinueButton();
+          showLfModal({
+            icon: "!",
+            title: "Ready to Continue",
+            message:
+              "Tap Continue to review your saved items. After review, you will go to the final submit step.",
+            primaryText: "Got It"
+          });
+        }
+      });
+    }
+    function goToStep(stepNumber, shouldScroll) {
+      currentStep = stepNumber;
+      updateStepUI();
+      if (shouldScroll) {
+        setTimeout(scrollToActiveStep, 50);
+      }
+    }
+    function getFullCustomerAddress() {
+      const street = form.customerStreetAddress.value.trim();
+      const city = form.customerCity.value.trim();
+      const state = form.customerState.value.trim();
+      const zip = form.customerZip.value.trim();
+      return [street, city, state, zip].filter(Boolean).join(", ");
+    }
+    function validateStepOne() {
+      const requiredFields = form.querySelectorAll(
+        '.lf-step[data-step="1"] input[required], .lf-step[data-step="1"] select[required], .lf-step[data-step="1"] textarea[required]'
+      );
+      for (const field of requiredFields) {
+        if (!field.checkValidity()) {
+          field.reportValidity();
+          return false;
+        }
+      }
+      return true;
+    }
+    function isRealFile(file) {
+      return !!(file && typeof file.size === "number" && file.size > 0);
+    }
+    function cleanFileName(name, fallback) {
+      const base = name || fallback || "photo.jpg";
+      return base.replace(/[^\w.\-]+/g, "_");
+    }
+    function replaceExtension(fileName, extension) {
+      return cleanFileName(fileName || "photo", "photo")
+        .replace(/\.[^.]+$/, "") + extension;
+    }
+    function getRawFileKey(file) {
+      return [
+        file && file.name ? file.name : "unnamed",
+        file && file.size ? file.size : 0,
+        file && file.lastModified ? file.lastModified : 0,
+        file && file.type ? file.type : "unknown"
+      ].join("|");
+    }
+    function assignOriginalKey(file, key) {
+      try {
+        Object.defineProperty(file, "_lfOriginalKey", {
+          value: key,
+          configurable: true
+        });
+      } catch (error) {
+        try {
+          file._lfOriginalKey = key;
+        } catch (ignored) {}
+      }
+      return file;
+    }
+    function getFileKey(file) {
+      return file && file._lfOriginalKey ? file._lfOriginalKey : getRawFileKey(file);
+    }
+    function getNativeInputFiles(sourceInput) {
+      const inputsToRead = sourceInput ? [sourceInput] : photoInputs;
+      return inputsToRead.reduce(function (allFiles, input) {
+        if (!input || !input.files) return allFiles;
+        return allFiles.concat(Array.from(input.files).filter(isRealFile));
+      }, []);
+    }
+    function isBrowserReadableImage(file) {
+      const type = file && file.type ? file.type.toLowerCase() : "";
+      return (
+        type === "image/jpeg" ||
+        type === "image/jpg" ||
+        type === "image/png" ||
+        type === "image/webp" ||
+        type === "image/gif"
+      );
+    }
+    function isHeicFile(file) {
+      const name = file && file.name ? file.name.toLowerCase() : "";
+      const type = file && file.type ? file.type.toLowerCase() : "";
+      if (isBrowserReadableImage(file)) {
+        return false;
+      }
+      return (
+        name.endsWith(".heic") ||
+        name.endsWith(".heif") ||
+        type.includes("heic") ||
+        type.includes("heif")
+      );
+    }
+    async function convertHeicToJpeg(file, originalKey) {
+      if (!isHeicFile(file)) {
+        return assignOriginalKey(file, originalKey);
+      }
+      if (typeof heic2any !== "function") {
+        throw new Error("HEIC converter is not loaded.");
+      }
+      const newFileName = replaceExtension(file.name || "photo.heic", ".jpg");
+      let firstError = null;
+      try {
+        const converted = await heic2any({
+          blob: file,
+          toType: "image/jpeg",
+          quality: 0.9
+        });
+        const convertedBlob = Array.isArray(converted) ? converted[0] : converted;
+        const jpegFile = new File(
+          [convertedBlob],
+          newFileName,
+          {
+            type: "image/jpeg",
+            lastModified: Date.now()
+          }
+        );
+        return assignOriginalKey(jpegFile, originalKey);
+      } catch (error) {
+        firstError = error;
+        if (
+          error &&
+          error.message &&
+          String(error.message).toLowerCase().indexOf("already browser readable") > -1
+        ) {
+          return assignOriginalKey(file, originalKey);
+        }
+        console.warn("HEIC conversion attempt 1 failed:", error);
+      }
+      try {
+        const fileBuffer = await file.arrayBuffer();
+        const forcedHeicBlob = new Blob([fileBuffer], {
+          type: "image/heic"
+        });
+        const convertedSecond = await heic2any({
+          blob: forcedHeicBlob,
+          toType: "image/jpeg",
+          quality: 0.85
+        });
+        const convertedBlobSecond = Array.isArray(convertedSecond)
+          ? convertedSecond[0]
+          : convertedSecond;
+        const jpegFileSecond = new File(
+          [convertedBlobSecond],
+          newFileName,
+          {
+            type: "image/jpeg",
+            lastModified: Date.now()
+          }
+        );
+        return assignOriginalKey(jpegFileSecond, originalKey);
+      } catch (secondError) {
+        if (
+          secondError &&
+          secondError.message &&
+          String(secondError.message).toLowerCase().indexOf("already browser readable") > -1
+        ) {
+          return assignOriginalKey(file, originalKey);
+        }
+        console.error("HEIC conversion attempt 1 failed:", firstError);
+        console.error("HEIC conversion attempt 2 failed:", secondError);
+        throw secondError;
+      }
+    }
+    function compressImageFile(file, originalKey) {
+      return new Promise(function (resolve) {
+        if (typeof Compressor !== "function") {
+          resolve(assignOriginalKey(file, originalKey));
+          return;
+        }
+        const type = file && file.type ? file.type.toLowerCase() : "";
+        if (!type.startsWith("image/")) {
+          resolve(assignOriginalKey(file, originalKey));
+          return;
+        }
+        new Compressor(file, {
+          quality: 0.78,
+          maxWidth: 2048,
+          maxHeight: 2048,
+          mimeType: "image/jpeg",
+          convertSize: 500000,
+          success: function (result) {
+            const optimizedFile = new File(
+              [result],
+              replaceExtension(file.name || "photo.jpg", ".jpg"),
+              {
+                type: result.type || "image/jpeg",
+                lastModified: Date.now()
+              }
+            );
+            resolve(assignOriginalKey(optimizedFile, originalKey));
+          },
+          error: function () {
+            resolve(assignOriginalKey(file, originalKey));
+          }
+        });
+      });
+    }
+    async function optimizePhotoFile(file) {
+      const originalKey = getRawFileKey(file);
+      let workingFile = assignOriginalKey(file, originalKey);
+      if (isHeicFile(workingFile)) {
+        try {
+          showPhotoDebug("Converting HEIC photo. This may take a few seconds.");
+          workingFile = await convertHeicToJpeg(workingFile, originalKey);
+        } catch (error) {
+          console.error("HEIC conversion failed:", error);
+          showPhotoDebug(
+            "This HEIC photo could not be converted. Please upload JPEG."
+          );
+          return null;
+        }
+      }
+      try {
+        workingFile = await compressImageFile(workingFile, originalKey);
+      } catch (error) {
+        console.error("Image compression failed:", error);
+      }
+      return assignOriginalKey(workingFile, originalKey);
+    }
+    async function addFilesToSelectedFiles(files) {
+      let addedCount = 0;
+      for (const file of files) {
+        if (!isRealFile(file)) continue;
+        if (getRemainingPhotoSlotsForCurrentItem() <= 0) {
+          showPhotoLimitMessage();
+          break;
+        }
+        const originalKey = getRawFileKey(file);
+        const alreadyAdded = selectedPhotoFiles.some(function (existingFile) {
+          return getFileKey(existingFile) === originalKey;
+        });
+        if (alreadyAdded) {
+          continue;
+        }
+        const optimizedFile = await optimizePhotoFile(file);
+        if (!optimizedFile) {
+          continue;
+        }
+        const alreadyAddedOptimized = selectedPhotoFiles.some(function (existingFile) {
+          return getFileKey(existingFile) === getFileKey(optimizedFile);
+        });
+        if (!alreadyAddedOptimized) {
+          selectedPhotoFiles.push(optimizedFile);
+          addedCount += 1;
+        }
+      }
+      return addedCount;
+    }
+    async function syncFilesFromInput(sourceInput) {
+      const nativeFiles = getNativeInputFiles(sourceInput);
+      isProcessingPhotos = true;
+      if (saveItemBtn) {
+        saveItemBtn.disabled = true;
+        saveItemBtn.textContent = "Processing Photos...";
+      }
+      if (nativeFiles.length) {
+        setStatus(
+          "Processing selected photo" + (nativeFiles.length === 1 ? "" : "s") + "...",
+          "success"
+        );
+      }
+      let addedCount = 0;
+      try {
+        addedCount = await addFilesToSelectedFiles(nativeFiles);
+      } finally {
+        isProcessingPhotos = false;
+        if (saveItemBtn) {
+          saveItemBtn.disabled = false;
+          saveItemBtn.textContent = editingIndex !== null ? "Update Item" : "Save Item";
+        }
+      }
+      renderPhotoPreview();
+      showCurrentItemWarnings();
+      updatePhotoDebug(nativeFiles.length, addedCount);
+      updateIndividualItemTip();
+      if (selectedPhotoFiles.length > 0) {
+        setStatus(
+          selectedPhotoFiles.length +
+            " photo" +
+            (selectedPhotoFiles.length === 1 ? "" : "s") +
+            " attached to this item.",
+          "success"
+        );
+      }
+      return {
+        nativeCount: nativeFiles.length,
+        addedCount: addedCount,
+        attachedCount: selectedPhotoFiles.length
+      };
+    }
+    async function validateItemForm() {
+      const required = [
+        itemFields.itemName,
+        itemFields.category,
+        itemFields.brand,
+        itemFields.condition
+      ];
+      for (const field of required) {
+        if (!field || !field.checkValidity()) {
+          if (field) field.reportValidity();
+          if (field === itemFields.brand) {
+            showLfModal({
+              icon: "!",
+              title: "Brand / Maker Required",
+              message:
+                "Please enter the brand or maker. If you are not sure, enter Unknown. This helps prioritize your item for review.",
+              buttonText: "Got It"
+            });
+          }
+          return false;
+        }
+      }
+      if (!itemFields.brand.value.trim()) {
+        showLfModal({
+          icon: "!",
+          title: "Brand / Maker Required",
+          message:
+            "Please enter the brand or maker. If you are not sure, enter Unknown. This helps prioritize your item for review.",
+          buttonText: "Got It"
+        });
+        itemFields.brand.focus();
+        return false;
+      }
+      await syncFilesFromInput();
+      if (isProcessingPhotos) {
+        showLfModal({
+          icon: "!",
+          title: "Photos Processing",
+          message: "Please wait while the photo is processed.",
+          buttonText: "Got It"
+        });
+        return false;
+      }
+      if (!selectedPhotoFiles.length) {
+        showLfModal({
+          icon: "!",
+          title: "Photos Required",
+          message:
+            "Please add at least one photo before saving this item.",
+          buttonText: "Got It"
+        });
+        return false;
+      }
+      return true;
+    }
+    function renderPhotoPreview() {
+      photoPreview.innerHTML = "";
+      if (!selectedPhotoFiles.length) return;
+      selectedPhotoFiles.forEach(function (file, index) {
+        const div = document.createElement("div");
+        div.className = "lf-photo-thumb";
+        div.setAttribute("data-photo-index", String(index));
+        const fileName = file && file.name ? file.name : "Selected photo";
+        const lowerName = fileName.toLowerCase();
+        const fileType = file && file.type ? file.type.toLowerCase() : "";
+        const isHeicOrHeif =
+          lowerName.endsWith(".heic") ||
+          lowerName.endsWith(".heif") ||
+          fileType.includes("heic") ||
+          fileType.includes("heif");
+        function showAttachedFallback() {
+          div.innerHTML =
+            '<div style="display:flex;align-items:center;justify-content:center;height:100%;padding:10px;text-align:center;font-size:12px;font-weight:900;line-height:1.3;word-break:break-word;">Photo Attached<br>' +
+            escapeHtml(fileName) +
+            "</div>";
+        }
+        if (file && !isHeicOrHeif) {
+          try {
+            const objectUrl = URL.createObjectURL(file);
+            const img = document.createElement("img");
+            img.alt = "Uploaded item photo preview";
+            img.src = objectUrl;
+            img.onload = function () {
+              setTimeout(function () {
+                URL.revokeObjectURL(objectUrl);
+              }, 1000);
+            };
+            img.onerror = function () {
+              URL.revokeObjectURL(objectUrl);
+              showAttachedFallback();
+            };
+            div.innerHTML = "";
+            div.appendChild(img);
+          } catch (error) {
+            showAttachedFallback();
+          }
+        } else {
+          showAttachedFallback();
+        }
+        photoPreview.appendChild(div);
+      });
+      const count = document.createElement("p");
+      count.className = "lf-photo-count";
+      count.textContent =
+        selectedPhotoFiles.length +
+        " photo" +
+        (selectedPhotoFiles.length === 1 ? "" : "s") +
+        " attached to this item";
+      photoPreview.appendChild(count);
+    }
+    function getCurrentItemWarnings() {
+      const warnings = [];
+      if (selectedPhotoFiles.length > 0 && selectedPhotoFiles.length < 3) {
+        warnings.push("Fewer than 3 photos uploaded. More photos may help us review the item faster.");
+      }
+      return warnings;
+    }
+    function showCurrentItemWarnings() {
+      const warnings = getCurrentItemWarnings();
+      if (!warnings.length) {
+        itemWarningEl.innerHTML = "";
+        itemWarningEl.classList.remove("is-visible");
+        return;
+      }
+      itemWarningEl.innerHTML =
+        "<strong>Helpful note:</strong><br>" + warnings.map(escapeHtml).join("<br>");
+      itemWarningEl.classList.add("is-visible");
+    }
+    async function saveItem() {
+      if (editingIndex === null && items.length >= MAX_ITEMS_PER_SUBMISSION) {
+        showItemLimitMessage();
+        return;
+      }
+      const isValid = await validateItemForm();
+      if (!isValid) return;
+      const savedPhotosExcludingCurrentEdit =
+        editingIndex !== null ? getSavedPhotoCount(editingIndex) : getSavedPhotoCount();
+      if (savedPhotosExcludingCurrentEdit + selectedPhotoFiles.length > MAX_PHOTOS_PER_SUBMISSION) {
+        showPhotoLimitMessage();
+        return;
+      }
+      const photosToSave = selectedPhotoFiles.slice();
+      const warnings = getCurrentItemWarnings();
+      const item = {
+        itemNumber: editingIndex !== null ? editingIndex + 1 : items.length + 1,
+        itemName: itemFields.itemName.value.trim(),
+        category: itemFields.category.value.trim(),
+        brand: itemFields.brand.value.trim(),
+        age: itemFields.age.value.trim(),
+        condition: itemFields.condition.value.trim(),
+        originalPrice: itemFields.originalPrice.value.trim(),
+        width: itemFields.width.value.trim(),
+        depth: itemFields.depth.value.trim(),
+        height: itemFields.height.value.trim(),
+        conditionNotes: itemFields.conditionNotes.value.trim(),
+        notes: itemFields.notes.value.trim(),
+        warnings: warnings,
+        photos: photosToSave
+      };
+      const wasEditing = editingIndex !== null;
+      if (wasEditing) {
+        items[editingIndex] = item;
+      } else {
+        items.push(item);
+      }
+      editingIndex = null;
+      saveItemBtn.textContent = "Save Item";
+      clearItemBtn.textContent = "Clear Item Form";
+      renumberItems();
+      renderSavedItems();
+      buildReviewSummary();
+      updateFinalSubmissionCounts();
+      clearItemForm();
+      itemTitle.textContent = "Item " + (items.length + 1) + " Details";
+      updateAfterSaveHelper();
+      setTimeout(function () {
+        if (wasEditing) {
+          showLfModal({
+            icon: "✓",
+            title: "Item Updated",
+            message:
+              "Your item has been updated. You can add another item, or tap Continue when you are done.",
+            primaryText: "Add Another Item",
+            secondaryText: "I'm Done, Continue",
+            onPrimary: function () {
+              scrollToItemEntry();
+            },
+            onSecondary: function () {
+              scrollToContinueButton();
+            }
+          });
+        } else {
+          showPostSaveChoiceModal();
+        }
+      }, 150);
+    }
+    function clearPhotoInputs() {
+      photoInputs.forEach(function (input) {
+        input.value = "";
+      });
+    }
+    function clearItemForm() {
+      Object.keys(itemFields).forEach(function (key) {
+        itemFields[key].value = "";
+      });
+      selectedPhotoFiles = [];
+      clearPhotoInputs();
+      renderPhotoPreview();
+      clearPhotoDebug();
+      updateIndividualItemTip();
+      itemWarningEl.innerHTML = "";
+      itemWarningEl.classList.remove("is-visible");
+      editingIndex = null;
+      saveItemBtn.textContent = "Save Item";
+      clearItemBtn.textContent = "Clear Item Form";
+      itemTitle.textContent = "Item " + (items.length + 1) + " Details";
+    }
+    function editItem(index) {
+      const item = items[index];
+      if (!item) return;
+      editingIndex = index;
+      itemFields.itemName.value = item.itemName || "";
+      itemFields.category.value = item.category || "";
+      itemFields.brand.value = item.brand || "";
+      itemFields.age.value = item.age || "";
+      itemFields.condition.value = item.condition || "";
+      itemFields.originalPrice.value = item.originalPrice || "";
+      itemFields.width.value = item.width || "";
+      itemFields.depth.value = item.depth || "";
+      itemFields.height.value = item.height || "";
+      itemFields.conditionNotes.value = item.conditionNotes || "";
+      itemFields.notes.value = item.notes || "";
+      selectedPhotoFiles = item.photos ? item.photos.slice() : [];
+      clearPhotoInputs();
+      renderPhotoPreview();
+      showPhotoDebug(
+        "<strong>Attached to item:</strong> " +
+          selectedPhotoFiles.length +
+          " photo" +
+          (selectedPhotoFiles.length === 1 ? "" : "s")
+      );
+      itemTitle.textContent = "Update Item " + (index + 1) + " Details";
+      saveItemBtn.textContent = "Update Item";
+      clearItemBtn.textContent = "Cancel Edit";
+      showCurrentItemWarnings();
+      updateIndividualItemTip();
+      goToStep(2, true);
+    }
+    function removeItem(index) {
+      items.splice(index, 1);
+      renumberItems();
+      editingIndex = null;
+      itemTitle.textContent = "Item " + (items.length + 1) + " Details";
+      saveItemBtn.textContent = "Save Item";
+      clearItemBtn.textContent = "Clear Item Form";
+      renderSavedItems();
+      buildReviewSummary();
+      updateFinalSubmissionCounts();
+      updateAfterSaveHelper();
+    }
+    function renumberItems() {
+      items = items.map(function (item, itemIndex) {
+        item.itemNumber = itemIndex + 1;
+        return item;
+      });
+    }
+    function renderSavedItems() {
+      if (!items.length) {
+        savedItemsEl.innerHTML = '<p class="lf-small-note">No items saved yet.</p>';
+        return;
+      }
+      savedItemsEl.innerHTML = items.map(function (item, index) {
+        const dimensions = getDimensionsText(item);
+        const reviewNoteCount = item.warnings ? item.warnings.length : 0;
+        return `
+          <div class="lf-saved-item">
+            <div>
+              <h4>Item ${index + 1}: ${escapeHtml(item.itemName)}</h4>
+              <p><strong>Category:</strong> ${escapeHtml(item.category)}</p>
+              <p><strong>Brand / Maker:</strong> ${escapeHtml(item.brand || "Not provided")}</p>
+              <p><strong>Condition:</strong> ${escapeHtml(item.condition)}</p>
+              <p><strong>Dimensions:</strong> ${escapeHtml(dimensions)}</p>
+              <p><strong>Photos:</strong> ${item.photos.length}</p>
+              <p><strong>Helpful Notes:</strong> ${reviewNoteCount}</p>
+            </div>
+            <div style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap;">
+              <button type="button" class="lf-secondary-btn" data-edit-index="${index}">
+                Edit
+              </button>
+              <button type="button" class="lf-remove-btn" data-remove-index="${index}">
+                Remove
+              </button>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+    function buildReviewSummary() {
+      if (!items.length) {
+        reviewSummaryEl.innerHTML =
+          '<div class="lf-review-warning">No items have been saved yet. Please go back and save at least one item.</div>';
+        updateFinalSubmissionCounts();
+        return;
+      }
+      reviewSummaryEl.innerHTML = items.map(function (item, index) {
+        const dimensions = getDimensionsText(item);
+        const warnings = item.warnings || [];
+        return `
+          <div class="lf-review-item">
+            <h3>Item ${index + 1}: ${escapeHtml(item.itemName)}</h3>
+            <p><strong>Category:</strong> ${escapeHtml(item.category)}</p>
+            <p><strong>Brand / Maker:</strong> ${escapeHtml(item.brand || "Not provided")}</p>
+            <p><strong>Age:</strong> ${escapeHtml(item.age || "Not provided")}</p>
+            <p><strong>Condition:</strong> ${escapeHtml(item.condition)}</p>
+            <p><strong>Original Retail Price:</strong> ${escapeHtml(item.originalPrice || "Not provided")}</p>
+            <p><strong>Dimensions:</strong> ${escapeHtml(dimensions)}</p>
+            <p><strong>Condition Notes:</strong> ${escapeHtml(item.conditionNotes || "None")}</p>
+            <p><strong>Additional Notes:</strong> ${escapeHtml(item.notes || "None")}</p>
+            <p><strong>Photos:</strong> ${item.photos.length}</p>
+            ${
+              warnings.length
+                ? '<div class="lf-review-warning"><strong>Helpful review notes:</strong><br>' + warnings.map(escapeHtml).join("<br>") + "</div>"
+                : '<p><strong>Status:</strong> Looks complete</p>'
+            }
+            <button type="button" class="lf-secondary-btn" data-edit-index="${index}" style="margin-top:12px;">
+              Edit This Item
+            </button>
+          </div>
+        `;
+      }).join("");
+      updateFinalSubmissionCounts();
+    }
+    function getDimensionsText(item) {
+      if (item.width && item.depth && item.height) {
+        return item.width + " W x " + item.depth + " D x " + item.height + " H";
+      }
+      if (item.width || item.depth || item.height) {
+        return [
+          item.width ? item.width + " W" : "",
+          item.depth ? item.depth + " D" : "",
+          item.height ? item.height + " H" : ""
+        ].filter(Boolean).join(" x ");
+      }
+      return "Not provided";
+    }
+    function collectSubmissionData(formData) {
+      formData.append("customerName", form.customerName.value.trim());
+      formData.append("customerEmail", form.customerEmail.value.trim());
+      formData.append("customerPhone", form.customerPhone.value.trim());
+      formData.append("customerStreetAddress", form.customerStreetAddress.value.trim());
+      formData.append("customerCity", form.customerCity.value.trim());
+      formData.append("customerState", form.customerState.value.trim());
+      formData.append("customerZip", form.customerZip.value.trim());
+      formData.append("sameItemLocation", sameItemLocationInput.value);
+      formData.append("pickupLocation", pickupLocationInput.value.trim());
+      formData.append("pickupNotes", form.pickupNotes.value.trim());
+      formData.append("termsAcknowledged", form.termsAcknowledged.checked ? "true" : "false");
+      formData.append("source", "lostandfoundresale.com/submit-items");
+      const cleanItems = items.map(function (item, index) {
+        const itemNumber = index + 1;
+        item.photos.forEach(function (file, photoIndex) {
+          const safeName =
+            file && file.name
+              ? file.name
+              : "item-" + itemNumber + "-photo-" + (photoIndex + 1) + ".jpg";
+          formData.append("item_" + itemNumber + "_photos", file, safeName);
+        });
+        return {
+          itemNumber: itemNumber,
+          itemName: item.itemName,
+          category: item.category,
+          brand: item.brand,
+          age: item.age,
+          condition: item.condition,
+          originalPrice: item.originalPrice,
+          width: item.width,
+          depth: item.depth,
+          height: item.height,
+          conditionNotes: item.conditionNotes,
+          notes: item.notes,
+          warnings: item.warnings,
+          photoCount: item.photos.length
+        };
+      });
+      formData.append("items", JSON.stringify(cleanItems));
+      formData.append("photoCount", String(getTotalPhotoCountForSubmission()));
+    }
+    function escapeHtml(value) {
+      return String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+    if (useAddressBtn) {
+      useAddressBtn.addEventListener("click", function () {
+        const fullAddress = getFullCustomerAddress();
+        sameItemLocationInput.value = "Yes";
+        pickupLocationInput.value = fullAddress;
+        pickupLocationInput.removeAttribute("required");
+        pickupLocationWrap.classList.add("lf-hidden");
+        useAddressBtn.classList.add("is-selected");
+        differentAddressBtn.classList.remove("is-selected");
+      });
+    }
+    if (differentAddressBtn) {
+      differentAddressBtn.addEventListener("click", function () {
+        sameItemLocationInput.value = "No";
+        pickupLocationInput.value = "";
+        pickupLocationInput.removeAttribute("required");
+        pickupLocationWrap.classList.remove("lf-hidden");
+        differentAddressBtn.classList.add("is-selected");
+        useAddressBtn.classList.remove("is-selected");
+      });
+    }
+    photoInputs.forEach(function (input) {
+      input.addEventListener("change", async function (event) {
+        const result = await syncFilesFromInput(event.currentTarget);
+        if (!result.attachedCount) {
+          showLfModal({
+            icon: "!",
+            title: "Photo Not Attached",
+            message:
+              "The picker opened, but no usable photo was attached. Try another photo.",
+            buttonText: "Got It"
+          });
+        }
+      });
+    });
+    photoPreview.addEventListener("click", function (event) {
+      const thumb = event.target.closest("[data-photo-index]");
+      if (!thumb) return;
+      const index = Number(thumb.getAttribute("data-photo-index"));
+      if (Number.isNaN(index)) return;
+      selectedPhotoFiles.splice(index, 1);
+      clearPhotoInputs();
+      renderPhotoPreview();
+      showCurrentItemWarnings();
+      updateIndividualItemTip();
+      if (selectedPhotoFiles.length) {
+        showPhotoDebug(
+          "<strong>Attached to item:</strong> " +
+            selectedPhotoFiles.length +
+            " photo" +
+            (selectedPhotoFiles.length === 1 ? "" : "s")
+        );
+        setStatus(
+          selectedPhotoFiles.length +
+            " photo" +
+            (selectedPhotoFiles.length === 1 ? "" : "s") +
+            " attached to this item.",
+          "success"
+        );
+      } else {
+        clearPhotoDebug();
+        setStatus("", "");
+      }
+    });
+    Object.keys(itemFields).forEach(function (key) {
+      if (!itemFields[key]) return;
+      itemFields[key].addEventListener("change", showCurrentItemWarnings);
+      itemFields[key].addEventListener("input", showCurrentItemWarnings);
+    });
+    saveItemBtn.addEventListener("click", function () {
+      saveItem();
+    });
+    clearItemBtn.addEventListener("click", clearItemForm);
+    const floatingAddMoreBtn = document.getElementById("lf-floating-add-more");
+    if (floatingAddMoreBtn) {
+      floatingAddMoreBtn.addEventListener("click", function () {
+        goToStep(2, true);
+        setTimeout(scrollToItemEntry, 250);
+      });
+    }
+    savedItemsEl.addEventListener("click", function (event) {
+      const editButton = event.target.closest("[data-edit-index]");
+      const removeButton = event.target.closest("[data-remove-index]");
+      if (editButton) {
+        editItem(Number(editButton.dataset.editIndex));
+        return;
+      }
+      if (removeButton) {
+        removeItem(Number(removeButton.dataset.removeIndex));
+      }
+    });
+    reviewSummaryEl.addEventListener("click", function (event) {
+      const editButton = event.target.closest("[data-edit-index]");
+      if (!editButton) return;
+      editItem(Number(editButton.dataset.editIndex));
+    });
+    prevBtn.addEventListener("click", function () {
+      if (currentStep > 1) {
+        goToStep(currentStep - 1, true);
+      }
+    });
+    nextBtn.addEventListener("click", function () {
+      if (currentStep === 1 && !validateStepOne()) return;
+      if (currentStep === 2 && !items.length) {
+        showLfModal({
+          icon: "!",
+          title: "Save Your Item First",
+          message: "Please save at least one item before continuing.",
+          buttonText: "Got It"
+        });
+        return;
+      }
+      if (currentStep === 2 || currentStep === 3) {
+        buildReviewSummary();
+        updateFinalSubmissionCounts();
+      }
+      if (currentStep < totalSteps) {
+        goToStep(currentStep + 1, true);
+      }
+    });
+    form.addEventListener("submit", async function (event) {
+      event.preventDefault();
+      setStatus("", "");
+      if (!items.length) {
+        setStatus("Please save at least one item before submitting.", "error");
+        goToStep(2, true);
+        showLfModal({
+          icon: "!",
+          title: "Save Your Item First",
+          message: "Please save at least one item before submitting.",
+          buttonText: "Got It"
+        });
+        return;
+      }
+      const termsCheckbox = form.querySelector('input[name="termsAcknowledged"]');
+      if (!termsCheckbox || !termsCheckbox.checked) {
+        setStatus("Please confirm the final acknowledgment before submitting.", "error");
+        if (termsCheckbox) termsCheckbox.focus();
+        return;
+      }
+      if (items.length > MAX_ITEMS_PER_SUBMISSION) {
+        showItemLimitMessage();
+        return;
+      }
+      if (getTotalPhotoCountForSubmission() > MAX_PHOTOS_PER_SUBMISSION) {
+        showPhotoLimitMessage();
+        return;
+      }
+      for (let i = 0; i < items.length; i++) {
+        if (!items[i].brand || !String(items[i].brand).trim()) {
+          setStatus("Each item needs a brand or maker before submitting.", "error");
+          goToStep(2, true);
+          return;
+        }
+      }
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Submitting...";
+      try {
+        const formData = new FormData();
+        collectSubmissionData(formData);
+        const response = await fetch(API_URL, {
+          method: "POST",
+          body: formData
+        });
+        const result = await response.json().catch(function () {
+          return {};
+        });
+        if (!response.ok) {
+          throw new Error(result.error || "Submission failed. Please try again.");
+        }
+        setStatus(
+          "Thank you. Your items were submitted successfully. Our team will review your submission and follow up by email.",
+          "success"
+        );
+        showSubmissionConfirmationPage();
+        form.reset();
+        items = [];
+        editingIndex = null;
+        selectedPhotoFiles = [];
+        clearItemForm();
+        renderSavedItems();
+        buildReviewSummary();
+        updateFinalSubmissionCounts();
+        sameItemLocationInput.value = "";
+        pickupLocationInput.value = "";
+        pickupLocationInput.removeAttribute("required");
+        pickupLocationWrap.classList.add("lf-hidden");
+        if (useAddressBtn) useAddressBtn.classList.remove("is-selected");
+        if (differentAddressBtn) differentAddressBtn.classList.remove("is-selected");
+        updateAfterSaveHelper();
+      } catch (error) {
+        setStatus(error.message || "Something went wrong. Please try again.", "error");
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Submit Items for Review";
+      }
+    });
+    renderSavedItems();
+    updateFinalSubmissionCounts();
+    updateStepUI();
+  })();
+</script>
