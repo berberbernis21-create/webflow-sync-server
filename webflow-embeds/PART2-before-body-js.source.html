@@ -229,13 +229,13 @@
 
   function rateConfirmHtml(strong){
     return '<div class="lf-rate-confirm'+(strong?' strong':'')+'">'+
-      '<h3>Confirm pricing before scheduling</h3>'+
-      '<p>This is an <strong>estimate from our online tool</strong> — not a locked-in rate. Confirm pricing before scheduling. After you submit, check your email for a PDF of your answers — review your questions and make sure they are accurate when you call to confirm.</p>'+
+      '<h3>Next steps</h3>'+
+      '<p>This <strong>preliminary estimate</strong> is based on the information you submitted. Review your details for accuracy, then contact the delivery partner or Lost &amp; Found Resale to confirm availability and <strong>final pricing</strong>.</p>'+
       '<div class="lf-rate-stack">'+
         '<div class="lf-rate-card-panel">'+
           '<div class="lf-rate-card">'+
             '<a href="tel:4803769485" aria-label="Call Cruz Pro Line"><img class="lf-rate-thumb" src="'+CRUZ_LOGO+'" alt="Cruz Pro Line"></a>'+
-            '<div>'+
+            '<div class="lf-rate-card-text">'+
               '<span class="lf-rate-kicker">Delivery partner</span>'+
               '<strong><a class="lf-rate-name" href="tel:4803769485">Cruz Pro Line</a></strong>'+
               '<a class="lf-rate-phone" href="tel:4803769485">480-376-9485</a>'+
@@ -245,11 +245,10 @@
         '<div class="lf-rate-card-panel">'+
           '<div class="lf-rate-card">'+
             '<a href="tel:4805887006" aria-label="Call Lost and Found Resale"><img class="lf-rate-thumb lf-rate-store" src="'+LF_STORE+'" alt="Lost &amp; Found Scottsdale showroom"></a>'+
-            '<div>'+
+            '<div class="lf-rate-card-text">'+
               '<span class="lf-rate-kicker">Call the shop</span>'+
               '<strong><a class="lf-rate-name" href="tel:4805887006">Lost &amp; Found Resale</a></strong>'+
               '<a class="lf-rate-phone" href="tel:4805887006">480-588-7006</a>'+
-              '<span class="lf-rate-sub">Scottsdale showroom · confirm pricing before scheduling</span>'+
             '</div>'+
           '</div>'+
         '</div>'+
@@ -999,6 +998,10 @@
     if(isPickup)return"";
     const cards=(items||[]).map(i=>{
       const title=escapeHtml(i.title||"View item");
+      const dims=[i.width,i.depth,i.height].every(v=>v!=null&&v!=="")
+        ?escapeHtml(String(i.width)+"X"+String(i.depth)+"X"+String(i.height)+"H")
+        :"";
+      const titleLine=dims?title+" · "+dims:title;
       const rawUrl=String(i.product_url||"").trim();
       const url=escapeHtml(rawUrl||("https://www.lostandfoundresale.com/catalog?search="+encodeURIComponent(i.title||"")));
       const meta=[
@@ -1007,13 +1010,14 @@
       ].filter(Boolean).join(" · ");
       const img=i.image_url
         ?'<a class="lf-buy-card-img" href="'+url+'" target="_blank" rel="noopener"><img src="'+escapeHtml(i.image_url)+'" alt="'+title+'" loading="lazy"></a>'
-        :"";
+        :'<div class="lf-buy-card-img lf-buy-card-img-empty" aria-hidden="true"></div>';
       return '<div class="lf-buy-card">'+img+
         '<div class="lf-buy-card-body">'+
-        '<p class="lf-buy-card-title">'+title+"</p>"+
+        '<p class="lf-buy-card-title">'+titleLine+"</p>"+
         (meta?'<p class="lf-buy-card-meta">'+meta+"</p>":"")+
+        "</div>"+
         '<a class="lf-buy-card-cta" href="'+url+'" target="_blank" rel="noopener">'+(rawUrl?"Buy Now":"Find Item")+'</a>'+
-        "</div></div>";
+        "</div>";
     }).join("");
     if(!cards)return"";
     return '<div class="lf-buy-block"><p>Buy your item(s)</p><div class="lf-buy-cards">'+cards+"</div></div>";
@@ -1077,7 +1081,7 @@
       const manual=flags.length>0||payload.access.fragile_or_special_handling;
       const serverPrice=Number(preview?.local_estimate?.estimated_price??preview?.display?.display_amount??preview?.display?.amount);
       const priceAmount=Number.isFinite(serverPrice)&&serverPrice>0?serverPrice:(est?est.estimated_price:null);
-      const displayedAmount=priceAmount!=null?money(priceAmount):"$95.00";
+      const displayedAmount=priceAmount!=null?money(priceAmount):"Pending";
       const multiAdder=Number(preview?.local_estimate?.multi_item_adder??est?.multi_item_adder)||0;
       const itemCount=Number(preview?.local_estimate?.item_count??qtyTotal)||0;
       const multiNote=multiAdder>0
@@ -1095,23 +1099,20 @@
             ?"Two-Truck Estimate: "
             :extraPeople===1||payload.access.needs_more_than_two_people
               ?"3-Person Crew Estimate: "
-              :"Your Preliminary Estimate Is ";
+              :"Your Preliminary Estimate: ";
       const oneWay=est?est.drive_minutes:(minutes?Math.ceil(minutes):null);
-      const milesText=Number.isFinite(miles)&&miles>0
-        ?' · <strong>Distance:</strong> '+miles+" mi one way from our Scottsdale showroom"
-        :"";
       const driveStats=oneWay
-        ?'<p class="lf-drive-stats"><strong>Drive time to you:</strong> about '+oneWay+" min one way — "+(oneWay*2)+" min round trip"+milesText+"</p>"+
-          '<p class="lf-fine" style="margin:0 0 10px;">Drive time includes a little extra for a loaded delivery truck. Distance and time come from the mapped road route (not live traffic).</p>'
+        ?'<p class="lf-drive-stats">Estimated drive time: about '+oneWay+" minutes each way · "+(oneWay*2)+" minutes round trip"+(Number.isFinite(miles)&&miles>0?" · "+miles+" miles each way":"")+"</p>"+
+          '<p class="lf-fine lf-drive-note">Drive time includes additional time for a loaded delivery truck. Distance and time are based on the mapped route, not live traffic.</p>'
         : (Number.isFinite(miles)&&miles>0
-          ?'<p class="lf-drive-stats"><strong>Distance:</strong> '+miles+" mi one way from our Scottsdale showroom</p>"
+          ?'<p class="lf-drive-stats">Estimated distance: '+miles+" miles each way from our Scottsdale showroom</p>"
           :"");
       const mapUrl=preview?.route?.map_image_url||preview?.display?.map_image_url||"";
       const dirUrl=preview?.route?.directions_url||preview?.display?.directions_url||"";
       const mapHtml=routeMapHtml(mapUrl,dirUrl);
       const laborText=isPickup
-        ?"Time is round-trip, not one way — includes prep, load/secure, return, offload, and placement."
-        :"Time is round-trip, not one way — includes wrap/prep, load/secure, offload, and placement.";
+        ?"Your estimated time is round-trip and includes preparation, wrapping, loading and securing, return to the showroom, unloading, and placement."
+        :"Your estimated time is round-trip and includes wrapping and preparation, loading and securing, delivery, unloading, and placement.";
       const buyHtml=buyItemsHtml(payload.items,isPickup);
       const oversizeHtml=oversize
         ?'<p class="lf-estimate-banner warn"><strong>Needs confirmation due to item size.</strong> At least one item is 299+ lb or over 72&quot; high or 72&quot; wide. Confirm pricing before scheduling. <strong>This is an estimate only.</strong></p>'
@@ -1119,25 +1120,22 @@
       const longHaulHtml=longHaul
         ?'<p class="lf-estimate-banner"><strong>Out of town callout (100+ mile round trip).</strong> Longer Arizona trips (like farther cities) can still work with our local truck, but confirm pricing before scheduling. This is an estimate only.</p>'
         :"";
-      const spotlightHtml='<p class="lf-estimate-banner"><strong>Confirm pricing before scheduling.</strong> This is an estimate from our online tool. A PDF of your submitted answers is in your email — review your questions and make sure all information and access details are accurate when you call to confirm.</p>';
 
       result.innerHTML=
         '<h2>'+(isPickup?"Your Preliminary Consignor Pickup Estimate":"Your Preliminary Local Delivery Estimate")+'</h2>'+
-        '<div class="lf-price">'+priceLabel+displayedAmount+' <span class="lf-price-estimate-tag">(Estimate)</span></div>'+
+        '<div class="lf-price">'+priceLabel+displayedAmount+'</div>'+
         oversizeHtml+
         longHaulHtml+
-        spotlightHtml+
         rateConfirmHtml(true)+
         driveStats+
         multiNote+
         stairNote+
-        buyHtml+
         mapHtml+
-        '<p>'+laborText+'</p>'+
-        '<p>Confirm pricing before scheduling — this is an estimate from our online tool. Review your emailed PDF and make sure your answers are accurate when you call.</p>'+
+        '<p class="lf-result-labor">'+laborText+'</p>'+
+        '<p class="lf-result-confirm"><strong>Confirm pricing before scheduling.</strong> Review your emailed PDF and make sure all item, delivery, and access details are accurate when you call.</p>'+
         buyHtml+
         (manual
-              ? '<p><strong>Additional review needed:</strong> Tight access, long carries, or special handling may change the final price.</p>'
+              ? '<p class="lf-result-review"><strong>Additional review needed:</strong> Stairs, tight access, long carries, or special handling may change the final price.</p>'
               : '');
     }else{
       const rate=preview?.nationwide_rate||{};
@@ -1173,7 +1171,6 @@
         '<h2>Your Preliminary Nationwide Freight Range</h2>'+
         '<div class="lf-price">'+rangeText+'</div>'+
         milesLine+
-        buyHtml+
         mapHtml+
         '<div class="lf-result-notes" style="margin-top:14px;">'+notes+'</div>'+
         buyHtml;

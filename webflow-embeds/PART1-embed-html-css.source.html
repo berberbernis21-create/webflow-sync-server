@@ -90,21 +90,24 @@ to remain visible inside the Webflow Designer.
 .lf-summary-card{padding:13px;border:1px solid var(--lf-border);border-radius:6px;background:var(--lf-cream)}
 .lf-summary-card h3{margin:0 0 7px;color:var(--lf-navy);font-size:13px}
 .lf-summary-card p,.lf-summary-card ul{margin:4px 0;font-size:11px}
-.lf-result{display:none;margin-top:13px;padding:16px;border:2px solid var(--lf-olive);border-radius:8px;background:#fbfef9}
+.lf-result{display:none;margin-top:8px;padding:14px 16px;border:2px solid var(--lf-olive);border-radius:8px;background:#fbfef9}
 .lf-result.show{display:block}
-.lf-result h2{margin:0 0 7px;color:var(--lf-green);font-size:19px}
-.lf-price{margin:7px 0;color:var(--lf-navy);font-size:27px;font-weight:800}
-.lf-route-map{margin:12px 0;border:1px solid var(--lf-border);border-radius:8px;overflow:hidden;background:#fff}
+.lf-result h2{margin:0 0 4px;color:var(--lf-green);font-size:16px;font-weight:700;text-align:center}
+.lf-price{margin:2px 0 10px;color:var(--lf-navy);font-size:27px;font-weight:800;text-align:center;line-height:1.15}
+.lf-route-map{margin:10px 0;border:1px solid var(--lf-border);border-radius:8px;overflow:hidden;background:#fff}
 .lf-route-map img{display:block;width:100%;height:auto}
 .lf-route-map a{display:inline-block;margin:10px 12px 12px;font-size:12px;font-weight:700;color:var(--lf-navy)}
 .lf-route-map-fallback{display:none;margin:0;padding:18px 14px;background:var(--lf-cream);color:var(--lf-text);font-size:12px;line-height:1.5}
 .lf-route-map.is-fallback .lf-route-map-fallback{display:block}
 .lf-route-map.is-fallback img{display:none}
-.lf-drive-stats{margin:6px 0 10px;font-size:13px;font-weight:700;color:var(--lf-navy)}
-.lf-social-follow{margin:18px 0;padding:20px 18px;border:1px solid var(--lf-border);border-radius:14px;background:linear-gradient(165deg,#fbfaf6 0%,#f3efe6 100%);color:var(--lf-text);box-shadow:0 1px 0 rgba(255,255,255,.8) inset}
-.lf-social-follow h3{margin:0 0 6px;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--lf-navy)}
-.lf-social-follow>p{margin:0 0 16px;font-size:13px;line-height:1.55;color:#3a3a3a;max-width:42em}
-.lf-social-brand-block{margin:0 0 14px;padding:14px;border:1px solid rgba(7,18,124,.08);border-radius:12px;background:rgba(255,255,255,.72)}
+.lf-drive-stats{margin:8px 0 4px;font-size:13px;font-weight:700;color:var(--lf-navy);text-align:center}
+.lf-drive-note{margin:0 0 8px!important;text-align:center;line-height:1.45}
+.lf-result-labor,.lf-result-confirm{margin:8px 0;font-size:13px;line-height:1.5;color:var(--lf-text);text-align:center}
+.lf-result-review{margin:8px 0 4px;font-size:13px;line-height:1.5;color:var(--lf-text);text-align:center}
+.lf-social-follow{margin:14px 0;padding:20px 18px;border:1px solid var(--lf-border);border-radius:14px;background:linear-gradient(165deg,#fbfaf6 0%,#f3efe6 100%);color:var(--lf-text);box-shadow:0 1px 0 rgba(255,255,255,.8) inset;width:100%;box-sizing:border-box;display:flex;flex-direction:column;align-items:center;text-align:center}
+.lf-social-follow h3{margin:0 0 6px;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--lf-navy);text-align:center;width:100%}
+.lf-social-follow>p{margin:0 auto 16px;font-size:13px;line-height:1.55;color:#3a3a3a;max-width:42em;text-align:center}
+.lf-social-brand-block{margin:0 auto 14px;padding:14px;border:1px solid rgba(7,18,124,.08);border-radius:12px;background:rgba(255,255,255,.72);width:100%;max-width:420px;box-sizing:border-box;text-align:left}
 .lf-social-brand-block:last-of-type{margin-bottom:0}
 .lf-social-brand-name{margin:0 0 4px;font-size:14px;font-weight:800;color:var(--lf-navy)}
 .lf-social-brand-help{margin:0 0 12px;font-size:12px;line-height:1.45;color:#555}
@@ -120,20 +123,22 @@ to remain visible inside the Webflow Designer.
 .lf-social-chip.lf-social-light svg{width:20px;height:20px}
 
 /* Product buy cards on estimate confirmation */
-.lf-buy-block{margin:14px 0 4px}
-.lf-buy-block>p{margin:0 0 10px;font-size:13px;font-weight:800;color:var(--lf-navy)}
-.lf-buy-cards{display:flex;flex-direction:column;gap:10px}
-.lf-buy-card{display:flex;gap:12px;align-items:stretch;padding:12px;border:1px solid var(--lf-border);border-radius:10px;background:var(--lf-cream)}
-.lf-buy-card-img{flex:0 0 96px;width:96px;height:96px;border-radius:8px;overflow:hidden;border:1px solid var(--lf-border);background:#fff;line-height:0;text-decoration:none}
+.lf-buy-block{margin:10px 0 6px}
+.lf-buy-block>p{margin:0 0 8px;font-size:13px;font-weight:800;color:var(--lf-navy)}
+.lf-buy-cards{display:flex;flex-direction:column;gap:8px}
+.lf-buy-card{display:flex;gap:14px;align-items:center;padding:10px 12px;border:1px solid var(--lf-border);border-radius:10px;background:var(--lf-cream)}
+.lf-buy-card-img,.lf-buy-card-img-empty{flex:0 0 72px;width:72px;height:72px;border-radius:8px;overflow:hidden;border:1px solid var(--lf-border);background:#fff;line-height:0;text-decoration:none}
 .lf-buy-card-img img{display:block;width:100%;height:100%;object-fit:cover}
-.lf-buy-card-body{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:6px}
-.lf-buy-card-title{margin:0;font-size:14px;font-weight:800;color:var(--lf-text);line-height:1.35}
-.lf-buy-card-meta{margin:0;font-size:12px;color:var(--lf-muted)}
-.lf-buy-card-cta{display:inline-flex;align-items:center;justify-content:center;align-self:flex-start;margin-top:4px;padding:10px 16px;border-radius:8px;background:var(--lf-navy);color:#fff!important;font-size:13px;font-weight:800;text-decoration:none;letter-spacing:.02em}
+.lf-buy-card-body{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:3px;text-align:left}
+.lf-buy-card-title{margin:0;font-size:14px;font-weight:800;color:var(--lf-text);line-height:1.3;text-align:left}
+.lf-buy-card-meta{margin:0;font-size:12px;color:var(--lf-muted);line-height:1.35;text-align:left}
+.lf-buy-card-cta{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;align-self:center;margin:0;padding:10px 16px;border-radius:8px;background:var(--lf-navy);color:#fff!important;font-size:13px;font-weight:800;text-decoration:none;letter-spacing:.02em;white-space:nowrap}
 .lf-buy-card-cta:hover{opacity:.92}
-@media screen and (max-width:480px){
-  .lf-buy-card{flex-direction:column}
-  .lf-buy-card-img{width:100%;height:160px;flex-basis:auto}
+@media screen and (max-width:640px){
+  .lf-buy-card{flex-wrap:wrap;align-items:flex-start}
+  .lf-buy-card-img,.lf-buy-card-img-empty{flex:0 0 64px;width:64px;height:64px}
+  .lf-buy-card-body{flex:1 1 calc(100% - 78px)}
+  .lf-buy-card-cta{width:100%;box-sizing:border-box;min-height:46px;margin-top:2px}
 }
 .lf-alert{display:none;margin-top:12px;padding:10px 11px;border-radius:5px;font-size:11px;font-weight:700}
 .lf-alert.show{display:block}
@@ -157,7 +162,6 @@ to remain visible inside the Webflow Designer.
  .lf-social-chip{width:100%;justify-content:center;min-height:46px;box-sizing:border-box}
  .lf-price{font-size:24px;word-break:break-word}
  .lf-review-email-note{text-align:left}
- .lf-buy-card-cta{width:100%;box-sizing:border-box;min-height:46px}
 }
 
 /* =========================================================
@@ -403,29 +407,29 @@ to remain visible inside the Webflow Designer.
   gap: 8px;
 }
 .lf-rate-confirm {
-  margin: 16px 0;
-  padding: 16px 18px;
+  margin: 12px 0 14px;
+  padding: 24px;
   background: #fff8e8;
   border: 2px solid #c9a227;
   border-radius: 12px;
 }
-.lf-rate-confirm.strong { border-width: 3px; }
+.lf-rate-confirm.strong { border-width: 2px; }
 .lf-rate-confirm h3 {
-  margin: 0 0 8px;
-  font-size: 15px;
+  margin: 0 0 10px;
+  font-size: 14px;
   color: #8a6d12;
   text-transform: uppercase;
   letter-spacing: 0.03em;
 }
 .lf-rate-confirm p {
-  margin: 0 0 12px;
+  margin: 0 0 18px;
   font-size: 14px;
   line-height: 1.5;
   color: #333;
 }
 .lf-rate-stack {
   display: grid;
-  gap: 10px;
+  gap: 14px;
 }
 .lf-rate-card-panel {
   background: #fff;
@@ -443,10 +447,15 @@ to remain visible inside the Webflow Designer.
   text-decoration: none;
   color: inherit;
 }
+.lf-rate-card-text {
+  min-width: 0;
+  flex: 1;
+  text-align: left;
+}
 .lf-rate-thumb {
-  width: 72px;
-  height: 72px;
-  border-radius: 10px;
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
   object-fit: cover;
   display: block;
   flex: 0 0 auto;
@@ -458,17 +467,19 @@ to remain visible inside the Webflow Designer.
 }
 .lf-rate-kicker {
   display: block;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: #8a6d12;
-  margin-bottom: 2px;
+  margin-bottom: 1px;
+  line-height: 1.2;
 }
 .lf-rate-card strong {
   display: block;
-  font-size: 15px;
+  font-size: 14px;
   color: #07127c;
+  line-height: 1.25;
 }
 .lf-rate-name {
   color: #07127c;
@@ -476,36 +487,34 @@ to remain visible inside the Webflow Designer.
 }
 .lf-rate-phone {
   display: block;
-  margin-top: 3px;
-  font-size: 17px;
+  margin-top: 2px;
+  font-size: 15px;
   font-weight: 800;
   color: #111;
   text-decoration: underline;
+  line-height: 1.2;
 }
-.lf-rate-shop-line {
-  display: block;
-  margin-top: 6px;
-  font-size: 13px;
-  color: #444;
-}
-.lf-rate-shop-line a {
-  color: #07127c;
-  font-weight: 800;
-  text-decoration: underline;
-}
+.lf-rate-shop-line,
 .lf-rate-sub {
-  display: block;
-  margin-top: 4px;
-  font-size: 12px;
-  color: #666;
+  display: none;
+}
+@media (max-width: 700px) {
+  .lf-rate-confirm {
+    padding: 16px;
+  }
+  .lf-rate-confirm h3 {
+    margin-bottom: 8px;
+  }
+  .lf-rate-confirm p {
+    margin-bottom: 14px;
+  }
+  .lf-rate-stack {
+    gap: 12px;
+  }
 }
 .lf-crew-extra .lf-check { margin-bottom: 6px; }
 .lf-price-estimate-tag {
-  display: inline-block;
-  margin-left: 6px;
-  font-size: 14px;
-  font-weight: 800;
-  color: #8a6d12;
+  display: none;
 }
 
 .lf-review-email-note {
@@ -601,30 +610,25 @@ to remain visible inside the Webflow Designer.
   font-size: 11px;
 }
 
-.lf-step[data-step="5"] .lf-result {
-  margin-top: 0;
-  margin-bottom: 4px;
-}
-
 /* Keep the estimate amount visible immediately after submission */
 .lf-step[data-step="5"] .lf-confirmation-head {
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 
 .lf-step[data-step="5"] .lf-result {
   margin-top: 0;
-  margin-bottom: 14px;
-  padding: 14px 16px;
+  margin-bottom: 10px;
+  padding: 12px 14px;
 }
 
 .lf-step[data-step="5"] .lf-result h2 {
-  margin-bottom: 5px;
-  font-size: 17px;
+  margin: 0 0 2px;
+  font-size: 15px;
 }
 
 .lf-step[data-step="5"] .lf-price {
-  margin: 4px 0 8px;
-  font-size: clamp(27px, 4vw, 34px);
+  margin: 0 0 8px;
+  font-size: clamp(26px, 4vw, 32px);
   line-height: 1.1;
 }
 
@@ -660,7 +664,7 @@ legend.lf-heavy-prompt {
     <span class="lf-kicker">Scottsdale showroom</span>
     <h1>Delivery, Pickup &amp; Freight</h1>
     <p>Get a personalized <strong>estimate</strong> for local delivery, consignor pickup, or nationwide freight using our online tool.</p>
-    <div class="lf-notice"><strong>Estimate only.</strong> Your result is based on the information provided and is intended as a helpful pricing guide. Final pricing may change after measurements, travel time, labor, packaging, carrier rates, access requirements, capacity and special handling are confirmed.</div>
+    <div class="lf-notice"><strong>Estimate only.</strong> Your result is based on the information provided and is intended as a helpful pricing guide. Final pricing may change after measurements, travel time, labor, packaging, carrier rates, access requirements, and special handling are confirmed.</div>
   </div>
 
   <div class="lf-progress" aria-label="Calculator progress">
@@ -686,7 +690,7 @@ legend.lf-heavy-prompt {
           <label for="lfLocal">
             <em class="lf-choice-kicker">Local Arizona</em>
             <strong>Delivery to you</strong>
-            <span>Round-trip service from our Scottsdale showroom, including wrapping, loading, delivery, and placement.</span>
+            <span>Round-trip service from our Scottsdale showroom, including wrapping, loading, delivery, unloading, and placement.</span>
           </label>
         </div>
         <div class="lf-choice">
@@ -694,7 +698,7 @@ legend.lf-heavy-prompt {
           <label for="lfPickup">
             <em class="lf-choice-kicker">Consignor</em>
             <strong>Pickup to showroom</strong>
-            <span>Round-trip Arizona pickup service, including preparation, wrapping, loading, transportation to our Scottsdale showroom, and placement.</span>
+            <span>Round-trip Arizona pickup service, including preparation, wrapping, loading, transportation to our Scottsdale showroom, unloading, and placement.</span>
           </label>
         </div>
         <div class="lf-choice">
@@ -951,18 +955,10 @@ legend.lf-heavy-prompt {
 
       <div class="lf-summary" id="lfSummary"></div>
 
-      <div class="lf-alert success show" id="lfSentMessage">
-        Please keep the email receipt for your records. Our team will follow up if pricing, access, labor, freight class, or carrier details need to be confirmed.
-      </div>
-
       <div class="lf-next-actions">
         <a class="lf-btn olive lf-link-btn" href="https://www.lostandfoundresale.com/all-for-sale">Shop All</a>
         <a class="lf-btn secondary lf-link-btn" href="https://www.lostandfoundresale.com/faq">Visit FAQ</a>
       </div>
-
-      <p class="lf-fine">
-        This is an estimate from our online tool. Confirm pricing before scheduling.
-      </p>
     </section>
   </form>
 </div>
