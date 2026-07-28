@@ -993,9 +993,10 @@
               ?"3-Person Crew Estimate: "
               :"Your Preliminary Estimate Is ";
       const oneWay=est?est.drive_minutes:(minutes?Math.ceil(minutes):null);
-      const milesText=Number.isFinite(miles)&&miles>0?" — "+miles+" mi":"";
+      const milesText=Number.isFinite(miles)&&miles>0?" · "+miles+" mi":"";
       const driveStats=oneWay
-        ? '<p class="lf-drive-stats">'+oneWay+" min one way — "+(oneWay*2)+" min round trip"+milesText+"</p>"
+        ?'<p class="lf-drive-stats"><strong>Drive time to you:</strong> about '+oneWay+" min one way — "+(oneWay*2)+" min round trip"+milesText+"</p>"+
+          '<p class="lf-fine" style="margin:0 0 10px;">Includes a little extra time for a loaded delivery truck (not live traffic).</p>'
         : "";
       const mapUrl=preview?.route?.map_image_url||preview?.display?.map_image_url||"";
       const dirUrl=preview?.route?.directions_url||preview?.display?.directions_url||"";

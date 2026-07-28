@@ -4,6 +4,7 @@ import {
   palletizeItem,
   palletizeItems,
   calculateLocalRouteEstimate,
+  applyLocalTruckDriveMinutes,
   inferFreightClass,
   shouldMarkNonStackable,
   parseSetCountFromTitle,
@@ -18,6 +19,12 @@ import {
 
 test("local pricing: 15 min = $95", () => {
   assert.equal(calculateLocalRouteEstimate(15).estimated_price, 95);
+});
+
+test("truck drive time pads car ETA slightly (15 → 17)", () => {
+  assert.equal(applyLocalTruckDriveMinutes(15), 17);
+  assert.equal(applyLocalTruckDriveMinutes(10), 12);
+  assert.equal(applyLocalTruckDriveMinutes(8), 10);
 });
 
 test("local pricing: 17 min = $100", () => {
