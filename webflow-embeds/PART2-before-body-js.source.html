@@ -231,28 +231,38 @@
     };
   }
 
-  function rateConfirmHtml(strong){
+  function rateConfirmHtml(strong,isPickup){
+    const intro=isPickup
+      ?'This <strong>preliminary estimate</strong> is based on the information you submitted. Contact <strong>Ivan</strong> directly to confirm availability and <strong>final pricing</strong>, then let the shop know the confirmed pickup date by calling or emailing '+LF_MAIL+'.'
+      :'This <strong>preliminary estimate</strong> is based on the information you submitted. Review your details for accuracy, then contact the delivery partner or Lost &amp; Found Resale to confirm availability and <strong>final pricing</strong>.';
+    const partnerKicker=isPickup?'Confirm pricing with Ivan':'Delivery partner';
+    const partnerName=isPickup?'Ivan':'Cruz Pro Line';
+    const partnerSub=isPickup?'<span class="lf-rate-sub">Cruz Pro Line</span>':'';
+    const shopKicker=isPickup?'Notify the shop of your date':'Call the shop';
+    const shopExtra=isPickup?'<span class="lf-rate-shop-line">'+LF_MAIL+'</span>':'';
     return '<div class="lf-rate-confirm'+(strong?' strong':'')+'">'+
       '<h3>Next steps</h3>'+
-      '<p>This <strong>preliminary estimate</strong> is based on the information you submitted. Review your details for accuracy, then contact the delivery partner or Lost &amp; Found Resale to confirm availability and <strong>final pricing</strong>.</p>'+
+      '<p>'+intro+'</p>'+
       '<div class="lf-rate-stack">'+
         '<div class="lf-rate-card-panel">'+
           '<div class="lf-rate-card">'+
-            '<a href="tel:4803769485" aria-label="Call Cruz Pro Line"><img class="lf-rate-thumb" src="'+CRUZ_LOGO+'" alt="Cruz Pro Line"></a>'+
+            '<a href="tel:4803769485" aria-label="Call '+(isPickup?'Ivan':'Cruz Pro Line')+'"><img class="lf-rate-thumb" src="'+CRUZ_LOGO+'" alt="'+partnerName+'"></a>'+
             '<div class="lf-rate-card-text">'+
-              '<span class="lf-rate-kicker">Delivery partner</span>'+
-              '<strong><a class="lf-rate-name" href="tel:4803769485">Cruz Pro Line</a></strong>'+
+              '<span class="lf-rate-kicker">'+partnerKicker+'</span>'+
+              '<strong><a class="lf-rate-name" href="tel:4803769485">'+partnerName+'</a></strong>'+
+              partnerSub+
               '<a class="lf-rate-phone" href="tel:4803769485">480-376-9485</a>'+
             '</div>'+
           '</div>'+
         '</div>'+
         '<div class="lf-rate-card-panel">'+
           '<div class="lf-rate-card">'+
-            '<a href="tel:4805887006" aria-label="Call Lost and Found Resale"><img class="lf-rate-thumb lf-rate-store" src="'+LF_STORE+'" alt="Lost &amp; Found Scottsdale showroom"></a>'+
+            '<a href="'+(isPickup?'mailto:info@lostandfoundresale.com':'tel:4805887006')+'" aria-label="'+(isPickup?'Email Lost and Found Resale':'Call Lost and Found Resale')+'"><img class="lf-rate-thumb lf-rate-store" src="'+LF_STORE+'" alt="Lost &amp; Found Scottsdale showroom"></a>'+
             '<div class="lf-rate-card-text">'+
-              '<span class="lf-rate-kicker">Call the shop</span>'+
+              '<span class="lf-rate-kicker">'+shopKicker+'</span>'+
               '<strong><a class="lf-rate-name" href="tel:4805887006">Lost &amp; Found Resale</a></strong>'+
               '<a class="lf-rate-phone" href="tel:4805887006">480-588-7006</a>'+
+              shopExtra+
             '</div>'+
           '</div>'+
         '</div>'+
@@ -1427,7 +1437,7 @@
         '<div class="lf-price">'+priceLabel+displayedAmount+'</div>'+
         oversizeHtml+
         longHaulHtml+
-        rateConfirmHtml(true)+
+        rateConfirmHtml(true,isPickup)+
         driveStats+
         multiNote+
         stairNote+
