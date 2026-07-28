@@ -51,14 +51,15 @@ let html = htmlAfter
   .replace(/\n{2,}/g, "\n")
   .trim();
 
-// Hosted assets (loaded by Part 2 + CSS link in the tiny Webflow embed).
+// Hosted assets (CSS always from Render; HTML also hosted as fallback for thin mounts).
 fs.writeFileSync(hostedCssPath, minCss + "\n");
 fs.writeFileSync(hostedHtmlPath, html + "\n");
 
-// Tiny Webflow Embed paste — stays far under any character limit.
-const out = `<!-- LF freight calc Part 1 (loads CSS/HTML from Render). Edit source: PART1-embed-html-css.source.html then run node scripts/minify-freight-part1.mjs -->
+// Webflow Embed paste: external CSS + inline HTML so the form shows in the designer
+// (scripts still only run in Preview / published). Stays under Webflow's 50k limit.
+const out = `<!-- LF freight calc Part 1: CSS from Render + HTML inline for Webflow designer. Edit PART1-embed-html-css.source.html then run node scripts/minify-freight-part1.mjs -->
 <link rel="stylesheet" href="${API_BASE}/embeds/freight-part1.css">
-<div id="lfCalcHost"><p style="margin:24px auto;max-width:980px;padding:18px;font:14px/1.5 Arial,Helvetica,sans-serif;color:#555;text-align:center">Loading delivery calculator...</p></div>
+<div id="lfCalcHost">${html}</div>
 `;
 
 fs.writeFileSync(pastePath, out);

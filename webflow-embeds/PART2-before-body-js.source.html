@@ -22,6 +22,8 @@
 
   const LOCAL={baseMinutes:15,basePrice:95,referenceMinutes:8,referencePrice:15,threePersonHourly:130,longHaulRoundTripMiles:100,longHaulFactor:0.8,stairFeePerExtraFlight:7,oversizeWeight:299,oversizeHeight:72,oversizeWidth:72};
   let step=1,itemCounter=0,lastPreview=null,submitting=false;
+  let pathMismatchAcknowledged=false;
+  let pendingPathMismatch=null;
 
   const $=(s,r=document)=>r.querySelector(s);
   const $$=(s,r=document)=>Array.from(r.querySelectorAll(s));
@@ -456,6 +458,105 @@
       if(typeLabel)typeLabel.innerHTML='Delivery location <span class="lf-required">*</span>';
       if(streetLabel)streetLabel.innerHTML='Street address <span class="lf-required">*</span>';
     }
+  }
+
+  function isArizonaStateOrZip(state,zip){
+    const st=String(state||"").trim().toUpperCase();
+    if(st==="AZ"||st==="ARIZONA")return true;
+    const z=String(zip||"").replace(/\D/g,"").slice(0,5);
+    if(!/^\d{5}$/.test(z))return false;
+    const n=Number(z);
+    return n>=85001&&n<=86556;
+  }
+
+  function getPathAddressMismatch(){
+    const path=$('input[name="delivery_path"]:checked')?.value||"local_az";
+    const state=value("#lfState").toUpperCase();
+    const zip=value("#lfZip");
+    if(!state||!zip)return null;
+    const inAz=isArizonaStateOrZip(state,zip);
+    if((path==="local_az"||path==="pickup_az")&&!inAz){
+      if(path==="pickup_az"){
+        return {
+          required:true,
+          suggested:"nationwide",
+          switchLabel:"Switch to Nationwide Freight",
+          message:"This pickup address is outside Arizona. Local/consignor pickup estimates only work in Arizona — an out-of-state local estimate would be far too high and inaccurate. Switch to nationwide freight for destinations outside Arizona."
+        };
+      }
+      return {
+        required:true,
+        suggested:"nationwide",
+        switchLabel:"Switch to Nationwide Freight",
+        message:"You selected local Arizona delivery, but this address is outside Arizona. A local truck estimate would be far too high and inaccurate here. Switch to nationwide freight?"
+      };
+    }
+    if(path==="nationwide"&&inAz){
+      return {
+        required:false,
+        suggested:"local_az",
+        switchLabel:"Switch to Local Arizona Delivery",
+        message:"You selected nationwide freight, but this looks like an Arizona address. Local delivery is usually the better fit for in-state destinations — nationwide pricing can be higher. Switch to local Arizona delivery?"
+      };
+    }
+    return null;
+  }
+
+  function hidePathMismatch(){
+    const box=$("#lfPathMismatch");
+    if(!box)return;
+    box.hidden=true;
+    box.classList.remove("show");
+    pendingPathMismatch=null;
+  }
+
+  function showPathMismatch(mismatch){
+    const box=$("#lfPathMismatch");
+    const msg=$("#lfPathMismatchMsg");
+    const switchBtn=$("#lfPathMismatchSwitch");
+    const stayBtn=$("#lfPathMismatchStay");
+    if(!box||!msg||!mismatch)return;
+    pendingPathMismatch=mismatch;
+    msg.textContent=mismatch.message;
+    if(switchBtn)switchBtn.textContent=mismatch.switchLabel||"Switch path";
+    if(stayBtn){
+      stayBtn.hidden=!!mismatch.required;
+      stayBtn.textContent="Keep nationwide freight";
+    }
+    box.hidden=false;
+    box.classList.add("show");
+    box.scrollIntoView({behavior:"smooth",block:"nearest"});
+  }
+
+  function refreshPathMismatchPanel(){
+    pathMismatchAcknowledged=false;
+    const mismatch=getPathAddressMismatch();
+    if(!mismatch){
+      hidePathMismatch();
+      return null;
+    }
+    showPathMismatch(mismatch);
+    return mismatch;
+  }
+
+  function setDeliveryPath(newPath){
+    const radio=$('input[name="delivery_path"][value="'+newPath+'"]');
+    if(!radio)return;
+    radio.checked=true;
+    radio.dispatchEvent(new Event("change",{bubbles:true}));
+  }
+
+  function tryAdvanceFromAddress(){
+    if(!validateStep(2))return false;
+    const mismatch=getPathAddressMismatch();
+    if(mismatch&&!(pathMismatchAcknowledged&&!mismatch.required)){
+      showPathMismatch(mismatch);
+      return false;
+    }
+    hidePathMismatch();
+    updatePathDefaults();
+    setStep(3);
+    return true;
   }
 
   function clearCrewFields(){
@@ -984,7 +1085,7 @@
       const priceLabel=oversize
         ?"Best-Guess Estimate (Oversized — Confirm): "
         :longHaul
-          ?"Best-Guess Estimate (Out of Town — Confirm): "
+          ?"Best-Guess Estimate (Out of town — callout): "
           :extraPeople>=2
             ?"Two-Truck Estimate: "
             :extraPeople===1||payload.access.needs_more_than_two_people
@@ -1011,7 +1112,7 @@
         ?'<p class="lf-estimate-banner warn"><strong>Needs confirmation due to item size.</strong> At least one item is 299+ lb or over 72&quot; high or 72&quot; wide. Confirm pricing before scheduling. <strong>This is an estimate only.</strong></p>'
         :"";
       const longHaulHtml=longHaul
-        ?'<p class="lf-estimate-banner warn"><strong>Needs confirmation — out of town (100+ mile round trip).</strong> Confirm pricing before scheduling. <strong>This is an estimate only.</strong></p>'
+        ?'<p class="lf-estimate-banner"><strong>Out of town callout (100+ mile round trip).</strong> Longer Arizona trips (like farther cities) can still work with our local truck, but confirm pricing before scheduling. This is an estimate only.</p>'
         :"";
       const spotlightHtml='<p class="lf-estimate-banner"><strong>Confirm pricing before scheduling.</strong> This is an estimate from our online tool. A PDF of your submitted answers is in your email — review your questions and make sure all information and access details are accurate when you call to confirm.</p>';
 
@@ -1119,6 +1220,20 @@
       return;
     }
 
+    const pathMismatch=getPathAddressMismatch();
+    if(pathMismatch?.required){
+      showReviewAlert(pathMismatch.message);
+      setStep(2);
+      showPathMismatch(pathMismatch);
+      return;
+    }
+    if(pathMismatch&&!pathMismatchAcknowledged){
+      showReviewAlert(pathMismatch.message);
+      setStep(2);
+      showPathMismatch(pathMismatch);
+      return;
+    }
+
     if(!validateStep(3)){
       showReviewAlert("Please complete the item information before requesting the estimate.");
       setStep(3);
@@ -1199,11 +1314,40 @@
     }
   }
 
-  $$("[data-next]").forEach(btn=>btn.addEventListener("click",()=>{if(validateStep(step)){updatePathDefaults();setStep(step+1)}}));
+  $$("[data-next]").forEach(btn=>btn.addEventListener("click",()=>{
+    if(step===2){
+      tryAdvanceFromAddress();
+      return;
+    }
+    if(validateStep(step)){updatePathDefaults();setStep(step+1)}
+  }));
   $$("[data-back]").forEach(btn=>btn.addEventListener("click",()=>setStep(step-1)));
   $("#lfAddItem").addEventListener("click",()=>addItem());
   $("#lfReviewSubmit").addEventListener("click",reviewEstimateAndEmail);
   form.addEventListener("submit",e=>e.preventDefault());
+  if($("#lfPathMismatchSwitch"))$("#lfPathMismatchSwitch").addEventListener("click",()=>{
+    const mismatch=pendingPathMismatch||getPathAddressMismatch();
+    if(!mismatch?.suggested)return;
+    pathMismatchAcknowledged=false;
+    setDeliveryPath(mismatch.suggested);
+    hidePathMismatch();
+    updatePathDefaults();
+    if(validateStep(2))setStep(3);
+  });
+  if($("#lfPathMismatchStay"))$("#lfPathMismatchStay").addEventListener("click",()=>{
+    const mismatch=pendingPathMismatch||getPathAddressMismatch();
+    if(mismatch?.required)return;
+    pathMismatchAcknowledged=true;
+    hidePathMismatch();
+    updatePathDefaults();
+    if(validateStep(2))setStep(3);
+  });
+  ["#lfState","#lfZip"].forEach(sel=>{
+    const el=$(sel);
+    if(!el)return;
+    el.addEventListener("change",()=>{pathMismatchAcknowledged=false;refreshPathMismatchPanel()});
+    el.addEventListener("blur",()=>{refreshPathMismatchPanel()});
+  });
   $("#lfStairs").addEventListener("change",e=>{
     $("#lfStairDetails").hidden=!e.target.checked;
     if(!e.target.checked){
@@ -1229,11 +1373,16 @@
   if($("#lfWhiteGlove"))$("#lfWhiteGlove").addEventListener("change",()=>updateWhiteGloveAccess());
   $$('input[name="delivery_path"]').forEach(el=>el.addEventListener("change",()=>{
     const path=$('input[name="delivery_path"]:checked').value;
-    if(path==="local_az"||path==="pickup_az")$("#lfState").value="AZ";
+    pathMismatchAcknowledged=false;
+    if(path==="local_az"||path==="pickup_az"){
+      const st=value("#lfState").toUpperCase();
+      if(!st||st==="AZ"||isArizonaStateOrZip(st,value("#lfZip")))$("#lfState").value="AZ";
+    }
     updateAddressCopy(path);
     updateAccessCopy(path);
     updateWhatNext(path);
     syncHeavyAccessPrompts();
+    refreshPathMismatchPanel();
     // Flip/stack ask is nationwide-only; hide/clear when switching to local/pickup.
     $$(".lf-item",itemsWrap).forEach(node=>{
       const ask=$(".lf-stack-ask",node);

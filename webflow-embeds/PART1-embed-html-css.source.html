@@ -382,6 +382,25 @@ to remain visible inside the Webflow Designer.
   border-color: #c0392b;
   color: #5c2a24;
 }
+.lf-path-mismatch {
+  display: none;
+  margin: 14px 0 0;
+  padding: 14px 16px;
+  background: #fff8e8;
+  border: 2px solid #c9a227;
+  border-radius: 10px;
+}
+.lf-path-mismatch.show { display: block; }
+.lf-path-mismatch p {
+  margin: 0 0 12px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #5c4a10;
+}
+.lf-path-mismatch .lf-actions {
+  margin: 0;
+  gap: 8px;
+}
 .lf-rate-confirm {
   margin: 16px 0;
   padding: 16px 18px;
@@ -710,6 +729,13 @@ legend.lf-heavy-prompt {
         <div class="lf-field"><label for="lfCity">City <span class="lf-required">*</span></label><input id="lfCity" name="city" autocomplete="address-level2" required><div class="lf-error"></div></div>
         <div class="lf-field"><label for="lfState">State <span class="lf-required">*</span></label><input id="lfState" name="state" maxlength="2" value="AZ" autocomplete="address-level1" required><div class="lf-help">Use the two-letter state abbreviation.</div><div class="lf-error"></div></div>
         <div class="lf-field"><label for="lfZip">ZIP code <span class="lf-required">*</span></label><input id="lfZip" name="zip" inputmode="numeric" autocomplete="postal-code" required><div class="lf-error"></div></div>
+      </div>
+      <div class="lf-path-mismatch" id="lfPathMismatch" hidden>
+        <p id="lfPathMismatchMsg"></p>
+        <div class="lf-actions">
+          <button class="lf-btn" type="button" id="lfPathMismatchSwitch">Switch path</button>
+          <button class="lf-btn secondary" type="button" id="lfPathMismatchStay" hidden>Keep this path</button>
+        </div>
       </div>
       <div class="lf-step-note" id="lfAddressWhatNext"><strong>What happens next:</strong> Next, add your item(s) by copying and pasting the entire product title from the website — or the full product page URL — into the lookup field. You can also enter an item manually if needed.</div>
       <div class="lf-actions"><button class="lf-btn secondary" type="button" data-back>Back</button><button class="lf-btn" type="button" data-next>Continue</button></div>

@@ -61,7 +61,7 @@ function buildLocalDisplay(submission, local) {
     ? "Your Preliminary Pickup Estimate"
     : "Your Preliminary Delivery Estimate";
   if (oversize) label = "Best-Guess Estimate (Oversized — Confirm)";
-  else if (longHaul) label = "Best-Guess Estimate (Out of Town — Confirm)";
+  else if (longHaul) label = "Best-Guess Estimate (Out of town — callout)";
   else if (extraPeople >= 2) label = "Two-Truck Estimate";
   else if (extraPeople === 1 || extraCrew) label = "3-Person Crew Estimate";
   return {
@@ -389,6 +389,7 @@ router.post("/freight-quote", freightRateLimit, jsonParser, async (req, res) => 
         localEstimate: ctx.local_estimate || null,
         nationwideRate: ctx.nationwide_rate || null,
         reviewReasons: ctx.review_reasons || [],
+        display: ctx.display || null,
       });
       emails = {
         customer: {
