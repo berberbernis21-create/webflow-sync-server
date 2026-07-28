@@ -1378,7 +1378,7 @@
       const oneWay=est?est.drive_minutes:(minutes?Math.ceil(minutes):null);
       const driveStats=oneWay
         ?'<p class="lf-drive-stats">Estimated drive time: about '+oneWay+" minutes each way · "+(oneWay*2)+" minutes round trip"+(Number.isFinite(miles)&&miles>0?" · "+miles+" miles each way":"")+"</p>"+
-          '<p class="lf-fine lf-drive-note">Drive time includes additional time for a loaded delivery truck. Distance and time are based on the mapped route, not live traffic.</p>'
+          '<p class="lf-fine lf-drive-note">Distance and time are based on the mapped route, not live traffic.</p>'
         : (Number.isFinite(miles)&&miles>0
           ?'<p class="lf-drive-stats">Estimated distance: '+miles+" miles each way from our Scottsdale showroom</p>"
           :"");
