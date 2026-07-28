@@ -20,7 +20,7 @@
   const LF_STORE=API_BASE+"/brand/showroom-exterior.png";
   const crewHelp=_k=>"This is your opinion only — assume straps, dollies, and normal gear. If yes, choose 1 or 2 extra people and briefly explain why.";
 
-  const LOCAL={baseMinutes:15,basePrice:95,referenceMinutes:8,referencePrice:15,threePersonHourly:130,longHaulRoundTripMiles:100,longHaulFactor:0.8,stairFeePerExtraFlight:75,oversizeWeight:299,oversizeHeight:72,oversizeWidth:72};
+  const LOCAL={baseMinutes:15,basePrice:95,referenceMinutes:8,referencePrice:15,threePersonHourly:130,longHaulRoundTripMiles:100,longHaulFactor:0.8,stairFeePerExtraFlight:7,oversizeWeight:299,oversizeHeight:72,oversizeWidth:72};
   let step=1,itemCounter=0,lastPreview=null,submitting=false;
 
   const $=(s,r=document)=>r.querySelector(s);
@@ -175,7 +175,7 @@
     const longHaul=roundTripMiles!=null&&roundTripMiles>LOCAL.longHaulRoundTripMiles;
     const oversize=items.some(it=>{
       const w=Number(it.weight),h=Number(it.height),wd=Number(it.width);
-      return Number.isFinite(w)&&Number.isFinite(h)&&Number.isFinite(wd)&&w>=LOCAL.oversizeWeight&&h>LOCAL.oversizeHeight&&wd>LOCAL.oversizeWidth;
+      return (Number.isFinite(w)&&w>=LOCAL.oversizeWeight)||(Number.isFinite(h)&&h>LOCAL.oversizeHeight)||(Number.isFinite(wd)&&wd>LOCAL.oversizeWidth);
     });
     let extraPeople=Number(access.extra_people)||0;
     if(!access.needs_more_than_two_people&&!oversize)extraPeople=0;
@@ -892,9 +892,10 @@
 
   function buyItemsHtml(items,isPickup){
     if(isPickup)return"";
-    const cards=(items||[]).filter(i=>i.product_url).map(i=>{
+    const cards=(items||[]).map(i=>{
       const title=escapeHtml(i.title||"View item");
-      const url=escapeHtml(i.product_url);
+      const rawUrl=String(i.product_url||"").trim();
+      const url=escapeHtml(rawUrl||("https://www.lostandfoundresale.com/catalog?search="+encodeURIComponent(i.title||"")));
       const meta=[
         i.weight!=null?escapeHtml(i.weight)+" lb":null,
         i.price?money(i.price):null
@@ -906,7 +907,7 @@
         '<div class="lf-buy-card-body">'+
         '<p class="lf-buy-card-title">'+title+"</p>"+
         (meta?'<p class="lf-buy-card-meta">'+meta+"</p>":"")+
-        '<a class="lf-buy-card-cta" href="'+url+'" target="_blank" rel="noopener">Buy Now</a>'+
+        '<a class="lf-buy-card-cta" href="'+url+'" target="_blank" rel="noopener">'+(rawUrl?"Buy Now":"Find Item")+'</a>'+
         "</div></div>";
     }).join("");
     if(!cards)return"";
@@ -1004,7 +1005,7 @@
         :"Time is round-trip, not one way — includes wrap/prep, load/secure, offload, and placement.";
       const buyHtml=buyItemsHtml(payload.items,isPickup);
       const oversizeHtml=oversize
-        ?'<p class="lf-estimate-banner warn"><strong>Needs confirmation due to item size.</strong> At least one item is 299+ lb and over 72&quot; high and 72&quot; wide. Please contact us before scheduling. <strong>This is an estimate only.</strong></p>'
+        ?'<p class="lf-estimate-banner warn"><strong>Needs confirmation due to item size.</strong> At least one item is 299+ lb or over 72&quot; high or 72&quot; wide. Please contact us before scheduling. <strong>This is an estimate only.</strong></p>'
         :"";
       const longHaulHtml=longHaul
         ?'<p class="lf-estimate-banner warn"><strong>Needs confirmation — out of town (100+ mile round trip).</strong> Please contact us to confirm before scheduling. <strong>This is an estimate only.</strong></p>'

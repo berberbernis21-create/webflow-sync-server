@@ -407,7 +407,7 @@ test("local pricing: 2 extra people doubles estimate", () => {
   assert.equal(est.estimated_price, 190);
 });
 
-test("local pricing: stairs first flight free then $75", () => {
+test("local pricing: stairs first flight free then $7", () => {
   const one = calculateLocalRouteEstimate(15, {
     access: { stairs: true, stair_flights: 1 },
   });
@@ -417,14 +417,14 @@ test("local pricing: stairs first flight free then $75", () => {
   const two = calculateLocalRouteEstimate(15, {
     access: { stairs: true, stair_flights: 2 },
   });
-  assert.equal(two.stair_fee, 75);
-  assert.equal(two.estimated_price, 170);
+  assert.equal(two.stair_fee, 7);
+  assert.equal(two.estimated_price, 102);
 
   const three = calculateLocalRouteEstimate(15, {
     access: { stairs: true, stair_flights: 3 },
   });
-  assert.equal(three.stair_fee, 150);
-  assert.equal(three.estimated_price, 245);
+  assert.equal(three.stair_fee, 14);
+  assert.equal(three.estimated_price, 109);
 });
 
 test("local pricing: round trip over 100 miles uses 80% of $95", () => {
@@ -435,12 +435,24 @@ test("local pricing: round trip over 100 miles uses 80% of $95", () => {
 });
 
 test("local pricing: oversize item forces $130/hr", () => {
-  const est = calculateLocalRouteEstimate(15, {
+  const both = calculateLocalRouteEstimate(15, {
     items: [{ title: "Huge armoire", width: 80, height: 80, weight: 300 }],
   });
-  assert.equal(est.oversize_confirm, true);
-  assert.equal(est.hourly_rate, 130);
-  assert.equal(est.estimated_price, 130);
+  assert.equal(both.oversize_confirm, true);
+  assert.equal(both.hourly_rate, 130);
+  assert.equal(both.estimated_price, 130);
+
+  const tallOnly = calculateLocalRouteEstimate(15, {
+    items: [{ title: "Tall cabinet", width: 56, height: 92, weight: 200 }],
+  });
+  assert.equal(tallOnly.oversize_confirm, true);
+  assert.equal(tallOnly.hourly_rate, 130);
+
+  const heavyOnly = calculateLocalRouteEstimate(15, {
+    items: [{ title: "Heavy chest", width: 40, height: 40, weight: 300 }],
+  });
+  assert.equal(heavyOnly.oversize_confirm, true);
+  assert.equal(heavyOnly.hourly_rate, 130);
 });
 
 test("local validation requires extra_people when more than two selected", () => {
