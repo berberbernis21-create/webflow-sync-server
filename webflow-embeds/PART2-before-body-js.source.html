@@ -233,11 +233,11 @@
 
   function rateConfirmHtml(strong,isPickup){
     const intro=isPickup
-      ?'This <strong>preliminary estimate</strong> is based on the information you submitted. Contact <strong>Ivan</strong> directly to confirm availability and <strong>final pricing</strong>, then let the shop know the confirmed pickup date by calling or emailing '+LF_MAIL+'.'
+      ?'This <strong>preliminary estimate</strong> is based on the information you submitted. Contact <strong>Cruz Pro Line</strong> directly to confirm availability and <strong>final pricing</strong>, then let the shop know the confirmed pickup date by calling or emailing '+LF_MAIL+'.'
       :'This <strong>preliminary estimate</strong> is based on the information you submitted. Review your details for accuracy, then contact the delivery partner or Lost &amp; Found Resale to confirm availability and <strong>final pricing</strong>.';
-    const partnerKicker=isPickup?'Confirm pricing with Ivan':'Delivery partner';
-    const partnerName=isPickup?'Ivan':'Cruz Pro Line';
-    const partnerSub=isPickup?'<span class="lf-rate-sub">Cruz Pro Line</span>':'';
+    const partnerKicker=isPickup?'Confirm pricing':'Delivery partner';
+    const partnerName='Cruz Pro Line';
+    const partnerSub='';
     const shopKicker=isPickup?'Notify the shop of your date':'Call the shop';
     const shopExtra=isPickup?'<span class="lf-rate-shop-line">'+LF_MAIL+'</span>':'';
     return '<div class="lf-rate-confirm'+(strong?' strong':'')+'">'+
@@ -246,7 +246,7 @@
       '<div class="lf-rate-stack">'+
         '<div class="lf-rate-card-panel">'+
           '<div class="lf-rate-card">'+
-            '<a href="tel:4803769485" aria-label="Call '+(isPickup?'Ivan':'Cruz Pro Line')+'"><img class="lf-rate-thumb" src="'+CRUZ_LOGO+'" alt="'+partnerName+'"></a>'+
+            '<a href="tel:4803769485" aria-label="Call Cruz Pro Line"><img class="lf-rate-thumb" src="'+CRUZ_LOGO+'" alt="'+partnerName+'"></a>'+
             '<div class="lf-rate-card-text">'+
               '<span class="lf-rate-kicker">'+partnerKicker+'</span>'+
               '<strong><a class="lf-rate-name" href="tel:4803769485">'+partnerName+'</a></strong>'+
