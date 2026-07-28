@@ -10,7 +10,11 @@ const rawJsPath = path.join(dir, "_part2-raw.js");
 const minJsPath = path.join(dir, "_part2-min.js");
 
 const paste = fs.readFileSync(pastePath, "utf8");
-if (paste.includes("function localEstimate") || paste.includes("function buildPayload")) {
+// Only promote paste → source when paste is still the readable (non-minified) version.
+if (
+  !paste.includes("minified for Webflow 50k") &&
+  (paste.includes("function localEstimate") || paste.includes("function buildPayload") || paste.includes("function palletize"))
+) {
   fs.writeFileSync(sourcePath, paste);
 }
 

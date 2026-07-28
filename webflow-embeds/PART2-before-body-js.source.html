@@ -68,28 +68,51 @@
 
   function palletize(item){
     const w=num(item.width),d=num(item.depth),h=num(item.height),wt=num(item.weight);
+    const qty=Math.max(1,Math.floor(num(item.quantity)||1));
     const selectedClass=item.freight_class===null||item.freight_class===""?null:num(item.freight_class);
-    const setCount=Math.max(1,parseSetCount(item.title));
+    const setFromTitle=Math.max(1,parseSetCount(item.title));
+    const pieceCount=Math.max(1,setFromTitle*qty);
+    const claim=String(item.flip_stack_claimed||"").toLowerCase();
+    const forceFlip=qty>1&&claim==="yes";
+    const nestable=canNestStack(item.title,item.non_stackable);
     let freightH=h;
     let stackNote="";
-    if(setCount>1&&canNestStack(item.title,item.non_stackable)){
-      const add=nestAddIn(h,item.title);
-      freightH=h+(setCount-1)*add;
-      stackNote="stacked "+setCount+" pcs (~"+Math.ceil(freightH)+"\" before pallet board)";
+    let packingMode="single";
+    if(pieceCount>1&&(forceFlip||nestable)){
+      const add=forceFlip&&!nestable?3:nestAddIn(h,item.title);
+      freightH=h+(pieceCount-1)*add;
+      packingMode=forceFlip?"customer_flip_stack":"nested_stack";
+      stackNote=(forceFlip?"customer flip/stack ":"stacked ")+pieceCount+" pcs (~"+Math.ceil(freightH)+"\" before pallet board) — TEAM MUST CONFIRM";
+    }else if(pieceCount>1){
+      freightH=h*pieceCount;
+      packingMode="layered";
+      stackNote="qty "+qty+" layered (~"+Math.ceil(freightH)+"\" before pallet) — TEAM MUST CONFIRM";
     }else if(item.non_stackable){
       stackNote="non-stackable";
+    }
+
+    const notes=[];
+    if(qty>1){
+      notes.push("TEAM MUST CONFIRM multi-piece packing before final freight rates.");
+      if(forceFlip)notes.push("Customer claims flip/stack on one pallet.");
+      else if(claim==="no")notes.push("Customer says these should NOT be stacked.");
+      else if(claim==="unsure")notes.push("Customer is NOT SURE if these can flip/stack.");
     }
 
     return {
       width:w<=48?48:roundUp5(w),
       depth:d<=40?40:roundUp5(d),
       height:Math.ceil(freightH+5),
-      weight:Math.ceil(wt+30),
+      weight:Math.ceil(wt*qty+30),
       freight_class:selectedClass,
       packaging_type:"Pallet(s)",
       non_stackable:!!item.non_stackable,
-      set_count:setCount,
-      stack_note:stackNote
+      set_count:pieceCount,
+      stack_note:stackNote,
+      packing_mode:packingMode,
+      packing_notes:notes,
+      stack_confirm_required:qty>1||pieceCount>1,
+      flip_stack_claimed:qty>1?(claim||"unanswered"):null
     };
   }
 
@@ -216,6 +239,23 @@
       if(msg)valid=false;
     });
     if(n===3&&$$(".lf-item",itemsWrap).length===0){valid=false;alert("Add at least one item.");}
+    if(n===3){
+      $$(".lf-item",itemsWrap).forEach(node=>{
+        const qty=Math.max(1,Math.floor(num($(".lf-quantity",node).value)||1));
+        const err=$(".lf-flip-stack-error",node);
+        if(qty>=2){
+          const claim=$(".lf-flip-stack:checked",node)?.value||"";
+          if(!(claim==="yes"||claim==="no"||claim==="unsure")){
+            valid=false;
+            if(err)err.textContent="Choose yes, no, or not sure for flip/stack on one pallet.";
+          }else if(err){
+            err.textContent="";
+          }
+        }else if(err){
+          err.textContent="";
+        }
+      });
+    }
     if(n===4&&bool("#lfStairs")){
       const flights=num(value("#lfFlights"));
       if(flights<1){
@@ -494,6 +534,11 @@
       : "";
     $(".lf-class",node).value=initialClass;
     $(".lf-nonstack",node).checked=prefill.non_stackable??auto.nonStackable;
+    const flipName="lf_flip_stack_"+itemCounter;
+    $$(".lf-flip-stack",node).forEach(r=>{
+      r.name=flipName;
+      r.checked=String(prefill.flip_stack_claimed||"")===r.value;
+    });
 
     $(".lf-remove",node).addEventListener("click",()=>{
       node.remove();renumberItems();
@@ -501,7 +546,23 @@
     });
 
     $(".lf-lookup",node).addEventListener("click",()=>lookupItem(node));
-    [title,w,d,h,wt,$(".lf-class",node),$(".lf-nonstack",node)].forEach(el=>el.addEventListener("input",()=>updatePallet(node)));
+    const qtyInput=$(".lf-quantity",node);
+    const syncStackAsk=()=>{
+      const ask=$(".lf-stack-ask",node);
+      const q=Math.max(1,Math.floor(num(qtyInput.value)||1));
+      if(ask)ask.hidden=q<2;
+      if(q<2){
+        $$(".lf-flip-stack",node).forEach(r=>{r.checked=false});
+        const err=$(".lf-flip-stack-error",node);
+        if(err)err.textContent="";
+      }
+      updatePallet(node);
+    };
+    [title,w,d,h,wt,$(".lf-class",node),$(".lf-nonstack",node),qtyInput].forEach(el=>el.addEventListener("input",()=>{
+      if(el===qtyInput)syncStackAsk();
+      else updatePallet(node);
+    }));
+    $$(".lf-flip-stack",node).forEach(r=>r.addEventListener("change",()=>updatePallet(node)));
     title.addEventListener("change",()=>{
       const c=classify(title.value);
       $(".lf-nonstack",node).checked=c.nonStackable;
@@ -510,13 +571,15 @@
 
     itemsWrap.appendChild(node);
     applyItemFieldCopy(node,$('input[name="delivery_path"]:checked')?.value==="pickup_az");
-    updatePallet(node);
+    syncStackAsk();
   }
 
   function renumberItems(){$$(".lf-item",itemsWrap).forEach((el,i)=>$(".lf-item-number",el).textContent=String(i+1))}
 
   function itemFromNode(node){
     const pickup=$('input[name="delivery_path"]:checked')?.value==="pickup_az";
+    const qty=Math.max(1,num($(".lf-quantity",node).value)||1);
+    const flip=$(".lf-flip-stack:checked",node)?.value||"";
     const item={
       source:pickup?"manual":($(".lf-source",node).value||"manual"),
       title:$(".lf-title",node).value.trim(),
@@ -524,12 +587,13 @@
       depth:num($(".lf-depth",node).value),
       height:num($(".lf-height",node).value),
       weight:num($(".lf-weight",node).value),
-      quantity:Math.max(1,num($(".lf-quantity",node).value)||1),
+      quantity:qty,
       price:num($(".lf-price-input",node).value),
       product_url:pickup?"":$(".lf-url",node).value.trim(),
       image_url:pickup?"":($(".lf-image-url",node)?.value||"").trim(),
       freight_class:$(".lf-class",node).value===""?null:num($(".lf-class",node).value),
-      non_stackable:$(".lf-nonstack",node).checked
+      non_stackable:$(".lf-nonstack",node).checked,
+      flip_stack_claimed:qty>=2?flip:""
     };
     item.pallet=palletize(item);
     return item;
@@ -540,7 +604,8 @@
     if(!i.width||!i.depth||!i.height||!i.weight){box.textContent="Enter dimensions and weight to see the SOP freight entry.";return}
     const classText=i.pallet.freight_class===null?"Class to be confirmed":"Class "+i.pallet.freight_class;
     const stackBit=i.pallet.stack_note?" · "+i.pallet.stack_note:(i.pallet.non_stackable?" · Non-stackable":"");
-    box.innerHTML="<strong>Freight-ready entry:</strong> "+i.pallet.width+'" W × '+i.pallet.depth+'" D × '+i.pallet.height+'" H · '+i.pallet.weight+" lb · "+classText+stackBit;
+    const qtyBit=i.quantity>1?" · Qty "+i.quantity:"";
+    box.innerHTML="<strong>Freight-ready entry:</strong> "+i.pallet.width+'" W × '+i.pallet.depth+'" D × '+i.pallet.height+'" H · '+i.pallet.weight+" lb · "+classText+qtyBit+stackBit;
   }
 
   function extractListing(raw){

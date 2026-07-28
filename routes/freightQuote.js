@@ -107,6 +107,10 @@ function mapItemsForClient(items = []) {
         ? "To be confirmed"
         : String(it.freight_class),
     non_stackable: it.non_stackable,
+    flip_stack_claimed: it.flip_stack_claimed || it.pallet?.flip_stack_claimed || "",
+    stack_confirm_required: Boolean(
+      it.pallet?.stack_confirm_required || it.packing?.stack_confirm_required
+    ),
     pallet: it.pallet,
     ok: it.ok,
     missing: it.missing,
@@ -143,6 +147,25 @@ async function buildQuoteContext(submission) {
 
   const items = mapItemsForClient(submission.items);
   const accessorials = accessorialsFromAccess(submission.access);
+  const stackConfirmReasons = (submission.items || [])
+    .filter(
+      (it) =>
+        (Number(it.quantity) || 1) >= 2 ||
+        it.pallet?.stack_confirm_required ||
+        it.packing?.stack_confirm_required
+    )
+    .map((it) => {
+      const claim = it.flip_stack_claimed || it.pallet?.flip_stack_claimed || "unanswered";
+      const claimLabel =
+        claim === "yes"
+          ? "customer says YES flip/stack"
+          : claim === "no"
+            ? "customer says NO stack"
+            : claim === "unsure"
+              ? "customer NOT SURE"
+              : "stack answer missing";
+      return `CONFIRM STACKING: ${it.title || "Item"} (qty ${it.quantity || 1}) — ${claimLabel}. Warehouse must verify before final freight rates.`;
+    });
 
   if (submission.delivery_path === "nationwide") {
     const nationwide_rate = await fetchNationwideLiveRate(submission);
@@ -173,6 +196,7 @@ async function buildQuoteContext(submission) {
       requires_manual_review: true,
       review_reasons: [
         "Nationwide preliminary range only | confirm exact quote with freight partners",
+        ...stackConfirmReasons,
       ],
       multi_item_note: submission.multi_item_note || undefined,
       display: {
@@ -196,6 +220,9 @@ async function buildQuoteContext(submission) {
   }
 
   const display = buildLocalDisplay(submission, local);
+  const reviewReasons = [
+    ...new Set([...(display.review_reasons || []), ...stackConfirmReasons]),
+  ];
   return {
     delivery_path: submission.delivery_path || local.delivery_path || "local_az",
     address: {
@@ -205,12 +232,18 @@ async function buildQuoteContext(submission) {
     },
     route: local.route,
     local_estimate: local.local_estimate,
-    requires_manual_review: display.requires_manual_review,
-    review_reasons: display.review_reasons,
+    requires_manual_review:
+      Boolean(display.requires_manual_review) || stackConfirmReasons.length > 0,
+    review_reasons: reviewReasons,
     items,
     accessorials,
     multi_item_note: submission.multi_item_note || undefined,
-    display,
+    display: {
+      ...display,
+      requires_manual_review:
+        Boolean(display.requires_manual_review) || stackConfirmReasons.length > 0,
+      review_reasons: reviewReasons,
+    },
   };
 }
 

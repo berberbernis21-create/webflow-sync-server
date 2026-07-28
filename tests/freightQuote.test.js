@@ -302,6 +302,65 @@ test("stairs flights review reason", () => {
   assert.ok(reasons.some((r) => /1 extra person/i.test(r)));
 });
 
+test("qty 2 recliner flip-stack claim uses one pallet + small height add", () => {
+  const stacked = palletizeItem({
+    title: "La-Z-Boy Talladega Wall Recliner - 38X32X46H",
+    width: 38,
+    depth: 32,
+    height: 46,
+    weight: 95,
+    quantity: 2,
+    flip_stack_claimed: "yes",
+  });
+  assert.equal(stacked.ok, true);
+  assert.equal(stacked.pallet.weight, 220);
+  assert.equal(stacked.pallet.width, 48);
+  assert.equal(stacked.pallet.depth, 40);
+  assert.equal(stacked.pallet.height, 54); // 46 + 3 + 5 pallet
+  assert.equal(stacked.pallet.stack_confirm_required, true);
+  assert.match(stacked.pallet.packing_notes.join(" "), /TEAM MUST CONFIRM/i);
+
+  const layered = palletizeItem({
+    title: "La-Z-Boy Talladega Wall Recliner - 38X32X46H",
+    width: 38,
+    depth: 32,
+    height: 46,
+    weight: 95,
+    quantity: 2,
+    flip_stack_claimed: "no",
+  });
+  assert.equal(layered.ok, true);
+  assert.equal(layered.pallet.weight, 220);
+  assert.ok(layered.pallet.height >= 46 * 2);
+});
+
+test("qty 2 requires flip_stack_claimed on validate", () => {
+  const v = validateFreightQuoteRequest({
+    customer_name: "Test User",
+    customer_email: "test@example.com",
+    customer_phone: "4805551212",
+    street: "7167 E Rancho Vista Dr",
+    city: "Scottsdale",
+    state: "AZ",
+    zip: "85251",
+    delivery_path: "nationwide",
+    request_mode: "estimate",
+    access: { stairs: false, needs_more_than_two_people: false },
+    items: [
+      {
+        title: "La-Z-Boy Talladega Wall Recliner",
+        width: 38,
+        depth: 32,
+        height: 46,
+        weight: 95,
+        quantity: 2,
+      },
+    ],
+  });
+  assert.equal(v.ok, false);
+  assert.match(String(v.error || ""), /flipped\/stacked|flip\/stack/i);
+});
+
 test("local pricing: 1 extra person uses $130/hr", () => {
   const est = calculateLocalRouteEstimate(15, {
     access: { needs_more_than_two_people: true, extra_people: 1 },
