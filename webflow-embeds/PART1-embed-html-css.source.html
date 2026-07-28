@@ -16,29 +16,30 @@ to remain visible inside the Webflow Designer.
 :root{--lf-navy:#07127c;--lf-olive:#516044;--lf-cream:#fbfaf6;--lf-soft:#f5f2eb;--lf-border:#d8d2c6;--lf-text:#151515;--lf-muted:#5c5c5c;--lf-green:#2f5a32;--lf-orange:#8a4f08;--lf-red:#9c2f2f;--lf-white:#fff}
 .w-embed:has(.lf-calc){display:block!important;width:100%!important;max-width:100%!important}
 .lf-calc,.lf-calc *{box-sizing:border-box}
-.lf-calc{width:100%;max-width:980px;margin:22px auto;font-family:Arial,Helvetica,sans-serif;color:var(--lf-text);line-height:1.45}
-.lf-hero,.lf-step{border:1px solid var(--lf-border);border-radius:12px;background:var(--lf-white);box-shadow:0 4px 20px rgba(7,18,124,.04)}
-.lf-hero{padding:28px 26px 24px;text-align:center;background:linear-gradient(180deg,#fbfaf6 0%,#f7f4ec 100%)}
+.lf-calc{width:100%;max-width:980px;margin:22px auto;font-family:Arial,Helvetica,sans-serif;color:var(--lf-text);line-height:1.45;text-align:left}
+.lf-hero,.lf-step{width:100%;border:1px solid var(--lf-border);border-radius:12px;background:var(--lf-white);box-shadow:0 4px 20px rgba(7,18,124,.04);padding:24px}
+.lf-hero{text-align:center;background:linear-gradient(180deg,#fbfaf6 0%,#f7f4ec 100%)}
 .lf-kicker{display:inline-block;margin-bottom:10px;padding:5px 10px;border-radius:999px;background:var(--lf-navy);color:#fff;font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
 .lf-hero h1{margin:0 0 10px;color:var(--lf-navy);font-size:clamp(26px,4vw,38px);line-height:1.1;letter-spacing:-.02em}
 .lf-hero>p{max-width:640px;margin:0 auto;font-size:14px;line-height:1.55;color:#3a3a3a}
-.lf-notice{margin-top:16px;padding:12px 14px;border:1px solid #e3ddd0;border-left:3px solid var(--lf-olive);border-radius:8px;background:rgba(255,255,255,.72);font-size:12px;line-height:1.5;text-align:left;color:#3a3a3a}
-.lf-progress{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin:14px 0 4px}
-.lf-progress div{padding:9px 6px;border:1px solid transparent;border-radius:999px;background:var(--lf-soft);color:var(--lf-muted);text-align:center;font-size:10px;font-weight:800;letter-spacing:.02em}
+.lf-notice{margin-top:16px;padding:12px 14px;border:1px solid #e3ddd0;border-left:3px solid var(--lf-olive);border-radius:8px;background:rgba(255,255,255,.72);font-size:12px;line-height:1.5;text-align:left;color:#3a3a3a;width:100%;box-sizing:border-box}
+.lf-progress{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin:14px 0;width:100%;box-sizing:border-box}
+.lf-progress div{padding:9px 6px;border:1px solid transparent;border-radius:999px;background:var(--lf-soft);color:var(--lf-muted);text-align:center;font-size:10px;font-weight:800;letter-spacing:.02em;min-width:0}
 .lf-progress div.active{border-color:var(--lf-navy);background:var(--lf-navy);color:#fff;box-shadow:0 2px 8px rgba(7,18,124,.18)}
-.lf-step{padding:22px 22px 20px;margin-top:12px}
+.lf-step{margin-top:0;text-align:left}
 .lf-step[hidden]{display:none!important}
-.lf-head{margin-bottom:16px}
+.lf-head{margin-bottom:16px;text-align:left}
 .lf-path-badge{display:inline-block;margin:0 0 8px;padding:4px 10px;border-radius:999px;background:var(--lf-soft);border:1px solid var(--lf-border);color:var(--lf-navy);font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
-.lf-head h2{margin:0 0 6px;color:var(--lf-navy);font-size:22px;line-height:1.2;letter-spacing:-.02em}
-.lf-head p{margin:0;color:var(--lf-muted);font-size:13px;line-height:1.45;max-width:40em}
+.lf-head h2{margin:0 0 6px;color:var(--lf-navy);font-size:22px;line-height:1.2;letter-spacing:-.02em;text-align:left}
+.lf-head p{margin:0;color:var(--lf-muted);font-size:13px;line-height:1.45;max-width:none;text-align:left}
 .lf-step-note{margin:18px 0 0;padding:13px 15px;border:1px solid var(--lf-border);border-radius:10px;background:var(--lf-soft);color:#333;font-size:12.5px;line-height:1.55}
 .lf-step-note strong{color:var(--lf-navy);font-weight:800}
-.lf-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-.lf-grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.lf-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start;width:100%}
+.lf-grid3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;align-items:start;width:100%}
 .lf-span{grid-column:1/-1}
-.lf-field label,.lf-fieldset legend{display:block;margin-bottom:5px;font-size:11px;font-weight:800}
-.lf-field input,.lf-field select,.lf-field textarea{width:100%;min-height:44px;padding:10px 11px;border:1px solid #cbc5ba;border-radius:5px;background:#fff;color:var(--lf-text);font:inherit;font-size:13px;outline:none}
+.lf-field{min-width:0;text-align:left}
+.lf-field label,.lf-fieldset legend{display:block;margin-bottom:5px;font-size:11px;font-weight:800;text-align:left}
+.lf-field input,.lf-field select,.lf-field textarea{width:100%;min-height:44px;padding:10px 11px;border:1px solid #cbc5ba;border-radius:5px;background:#fff;color:var(--lf-text);font:inherit;font-size:13px;outline:none;text-align:left}
 .lf-field textarea{min-height:90px;resize:vertical}
 .lf-field input:focus,.lf-field select:focus,.lf-field textarea:focus{border-color:var(--lf-navy);box-shadow:0 0 0 3px rgba(7,18,124,.1)}
 .lf-field input[aria-invalid=true],.lf-field select[aria-invalid=true],.lf-field textarea[aria-invalid=true]{border-color:var(--lf-red);box-shadow:0 0 0 3px rgba(156,47,47,.08)}
@@ -149,11 +150,12 @@ to remain visible inside the Webflow Designer.
 .lf-spin{display:inline-block;width:13px;height:13px;margin-right:6px;border:2px solid rgba(255,255,255,.45);border-top-color:#fff;border-radius:50%;vertical-align:-2px;animation:lfspin .7s linear infinite}
 @keyframes lfspin{to{transform:rotate(360deg)}}
 @media(max-width:767px){
- .lf-hero,.lf-step{padding:15px}
+ .lf-hero,.lf-step{padding:16px}
  .lf-grid,.lf-grid3,.lf-choice-grid,.lf-access-grid,.lf-lookup-row{grid-template-columns:1fr}
  .lf-progress{grid-template-columns:1fr}
  .lf-progress div{display:none}.lf-progress div.active{display:block}
  .lf-actions,.lf-actions-right{flex-direction:column;width:100%;margin-left:0}
+ .lf-path-mismatch .lf-actions .lf-btn{min-width:0;width:100%}
  .lf-btn{width:100%;min-height:48px;font-size:15px}
  .lf-field input,.lf-field select,.lf-field textarea{font-size:16px;min-height:48px}
  .lf-check{padding:12px 10px;gap:12px;font-size:13px;line-height:1.4}
@@ -394,6 +396,9 @@ to remain visible inside the Webflow Designer.
   background: #fff8e8;
   border: 2px solid #c9a227;
   border-radius: 10px;
+  text-align: left;
+  width: 100%;
+  box-sizing: border-box;
 }
 .lf-path-mismatch.show { display: block; }
 .lf-path-mismatch p {
@@ -401,10 +406,17 @@ to remain visible inside the Webflow Designer.
   font-size: 14px;
   line-height: 1.5;
   color: #5c4a10;
+  text-align: left;
 }
 .lf-path-mismatch .lf-actions {
   margin: 0;
   gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+.lf-path-mismatch .lf-actions .lf-btn {
+  flex: 1 1 auto;
+  min-width: 140px;
 }
 .lf-rate-confirm {
   margin: 12px 0 14px;
@@ -566,6 +578,27 @@ to remain visible inside the Webflow Designer.
   gap: 10px;
   margin-top: 16px;
 }
+.lf-restart-wrap {
+  margin: 16px 0 4px;
+  padding: 16px;
+  border: 1px solid var(--lf-border);
+  border-radius: 10px;
+  background: var(--lf-cream);
+  text-align: center;
+}
+.lf-restart-wrap p {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--lf-muted);
+}
+.lf-restart-wrap .lf-btn {
+  width: 100%;
+  max-width: 420px;
+}
+.lf-next-actions .lf-btn-restart {
+  grid-column: 1 / -1;
+}
 
 .lf-link-btn {
   display: flex;
@@ -718,13 +751,12 @@ legend.lf-heavy-prompt {
     </section>
 
     <section class="lf-step" data-step="2" hidden>
-      <div class="lf-head" id="lfAddressHead"><span class="lf-path-badge" data-path-badge>Local Delivery</span><h2>Contact &amp; Delivery Address</h2><p id="lfAddressHelp">A valid email and complete delivery address are required.</p></div>
+      <div class="lf-head" id="lfAddressHead"><span class="lf-path-badge" data-path-badge>Local Delivery</span><h2>Contact &amp; Delivery Address</h2><p id="lfAddressHelp">A valid email and complete delivery address are required. Your estimate summary is emailed to the address you enter. Enter ZIP first — city and state fill in automatically. Nationwide freight is available in the contiguous U.S. (not Hawaii or Alaska).</p></div>
       <div class="lf-grid">
         <div class="lf-field"><label for="lfName">Full name <span class="lf-required">*</span></label><input id="lfName" name="customer_name" autocomplete="name" required><div class="lf-error"></div></div>
         <div class="lf-field">
           <label for="lfEmail">Email <span class="lf-required">*</span></label>
           <input id="lfEmail" name="customer_email" type="email" autocomplete="email" required>
-          <div class="lf-help">Required. Your estimate summary and email receipt will be sent to this address.</div>
           <div class="lf-error"></div>
         </div>
         <div class="lf-field"><label for="lfPhone">Phone</label><input id="lfPhone" name="customer_phone" type="tel" autocomplete="tel"><div class="lf-error"></div></div>
@@ -732,14 +764,15 @@ legend.lf-heavy-prompt {
         <div class="lf-field lf-span"><label for="lfStreet" id="lfStreetLabel">Street address <span class="lf-required">*</span></label><input id="lfStreet" name="street" autocomplete="street-address" required><div class="lf-error"></div></div>
         <div class="lf-field"><label for="lfUnit">Unit, suite, building</label><input id="lfUnit" name="unit" autocomplete="address-line2"><div class="lf-error"></div></div>
         <div class="lf-field"><label for="lfCity">City <span class="lf-required">*</span></label><input id="lfCity" name="city" autocomplete="address-level2" required><div class="lf-error"></div></div>
-        <div class="lf-field"><label for="lfState">State <span class="lf-required">*</span></label><input id="lfState" name="state" maxlength="2" value="AZ" autocomplete="address-level1" required><div class="lf-help">Use the two-letter state abbreviation.</div><div class="lf-error"></div></div>
-        <div class="lf-field"><label for="lfZip">ZIP code <span class="lf-required">*</span></label><input id="lfZip" name="zip" inputmode="numeric" autocomplete="postal-code" required><div class="lf-help">Enter ZIP first — city and state fill in automatically. Nationwide freight is available in the contiguous U.S. (not Hawaii or Alaska).</div><div class="lf-error"></div></div>
+        <div class="lf-field"><label for="lfState">State <span class="lf-required">*</span></label><input id="lfState" name="state" maxlength="2" value="AZ" autocomplete="address-level1" required><div class="lf-error"></div></div>
+        <div class="lf-field lf-span"><label for="lfZip">ZIP code <span class="lf-required">*</span></label><input id="lfZip" name="zip" inputmode="numeric" autocomplete="postal-code" required><div class="lf-error"></div></div>
       </div>
       <div class="lf-path-mismatch" id="lfPathMismatch" hidden>
         <p id="lfPathMismatchMsg"></p>
         <div class="lf-actions">
           <button class="lf-btn" type="button" id="lfPathMismatchSwitch">Switch path</button>
           <button class="lf-btn secondary" type="button" id="lfPathMismatchStay" hidden>Keep this path</button>
+          <button class="lf-btn secondary" type="button" id="lfPathMismatchEdit">Change address</button>
         </div>
       </div>
       <div class="lf-step-note" id="lfAddressWhatNext"><strong>What happens next:</strong> Next, add your item(s) by copying and pasting the entire product title from the website — or the full product page URL — into the lookup field. You can also enter an item manually if needed.</div>
@@ -750,9 +783,9 @@ legend.lf-heavy-prompt {
       <div class="lf-head">
         <span class="lf-path-badge" data-path-badge>Local Delivery</span>
         <h2 id="lfItemsHeadTitle">Add the Item or Items</h2>
-        <p id="lfItemsHeadHelp">Copy and paste the <strong>entire product title</strong> from the website listing, or paste the <strong>full product page URL</strong>. Then click Find Item. You can still enter everything manually if nothing is found.</p>
+        <p id="lfItemsHeadHelp" hidden></p>
       </div>
-      <div class="lf-step-note" id="lfItemsHowTo"><strong>How to look up an item:</strong> On the product page, select the full title and copy it, then paste it here — or copy the full website address from your browser’s address bar and paste that instead. Partial titles often won’t match.</div>
+      <div class="lf-step-note" id="lfItemsHowTo"><strong>How to look up an item:</strong> On the product page, copy the <strong>entire listing title</strong> or the <strong>full product page URL</strong> from your browser’s address bar, paste it below, then click Find Item. Partial titles often won’t match. You can still enter dimensions manually if nothing is found.</div>
       <div class="lf-items" id="lfItems"></div>
       <div style="margin-top:11px"><button class="lf-btn secondary" id="lfAddItem" type="button">+ Add Another Item</button></div>
       <div class="lf-step-note" id="lfItemsWhatNext"><strong>What happens next:</strong> After your items, we’ll ask about stairs, access, and handling — then you review, and we email a preliminary estimate so we can confirm final pricing.</div>
@@ -907,6 +940,11 @@ legend.lf-heavy-prompt {
 
       <div class="lf-result" id="lfResult"></div>
 
+      <div class="lf-restart-wrap">
+        <p>Need another estimate? Start fresh with a new delivery, pickup, or freight quote.</p>
+        <button class="lf-btn" type="button" id="lfStartNewQuoteTop">Start New Quote</button>
+      </div>
+
       <div class="lf-social-follow" id="lfSocialFollow">
         <h3>Follow Lost &amp; Found</h3>
         <p class="lf-social-buyer" id="lfSocialBuyerCopy">Stay in the loop. Lots of new pieces and items show up and get featured here, and we post multiple times a day.</p>
@@ -956,6 +994,7 @@ legend.lf-heavy-prompt {
       <div class="lf-summary" id="lfSummary"></div>
 
       <div class="lf-next-actions">
+        <button class="lf-btn lf-btn-restart" type="button" id="lfStartNewQuote">Start New Quote</button>
         <a class="lf-btn olive lf-link-btn" href="https://www.lostandfoundresale.com/all-for-sale">Shop All</a>
         <a class="lf-btn secondary lf-link-btn" href="https://www.lostandfoundresale.com/faq">Visit FAQ</a>
       </div>
@@ -967,7 +1006,7 @@ legend.lf-heavy-prompt {
   <article class="lf-item">
     <div class="lf-item-head"><h3>Item <span class="lf-item-number"></span></h3><button class="lf-remove" type="button">Remove</button></div>
     <div class="lf-lookup-row">
-      <div class="lf-field"><label class="lf-title-label">Website listing title or product URL <span class="lf-required">*</span></label><input class="lf-title" required placeholder="Copy and paste the entire product title, or the full product page URL"><div class="lf-help lf-title-help">Copy the full title from the listing page (not a shortened name), or paste the full lostandfoundresale.com product link from your browser. Then click Find Item. You can still fill in dimensions manually if nothing is found.</div><div class="lf-error"></div></div>
+      <div class="lf-field"><label class="lf-title-label">Website listing title or product URL <span class="lf-required">*</span></label><input class="lf-title" required placeholder="Paste the entire product title, or the full product page URL"><div class="lf-help lf-title-help" hidden></div><div class="lf-error"></div></div>
       <button class="lf-btn lf-lookup" type="button">Find Item</button>
     </div>
     <div class="lf-lookup-message"></div>

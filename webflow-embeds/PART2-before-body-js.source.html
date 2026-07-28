@@ -10,23 +10,22 @@
   const ZIP_URL=API_BASE+"/api/freight-zip";
   const MARKUP_URL=API_BASE+"/embeds/freight-part1.html";
   const ORIGIN_ADDRESS="15530 N Greenway Hayden Loop Ste 100, Scottsdale, AZ 85260";
-  const REDIRECT_URL="https://www.lostandfoundresale.com/faq";
-  const REDIRECT_DELAY_MS=4500;
   const JSON_HDR={"Content-Type":"application/json","Accept":"application/json"};
   const LF_MAIL='<a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a>';
   const LF_TEL='<a href="tel:4805887006"><strong>480-588-7006</strong></a>';
-  const CRUZ_TEL='<a href="tel:4803769485"><strong>480-376-9485</strong></a>';
   const CRUZ_LOGO=API_BASE+"/brand/cruz-pro-line-truck.png";
-  const LF_LOGO=API_BASE+"/brand/logo-wordmark.png";
   const LF_STORE=API_BASE+"/brand/showroom-exterior-v2.png";
   const crewHelp=_k=>"This is your opinion only — assume straps, dollies, and normal gear. If yes, choose 1 or 2 extra people and briefly explain why.";
 
   const LOCAL={baseMinutes:15,basePrice:95,referenceMinutes:8,referencePrice:15,threePersonHourly:130,longHaulRoundTripMiles:100,longHaulFactor:0.8,stairFeePerExtraFlight:7,oversizeWeight:299,oversizeHeight:72,oversizeWidth:72};
+  const DRAFT_KEY="lfFreightDraft_v1";
   let step=1,itemCounter=0,lastPreview=null,submitting=false;
   let pathMismatchAcknowledged=false;
   let pendingPathMismatch=null;
   let zipLookupTimer=null;
   let zipLookupSeq=0;
+  let draftTimer=null;
+  let restoringDraft=false;
 
   const $=(s,r=document)=>r.querySelector(s);
   const $$=(s,r=document)=>Array.from(r.querySelectorAll(s));
@@ -259,12 +258,144 @@
     '</div>';
   }
 
-  function setStep(next){
+  function setStep(next,opts){
     step=Math.max(1,Math.min(5,next));
     $$(".lf-step").forEach(el=>el.hidden=Number(el.dataset.step)!==step);
     $$(".lf-progress div").forEach(el=>el.classList.toggle("active",Number(el.dataset.progress)===step));
     if(step===4)syncHeavyAccessPrompts();
-    $("#lfCalc").scrollIntoView({behavior:"smooth",block:"start"});
+    if(!opts||opts.scroll!==false)$("#lfCalc").scrollIntoView({behavior:"smooth",block:"start"});
+    if(step<5)scheduleSaveDraft();
+  }
+
+  function clearDraft(){
+    try{sessionStorage.removeItem(DRAFT_KEY)}catch(_e){}
+  }
+
+  function startNewQuote(){
+    clearDraft();
+    submitting=false;
+    lastPreview=null;
+    pathMismatchAcknowledged=false;
+    pendingPathMismatch=null;
+    hidePathMismatch();
+    form.reset();
+    const localRadio=$("#lfLocal");
+    if(localRadio)localRadio.checked=true;
+    if($("#lfState"))$("#lfState").value="AZ";
+    if($("#lfLiftgateDelivery"))$("#lfLiftgateDelivery").checked=true;
+    if($("#lfRequestMode"))$("#lfRequestMode").value="estimate";
+    if($("#lfReviewAgree"))$("#lfReviewAgree").checked=false;
+    ["#lfStairDetails","#lfElevatorDetails","#lfGateDetails","#lfCrewDetails"].forEach(sel=>{
+      const el=$(sel);
+      if(el)el.hidden=true;
+    });
+    $$('input[name="lf_extra_people"]').forEach(r=>{r.checked=false});
+    itemsWrap.innerHTML="";
+    itemCounter=0;
+    addItem();
+    const result=$("#lfResult");
+    if(result){result.innerHTML="";result.classList.remove("show")}
+    const summary=$("#lfSummary");
+    if(summary)summary.innerHTML="";
+    const alert=$("#lfReviewAlert");
+    if(alert){alert.textContent="";alert.className="lf-alert error"}
+    const btn=$("#lfReviewSubmit");
+    if(btn){btn.disabled=false;btn.textContent="Submit & Email My Receipt"}
+    updatePathDefaults();
+    updateWhiteGloveAccess();
+    syncHeavyAccessPrompts();
+    setStep(1);
+  }
+
+  function scheduleSaveDraft(){
+    if(restoringDraft||step>=5)return;
+    clearTimeout(draftTimer);
+    draftTimer=setTimeout(saveDraft,250);
+  }
+
+  function collectDraft(){
+    const fieldIds=["lfName","lfEmail","lfPhone","lfType","lfStreet","lfUnit","lfCity","lfState","lfZip","lfStairs","lfFlights","lfStairNotes","lfTight","lfInside","lfUnpack","lfElevator","lfElevatorNotes","lfGate","lfGateCode","lfCrew","lfCrewWhy","lfDisassembly","lfLongCarry","lfParking","lfFragile","lfNotes","lfWhiteGlove","lfWarehousePickup","lfLiftgateDelivery","lfDock","lfRequestMode","lfReviewAgree"];
+    const fields={};
+    fieldIds.forEach(id=>{
+      const el=$("#"+id);
+      if(!el)return;
+      fields[id]=el.type==="checkbox"?!!el.checked:el.value;
+    });
+    return {
+      v:1,
+      step:Math.min(step,4),
+      pathMismatchAcknowledged:!!pathMismatchAcknowledged,
+      path:$('input[name="delivery_path"]:checked')?.value||"local_az",
+      fields,
+      extraPeople:$('input[name="lf_extra_people"]:checked')?.value||"",
+      items:$$(".lf-item",itemsWrap).map(node=>({
+        title:$(".lf-title",node)?.value||"",
+        width:$(".lf-width",node)?.value||"",
+        depth:$(".lf-depth",node)?.value||"",
+        height:$(".lf-height",node)?.value||"",
+        weight:$(".lf-weight",node)?.value||"",
+        quantity:$(".lf-quantity",node)?.value||"1",
+        price:$(".lf-price-input",node)?.value||"",
+        product_url:$(".lf-url",node)?.value||"",
+        image_url:$(".lf-image-url",node)?.value||"",
+        source:$(".lf-source",node)?.value||"manual",
+        freight_class:$(".lf-class",node)?.value||"",
+        non_stackable:!!$(".lf-nonstack",node)?.checked,
+        flip_stack_claimed:$(".lf-flip-stack:checked",node)?.value||""
+      }))
+    };
+  }
+
+  function saveDraft(){
+    if(restoringDraft)return;
+    try{sessionStorage.setItem(DRAFT_KEY,JSON.stringify(collectDraft()))}catch(_e){}
+  }
+
+  function applyDraft(draft){
+    if(!draft||typeof draft!=="object")return false;
+    restoringDraft=true;
+    try{
+      if(draft.path){
+        const radio=$('input[name="delivery_path"][value="'+draft.path+'"]');
+        if(radio)radio.checked=true;
+      }
+      const fields=draft.fields||{};
+      Object.keys(fields).forEach(id=>{
+        const el=$("#"+id);
+        if(!el)return;
+        if(el.type==="checkbox")el.checked=!!fields[id];
+        else el.value=fields[id]==null?"":String(fields[id]);
+      });
+      if(draft.extraPeople){
+        const r=$('input[name="lf_extra_people"][value="'+draft.extraPeople+'"]');
+        if(r)r.checked=true;
+      }
+      if($("#lfStairDetails"))$("#lfStairDetails").hidden=!bool("#lfStairs");
+      if($("#lfElevatorDetails"))$("#lfElevatorDetails").hidden=!bool("#lfElevator");
+      if($("#lfGateDetails"))$("#lfGateDetails").hidden=!bool("#lfGate");
+      if($("#lfCrewDetails"))$("#lfCrewDetails").hidden=!bool("#lfCrew");
+      itemsWrap.innerHTML="";
+      itemCounter=0;
+      const items=Array.isArray(draft.items)&&draft.items.length?draft.items:[{}];
+      items.forEach(it=>addItem(it));
+      pathMismatchAcknowledged=!!draft.pathMismatchAcknowledged;
+      const path=$('input[name="delivery_path"]:checked')?.value||"local_az";
+      updatePathBadges(path);
+      updateAddressCopy(path);
+      updateAccessCopy(path);
+      updateWhatNext(path);
+      updateHeroNotice(path);
+      updatePathDefaults();
+      updateWhiteGloveAccess(path);
+      syncHeavyAccessPrompts();
+      setStep(Math.max(1,Math.min(4,Number(draft.step)||1)),{scroll:false});
+      refreshPathMismatchPanel();
+      return true;
+    }catch(_e){
+      return false;
+    }finally{
+      restoringDraft=false;
+    }
   }
 
   function itemsHaveHeavyWeight(){
@@ -409,7 +540,10 @@
     const lookup=$(".lf-lookup",node);
     if(pickup){
       if(label)label.innerHTML='Item description / name <span class="lf-required">*</span>';
-      if(help)help.textContent="Enter a clear description for this piece (for example: “Ethan Allen sleigh bed”). Add a separate item card for each additional piece.";
+      if(help){
+        help.hidden=false;
+        help.textContent="Example: Ethan Allen sleigh bed. Add a separate item card for each piece.";
+      }
       if(title)title.placeholder="Example: Ethan Allen American Impressions Full Sleigh Bed";
       if(lookup)lookup.hidden=true;
       if($(".lf-source",node))$(".lf-source",node).value="manual";
@@ -417,8 +551,11 @@
       if($(".lf-image-url",node))$(".lf-image-url",node).value="";
     }else{
       if(label)label.innerHTML='Website listing title or product URL <span class="lf-required">*</span>';
-      if(help)help.textContent="Paste the full listing title or full lostandfoundresale.com product URL, then click Find Item. You can still enter dimensions manually if nothing is found.";
-      if(title)title.placeholder="Copy and paste the entire product title, or the full product page URL";
+      if(help){
+        help.textContent="";
+        help.hidden=true;
+      }
+      if(title)title.placeholder="Paste the entire product title, or the full product page URL";
       if(lookup)lookup.hidden=false;
     }
   }
@@ -441,11 +578,11 @@
     const headHelp=$("#lfItemsHeadHelp");
     const howTo=$("#lfItemsHowTo");
     if(pickup){
-      if(headHelp)headHelp.innerHTML="Enter each piece here as <strong>Item 1</strong>, <strong>Item 2</strong>, and so on. Use <strong>+ Add Another Item</strong> for more pieces.";
-      if(howTo)howTo.innerHTML="<strong>How to enter items:</strong> For each piece, type a short description/name, then fill in width, depth, height, and weight. Add another item card for every additional piece the truck should pick up.";
+      if(headHelp){headHelp.hidden=true;headHelp.innerHTML=""}
+      if(howTo)howTo.innerHTML="<strong>How to enter items:</strong> Enter each piece as Item 1, Item 2, and so on with a short description, width, depth, height, and weight. Use <strong>+ Add Another Item</strong> for more pieces.";
     }else{
-      if(headHelp)headHelp.innerHTML='Copy and paste the <strong>entire product title</strong> from the website listing, or paste the <strong>full product page URL</strong>. Then click Find Item. You can still enter everything manually if nothing is found.';
-      if(howTo)howTo.innerHTML="<strong>How to look up an item:</strong> On the product page, select the full title and copy it, then paste it here — or copy the full website address from your browser’s address bar and paste that instead. Partial titles often won’t match.";
+      if(headHelp){headHelp.hidden=true;headHelp.innerHTML=""}
+      if(howTo)howTo.innerHTML="<strong>How to look up an item:</strong> On the product page, copy the <strong>entire listing title</strong> or the <strong>full product page URL</strong> from your browser’s address bar, paste it below, then click Find Item. Partial titles often won’t match. You can still enter dimensions manually if nothing is found.";
     }
     $$(".lf-item",itemsWrap).forEach(node=>applyItemFieldCopy(node,pickup));
   }
@@ -492,12 +629,12 @@
     const streetLabel=$("#lfStreetLabel");
     if(p==="pickup_az"){
       if(head)head.innerHTML="Contact &amp; Pickup Address";
-      if(help)help.textContent="A valid email and complete pickup address are required.";
+      if(help)help.textContent="A valid email and complete pickup address are required. Your estimate summary is emailed to the address you enter. Enter ZIP first — city and state fill in automatically.";
       if(typeLabel)typeLabel.innerHTML='Pickup location <span class="lf-required">*</span>';
       if(streetLabel)streetLabel.innerHTML='Pickup street address <span class="lf-required">*</span>';
     }else{
       if(head)head.innerHTML="Contact &amp; Delivery Address";
-      if(help)help.textContent="A valid email and complete delivery address are required.";
+      if(help)help.textContent="A valid email and complete delivery address are required. Your estimate summary is emailed to the address you enter. Enter ZIP first — city and state fill in automatically. Nationwide freight is available in the contiguous U.S. (not Hawaii or Alaska).";
       if(typeLabel)typeLabel.innerHTML='Delivery location <span class="lf-required">*</span>';
       if(streetLabel)streetLabel.innerHTML='Street address <span class="lf-required">*</span>';
     }
@@ -594,6 +731,7 @@
     const msg=$("#lfPathMismatchMsg");
     const switchBtn=$("#lfPathMismatchSwitch");
     const stayBtn=$("#lfPathMismatchStay");
+    const editBtn=$("#lfPathMismatchEdit");
     if(!box||!msg||!mismatch)return;
     pendingPathMismatch=mismatch;
     msg.textContent=mismatch.message;
@@ -603,12 +741,30 @@
       switchBtn.textContent=mismatch.switchLabel||"Switch path";
     }
     if(stayBtn){
+      const path=$('input[name="delivery_path"]:checked')?.value||"local_az";
       stayBtn.hidden=!!mismatch.required;
-      stayBtn.textContent="Keep nationwide freight";
+      stayBtn.textContent=path==="nationwide"
+        ?"Keep nationwide freight"
+        :path==="pickup_az"
+          ?"Keep consignor pickup"
+          :"Keep this path";
     }
+    if(editBtn)editBtn.hidden=false;
     box.hidden=false;
     box.classList.add("show");
     box.scrollIntoView({behavior:"smooth",block:"nearest"});
+  }
+
+  function focusAddressForEdit(){
+    pathMismatchAcknowledged=false;
+    hidePathMismatch();
+    const zip=$("#lfZip");
+    const street=$("#lfStreet");
+    const target=zip||street;
+    if(street)street.scrollIntoView({behavior:"smooth",block:"center"});
+    if(target){
+      try{target.focus({preventScroll:true})}catch(_e){target.focus()}
+    }
   }
 
   async function lookupZipAndFill(opts={}){
@@ -862,6 +1018,7 @@
     $(".lf-remove",node).addEventListener("click",()=>{
       node.remove();renumberItems();
       if(!$$(".lf-item",itemsWrap).length)addItem();
+      scheduleSaveDraft();
     });
 
     $(".lf-lookup",node).addEventListener("click",()=>lookupItem(node));
@@ -1431,6 +1588,7 @@
       if(buyerCopy)buyerCopy.hidden=pickup;
       if(pickupCopy)pickupCopy.hidden=!pickup;
       renderSummary(payload,Object.assign({},previewData||{},submitJson||{}));
+      clearDraft();
       setStep(5);
 
       btn.textContent="Sent";
@@ -1452,6 +1610,10 @@
   $$("[data-back]").forEach(btn=>btn.addEventListener("click",()=>setStep(step-1)));
   $("#lfAddItem").addEventListener("click",()=>addItem());
   $("#lfReviewSubmit").addEventListener("click",reviewEstimateAndEmail);
+  ["#lfStartNewQuote","#lfStartNewQuoteTop"].forEach(sel=>{
+    const btn=$(sel);
+    if(btn)btn.addEventListener("click",startNewQuote);
+  });
   form.addEventListener("submit",e=>e.preventDefault());
   if($("#lfPathMismatchSwitch"))$("#lfPathMismatchSwitch").addEventListener("click",()=>{
     const mismatch=pendingPathMismatch||getPathAddressMismatch();
@@ -1470,10 +1632,18 @@
     updatePathDefaults();
     if(validateStep(2))setStep(3);
   });
-  ["#lfState","#lfZip"].forEach(sel=>{
+  if($("#lfPathMismatchEdit"))$("#lfPathMismatchEdit").addEventListener("click",()=>{
+    focusAddressForEdit();
+  });
+  ["#lfStreet","#lfCity","#lfState","#lfUnit"].forEach(sel=>{
     const el=$(sel);
     if(!el)return;
-    el.addEventListener("change",()=>{pathMismatchAcknowledged=false;refreshPathMismatchPanel()});
+    const onAddressEdit=()=>{
+      pathMismatchAcknowledged=false;
+      refreshPathMismatchPanel();
+    };
+    el.addEventListener("input",onAddressEdit);
+    el.addEventListener("change",onAddressEdit);
     el.addEventListener("blur",()=>{refreshPathMismatchPanel()});
   });
   const zipEl=$("#lfZip");
@@ -1481,7 +1651,13 @@
     zipEl.addEventListener("input",()=>{
       const digits=String(zipEl.value||"").replace(/\D/g,"").slice(0,10);
       if(zipEl.value!==digits)zipEl.value=digits;
+      pathMismatchAcknowledged=false;
       scheduleZipLookup();
+      refreshPathMismatchPanel();
+    });
+    zipEl.addEventListener("change",()=>{
+      pathMismatchAcknowledged=false;
+      refreshPathMismatchPanel();
     });
     zipEl.addEventListener("blur",()=>{
       const zip5=normalizeZip5(zipEl.value);
@@ -1546,6 +1722,14 @@
   updateAccessCopy();
   updateWhatNext();
   updateHeroNotice();
-  addItem();
+  form.addEventListener("input",scheduleSaveDraft);
+  form.addEventListener("change",scheduleSaveDraft);
+  let restored=false;
+  try{
+    const raw=sessionStorage.getItem(DRAFT_KEY);
+    if(raw)restored=applyDraft(JSON.parse(raw));
+  }catch(_e){restored=false}
+  if(!restored)addItem();
+  else scheduleSaveDraft();
 })();
 </script>
