@@ -562,6 +562,10 @@
     const help=$(".lf-title-help",node);
     const title=$(".lf-title",node);
     const lookup=$(".lf-lookup",node);
+    const priceField=$(".lf-listed-price-field",node);
+    const priceInput=$(".lf-price-input",node);
+    if(priceField)priceField.hidden=!!pickup;
+    if(pickup&&priceInput)priceInput.value="";
     if(pickup){
       if(label)label.innerHTML='Item description / name <span class="lf-required">*</span>';
       if(help){
@@ -1091,7 +1095,7 @@
       height:num($(".lf-height",node).value),
       weight:num($(".lf-weight",node).value),
       quantity:qty,
-      price:num($(".lf-price-input",node).value),
+      price:pickup?null:num($(".lf-price-input",node).value),
       product_url:pickup?"":$(".lf-url",node).value.trim(),
       image_url:pickup?"":($(".lf-image-url",node)?.value||"").trim(),
       freight_class:$(".lf-class",node).value===""?null:num($(".lf-class",node).value),
