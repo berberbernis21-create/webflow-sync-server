@@ -993,11 +993,15 @@
               ?"3-Person Crew Estimate: "
               :"Your Preliminary Estimate Is ";
       const oneWay=est?est.drive_minutes:(minutes?Math.ceil(minutes):null);
-      const milesText=Number.isFinite(miles)&&miles>0?" · "+miles+" mi":"";
+      const milesText=Number.isFinite(miles)&&miles>0
+        ?' · <strong>Distance:</strong> '+miles+" mi one way from our Scottsdale showroom"
+        :"";
       const driveStats=oneWay
         ?'<p class="lf-drive-stats"><strong>Drive time to you:</strong> about '+oneWay+" min one way — "+(oneWay*2)+" min round trip"+milesText+"</p>"+
-          '<p class="lf-fine" style="margin:0 0 10px;">Includes a little extra time for a loaded delivery truck (not live traffic).</p>'
-        : "";
+          '<p class="lf-fine" style="margin:0 0 10px;">Drive time includes a little extra for a loaded delivery truck. Distance and time come from the mapped road route (not live traffic).</p>'
+        : (Number.isFinite(miles)&&miles>0
+          ?'<p class="lf-drive-stats"><strong>Distance:</strong> '+miles+" mi one way from our Scottsdale showroom</p>"
+          :"");
       const mapUrl=preview?.route?.map_image_url||preview?.display?.map_image_url||"";
       const dirUrl=preview?.route?.directions_url||preview?.display?.directions_url||"";
       const mapHtml=routeMapHtml(mapUrl,dirUrl);
