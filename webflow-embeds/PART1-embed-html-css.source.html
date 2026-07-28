@@ -612,6 +612,27 @@ to remain visible inside the Webflow Designer.
   margin-top: 16px;
 }
 
+/* Heavy item (299+ lb): make stairs / crew questions stand out */
+.lf-heavy-prompt {
+  color: var(--lf-red) !important;
+  font-weight: 800 !important;
+}
+.lf-check.lf-heavy-prompt {
+  border-color: var(--lf-red);
+  color: var(--lf-red);
+  font-weight: 800;
+}
+.lf-check.lf-heavy-prompt #lfStairsAskLabel,
+.lf-check.lf-heavy-prompt #lfCrewLabel {
+  color: var(--lf-red);
+  font-weight: 800;
+}
+label.lf-heavy-prompt,
+legend.lf-heavy-prompt {
+  color: var(--lf-red) !important;
+  font-weight: 800 !important;
+}
+
 </style>
 
 <div class="lf-calc" id="lfCalc">
@@ -732,19 +753,16 @@ to remain visible inside the Webflow Designer.
         <div class="lf-access-card" id="lfStairsInteriorCard">
           <h3 id="lfStairsInteriorHead">Stairs &amp; Interior Access</h3>
 
-          <label class="lf-check">
+          <label class="lf-check" id="lfStairsAsk">
             <input id="lfStairs" type="checkbox">
-            Are there stairs?
+            <span id="lfStairsAskLabel">Are there stairs?</span>
           </label>
 
           <div class="lf-conditional" id="lfStairDetails" hidden>
-            <div class="lf-estimate-banner" id="lfStairsEstimateBanner" hidden>
-              <strong>ESTIMATE ONLY.</strong> Stairs change final pricing. First flight is free; each flight after that adds $75. Call the shop or Cruz Pro Line to confirm.
-            </div>
             <div class="lf-field">
-              <label for="lfFlights">How many flights? <span class="lf-required">*</span></label>
+              <label for="lfFlights" id="lfFlightsLabel">How many flights? <span class="lf-required">*</span></label>
               <input id="lfFlights" type="number" min="1" max="20" step="1" placeholder="Example: 1">
-              <div class="lf-help">First flight is free. Each additional flight adds $75 to the estimate. As a guide, one flight is about 7 stairs.</div>
+              <div class="lf-help">As a guide, one flight is about 7 stairs.</div>
               <div class="lf-error"></div>
             </div>
 
@@ -790,22 +808,19 @@ to remain visible inside the Webflow Designer.
           <h3>Labor &amp; Item Handling</h3>
           <label class="lf-check lf-local-truck-only" id="lfCrewWrap"><input id="lfCrew" type="checkbox"> <span id="lfCrewLabel">In your opinion, would this need more than two people?</span></label>
           <div class="lf-help lf-local-truck-only" id="lfCrewHelp" style="margin:-2px 4px 8px 4px;">
-            This is your opinion only — assume the crew has straps, dollies, and normal moving equipment. If you check yes, choose 1 extra person or 2 extra people, then briefly explain why.
+            This is your opinion only — assume straps, dollies, and normal gear. If yes, choose 1 or 2 extra people and briefly explain why.
           </div>
           <div class="lf-conditional lf-local-truck-only" id="lfCrewDetails" hidden>
-            <div class="lf-estimate-banner" id="lfCrewEstimateBanner">
-              <strong>ESTIMATE ONLY.</strong> Extra crew pricing is a best guess. Call the shop or Cruz Pro Line to confirm final rates before scheduling.
-            </div>
             <fieldset class="lf-crew-extra" style="margin:10px 0 8px;border:0;padding:0;">
-              <legend style="font-size:14px;font-weight:700;margin:0 0 8px;">How many extra people? <span class="lf-required">*</span></legend>
-              <label class="lf-check"><input type="radio" name="lf_extra_people" id="lfExtra1" value="1"> 1 extra person (3 total) — estimate uses $130/hour</label>
-              <label class="lf-check"><input type="radio" name="lf_extra_people" id="lfExtra2" value="2"> 2 extra people — two trucks needed (2× the estimate)</label>
+              <legend id="lfExtraPeopleLegend" style="font-size:14px;font-weight:700;margin:0 0 8px;">How many extra people? <span class="lf-required">*</span></legend>
+              <label class="lf-check"><input type="radio" name="lf_extra_people" id="lfExtra1" value="1"> 1 extra person (3 total)</label>
+              <label class="lf-check"><input type="radio" name="lf_extra_people" id="lfExtra2" value="2"> 2 extra people (two trucks)</label>
               <div class="lf-error" id="lfExtraPeopleError"></div>
             </fieldset>
             <div class="lf-field" style="margin-top:8px">
-              <label for="lfCrewWhy">Why do you think more than two people are needed? <span class="lf-required">*</span></label>
+              <label for="lfCrewWhy" id="lfCrewWhyLabel">Why do you think more than two people are needed? <span class="lf-required">*</span></label>
               <textarea id="lfCrewWhy" placeholder="Example: solid wood armoire that feels very heavy, tight stairwell, awkward shape, etc."></textarea>
-              <div class="lf-help">A short explanation helps us match your expectations before we confirm the crew size.</div>
+              <div class="lf-help">A short explanation helps us prepare the right crew.</div>
               <div class="lf-error"></div>
             </div>
           </div>
