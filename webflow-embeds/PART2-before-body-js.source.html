@@ -15,6 +15,10 @@
   const LF_TEL='<a href="tel:4805887006"><strong>480-588-7006</strong></a>';
   const CRUZ_LOGO=API_BASE+"/brand/cruz-pro-line-truck.png";
   const LF_STORE=API_BASE+"/brand/showroom-exterior-v2.png";
+  const shopSearchUrl=(title)=>{
+    const q=encodeURIComponent(String(title||"").trim()).replace(/%20/g,"+");
+    return "https://www.lostandfoundresale.com/search?query="+q;
+  };
   const crewHelp=_k=>"This is your opinion only — assume straps, dollies, and normal gear. If yes, choose 1 or 2 extra people and briefly explain why.";
 
   const LOCAL={baseMinutes:15,basePrice:95,referenceMinutes:8,referencePrice:15,threePersonHourly:130,longHaulRoundTripMiles:100,longHaulFactor:0.8,stairFeePerExtraFlight:7,oversizeWeight:299,oversizeHeight:72,oversizeAlwaysWeight:550};
@@ -1314,7 +1318,7 @@
         :"";
       const titleLine=dims?title+" · "+dims:title;
       const rawUrl=String(i.product_url||"").trim();
-      const url=escapeHtml(rawUrl||("https://www.lostandfoundresale.com/catalog?search="+encodeURIComponent(i.title||"")));
+      const url=escapeHtml(rawUrl||shopSearchUrl(i.title||""));
       const meta=[
         i.weight!=null?escapeHtml(i.weight)+" lb":null,
         i.price?money(i.price):null
