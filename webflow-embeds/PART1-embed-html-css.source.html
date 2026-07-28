@@ -29,6 +29,7 @@ to remain visible inside the Webflow Designer.
 .lf-step{padding:22px 22px 20px;margin-top:12px}
 .lf-step[hidden]{display:none!important}
 .lf-head{margin-bottom:16px}
+.lf-path-badge{display:inline-block;margin:0 0 8px;padding:4px 10px;border-radius:999px;background:var(--lf-soft);border:1px solid var(--lf-border);color:var(--lf-navy);font-size:10px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
 .lf-head h2{margin:0 0 6px;color:var(--lf-navy);font-size:22px;line-height:1.2;letter-spacing:-.02em}
 .lf-head p{margin:0;color:var(--lf-muted);font-size:13px;line-height:1.45;max-width:40em}
 .lf-step-note{margin:18px 0 0;padding:13px 15px;border:1px solid var(--lf-border);border-radius:10px;background:var(--lf-soft);color:#333;font-size:12.5px;line-height:1.55}
@@ -713,7 +714,7 @@ legend.lf-heavy-prompt {
     </section>
 
     <section class="lf-step" data-step="2" hidden>
-      <div class="lf-head" id="lfAddressHead"><h2>Contact &amp; Delivery Address</h2><p id="lfAddressHelp">A valid email and complete delivery address are required.</p></div>
+      <div class="lf-head" id="lfAddressHead"><span class="lf-path-badge" data-path-badge>Local Delivery</span><h2>Contact &amp; Delivery Address</h2><p id="lfAddressHelp">A valid email and complete delivery address are required.</p></div>
       <div class="lf-grid">
         <div class="lf-field"><label for="lfName">Full name <span class="lf-required">*</span></label><input id="lfName" name="customer_name" autocomplete="name" required><div class="lf-error"></div></div>
         <div class="lf-field">
@@ -743,6 +744,7 @@ legend.lf-heavy-prompt {
 
     <section class="lf-step" data-step="3" hidden>
       <div class="lf-head">
+        <span class="lf-path-badge" data-path-badge>Local Delivery</span>
         <h2 id="lfItemsHeadTitle">Add the Item or Items</h2>
         <p id="lfItemsHeadHelp">Copy and paste the <strong>entire product title</strong> from the website listing, or paste the <strong>full product page URL</strong>. Then click Find Item. You can still enter everything manually if nothing is found.</p>
       </div>
@@ -754,7 +756,7 @@ legend.lf-heavy-prompt {
     </section>
 
     <section class="lf-step" data-step="4" hidden>
-      <div class="lf-head"><h2>Access &amp; Handling</h2><p id="lfAccessHeadHelp">Tell us about stairs, interior access, building access, and handling needs so the estimate is as accurate as possible.</p></div>
+      <div class="lf-head"><span class="lf-path-badge" data-path-badge>Local Delivery</span><h2>Access &amp; Handling</h2><p id="lfAccessHeadHelp">Tell us about stairs, interior access, building access, and handling needs so the estimate is as accurate as possible.</p></div>
 
       <div class="lf-access-grid">
         <div class="lf-access-card lf-nationwide-only" hidden>
@@ -890,6 +892,7 @@ legend.lf-heavy-prompt {
       <div class="lf-confirmation-head">
         <div class="lf-confirmation-icon" aria-hidden="true">✓</div>
         <div>
+          <span class="lf-path-badge" data-path-badge>Local Delivery</span>
           <h2>Your Request Has Been Sent</h2>
           <p>
             Your summary appears directly below. We also emailed a receipt to
@@ -941,6 +944,7 @@ legend.lf-heavy-prompt {
       </div>
 
       <div class="lf-request-details-heading">
+        <span class="lf-path-badge" data-path-badge>Local Delivery</span>
         <h2>Here Was Your Request Summary</h2>
         <p id="lfSummaryHelp">Below are the delivery address, item information, and access details you submitted.</p>
       </div>

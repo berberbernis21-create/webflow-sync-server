@@ -410,13 +410,25 @@
     }
   }
 
+  function pathLabel(path){
+    const p=path||$('input[name="delivery_path"]:checked')?.value||"local_az";
+    if(p==="pickup_az")return "Consignor Pickup";
+    if(p==="nationwide")return "Nationwide Freight";
+    return "Local Delivery";
+  }
+
+  function updatePathBadges(path){
+    const label=pathLabel(path);
+    $$("[data-path-badge]").forEach(el=>{el.textContent=label});
+  }
+
   function updateItemsCopy(path){
     const p=path||$('input[name="delivery_path"]:checked')?.value||"local_az";
     const pickup=p==="pickup_az";
     const headHelp=$("#lfItemsHeadHelp");
     const howTo=$("#lfItemsHowTo");
     if(pickup){
-      if(headHelp)headHelp.innerHTML="Consignor pickups aren’t on the website yet, so enter each piece here manually as <strong>Item 1</strong>, <strong>Item 2</strong>, and so on. Use <strong>+ Add Another Item</strong> for more pieces.";
+      if(headHelp)headHelp.innerHTML="Enter each piece here as <strong>Item 1</strong>, <strong>Item 2</strong>, and so on. Use <strong>+ Add Another Item</strong> for more pieces.";
       if(howTo)howTo.innerHTML="<strong>How to enter items:</strong> For each piece, type a short description/name, then fill in width, depth, height, and weight. Add another item card for every additional piece the truck should pick up.";
     }else{
       if(headHelp)headHelp.innerHTML='Copy and paste the <strong>entire product title</strong> from the website listing, or paste the <strong>full product page URL</strong>. Then click Find Item. You can still enter everything manually if nothing is found.';
@@ -428,6 +440,7 @@
   function updatePathDefaults(){
     const path=$('input[name="delivery_path"]:checked')?.value||"local_az";
     if((path==="local_az"||path==="pickup_az")&&!value("#lfState"))$("#lfState").value="AZ";
+    updatePathBadges(path);
     updateAddressCopy(path);
     updateAccessCopy(path);
     updateWhatNext(path);
@@ -441,7 +454,7 @@
     const streetLabel=$("#lfStreetLabel");
     if(p==="pickup_az"){
       if(head)head.innerHTML="Contact &amp; Pickup Address";
-      if(help)help.textContent="A valid email and complete pickup address are required. Pickup must be in Arizona.";
+      if(help)help.textContent="A valid email and complete pickup address are required.";
       if(typeLabel)typeLabel.innerHTML='Pickup location <span class="lf-required">*</span>';
       if(streetLabel)streetLabel.innerHTML='Pickup street address <span class="lf-required">*</span>';
     }else{
@@ -1370,6 +1383,7 @@
       const st=value("#lfState").toUpperCase();
       if(!st||st==="AZ"||isArizonaStateOrZip(st,value("#lfZip")))$("#lfState").value="AZ";
     }
+    updatePathBadges(path);
     updateAddressCopy(path);
     updateAccessCopy(path);
     updateWhatNext(path);
@@ -1390,6 +1404,7 @@
     });
   }));
 
+  updatePathBadges();
   updateAddressCopy();
   updateAccessCopy();
   updateWhatNext();
