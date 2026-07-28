@@ -34,7 +34,7 @@ execFileSync(
     "terser",
     rawJsPath,
     "--compress",
-    "passes=3,drop_console=true,unsafe=true",
+    "passes=2,drop_console=true",
     "--mangle",
     "--comments",
     "false",
