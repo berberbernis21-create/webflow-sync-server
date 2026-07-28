@@ -17,7 +17,7 @@
   const CRUZ_TEL='<a href="tel:4803769485"><strong>480-376-9485</strong></a>';
   const CRUZ_LOGO=API_BASE+"/brand/cruz-pro-line-truck.png";
   const LF_LOGO=API_BASE+"/brand/logo-wordmark.png";
-  const LF_STORE=API_BASE+"/brand/showroom-exterior.png";
+  const LF_STORE=API_BASE+"/brand/showroom-exterior-v2.png";
   const crewHelp=_k=>"This is your opinion only — assume straps, dollies, and normal gear. If yes, choose 1 or 2 extra people and briefly explain why.";
 
   const LOCAL={baseMinutes:15,basePrice:95,referenceMinutes:8,referencePrice:15,threePersonHourly:130,longHaulRoundTripMiles:100,longHaulFactor:0.8,stairFeePerExtraFlight:7,oversizeWeight:299,oversizeHeight:72,oversizeWidth:72};
@@ -227,8 +227,8 @@
 
   function rateConfirmHtml(strong){
     return '<div class="lf-rate-confirm'+(strong?' strong':'')+'">'+
-      '<h3>These are estimates only</h3>'+
-      '<p>This is our <strong>best guess</strong> based on the information you provided — not a locked-in rate. Please call to confirm.</p>'+
+      '<h3>Confirm pricing before scheduling</h3>'+
+      '<p>This is an <strong>estimate from our online tool</strong> — not a locked-in rate. Confirm pricing before scheduling. After you submit, check your email for a PDF of your answers — review your questions and make sure they are accurate when you call to confirm.</p>'+
       '<div class="lf-rate-stack">'+
         '<div class="lf-rate-card-panel">'+
           '<div class="lf-rate-card">'+
@@ -237,7 +237,6 @@
               '<span class="lf-rate-kicker">Delivery partner</span>'+
               '<strong><a class="lf-rate-name" href="tel:4803769485">Cruz Pro Line</a></strong>'+
               '<a class="lf-rate-phone" href="tel:4803769485">480-376-9485</a>'+
-              '<span class="lf-rate-shop-line">Call the shop: <a href="tel:4805887006">480-588-7006</a></span>'+
             '</div>'+
           '</div>'+
         '</div>'+
@@ -248,7 +247,7 @@
               '<span class="lf-rate-kicker">Call the shop</span>'+
               '<strong><a class="lf-rate-name" href="tel:4805887006">Lost &amp; Found Resale</a></strong>'+
               '<a class="lf-rate-phone" href="tel:4805887006">480-588-7006</a>'+
-              '<span class="lf-rate-sub">Scottsdale showroom · final rate confirmation</span>'+
+              '<span class="lf-rate-sub">Scottsdale showroom · confirm pricing before scheduling</span>'+
             '</div>'+
           '</div>'+
         '</div>'+
@@ -569,7 +568,7 @@
       setTextSafe("#lfLongCarryHelp","Long carry = about 75+ feet from entrance/elevator/pickup area to where the truck can park.");
       setTextSafe("#lfParkingLabel","Limited truck parking, low clearance, or restricted pickup hours");
       setTextSafe("#lfSmartDefaults","<strong>Note:</strong> Residential pickup is the default. Check any stairs, access, or handling items that apply so we can price the job accurately.",true);
-      setTextSafe("#lfAgreeLabel","I understand this is a preliminary estimate and final pricing must be confirmed by phone.");
+      setTextSafe("#lfAgreeLabel","I understand this is an estimate from the online tool and I must confirm pricing before scheduling.");
       const notes=$("#lfNotes");
       if(notes)notes.placeholder="Share anything else the pickup team should know.";
       const summaryHelp=$("#lfSummaryHelp");
@@ -598,7 +597,7 @@
       setTextSafe("#lfLongCarryHelp","Long carry = about 75+ feet from truck parking to entrance/elevator/delivery area.");
       setTextSafe("#lfParkingLabel","Limited truck parking, low clearance, or restricted delivery hours");
       setTextSafe("#lfSmartDefaults","<strong>Note:</strong> Residential delivery is the default. Check any stairs, access, or handling items that apply so we can price the job accurately.",true);
-      setTextSafe("#lfAgreeLabel","I understand this is a preliminary estimate and final pricing must be confirmed by phone.");
+      setTextSafe("#lfAgreeLabel","I understand this is an estimate from the online tool and I must confirm pricing before scheduling.");
       const notes=$("#lfNotes");
       if(notes)notes.placeholder="Share anything else the delivery team or carrier should know.";
       const summaryHelp=$("#lfSummaryHelp");
@@ -982,7 +981,6 @@
       const extraPeople=Number(payload.access.extra_people)||0;
       const oversize=Boolean(preview?.local_estimate?.oversize_confirm||est?.oversize_confirm);
       const longHaul=Boolean(preview?.local_estimate?.long_haul||est?.long_haul||(Number.isFinite(miles)&&miles*2>LOCAL.longHaulRoundTripMiles));
-      const estimateSpotlight=Boolean(payload.access.stairs||payload.access.needs_more_than_two_people||oversize||longHaul);
       const priceLabel=oversize
         ?"Best-Guess Estimate (Oversized — Confirm): "
         :longHaul
@@ -1010,14 +1008,12 @@
         :"Time is round-trip, not one way — includes wrap/prep, load/secure, offload, and placement.";
       const buyHtml=buyItemsHtml(payload.items,isPickup);
       const oversizeHtml=oversize
-        ?'<p class="lf-estimate-banner warn"><strong>Needs confirmation due to item size.</strong> At least one item is 299+ lb or over 72&quot; high or 72&quot; wide. Please contact us to confirm. <strong>This is an estimate only.</strong></p>'
+        ?'<p class="lf-estimate-banner warn"><strong>Needs confirmation due to item size.</strong> At least one item is 299+ lb or over 72&quot; high or 72&quot; wide. Confirm pricing before scheduling. <strong>This is an estimate only.</strong></p>'
         :"";
       const longHaulHtml=longHaul
-        ?'<p class="lf-estimate-banner warn"><strong>Needs confirmation — out of town (100+ mile round trip).</strong> Please contact us to confirm. <strong>This is an estimate only.</strong></p>'
+        ?'<p class="lf-estimate-banner warn"><strong>Needs confirmation — out of town (100+ mile round trip).</strong> Confirm pricing before scheduling. <strong>This is an estimate only.</strong></p>'
         :"";
-      const spotlightHtml=estimateSpotlight
-        ?'<p class="lf-estimate-banner"><strong>Please confirm.</strong> Access details, crew needs, stairs, oversized pieces, and longer distances can change the final price. Call the shop or Cruz Pro Line before you rely on this number.</p>'
-        :'<p><strong>(Estimate)</strong> Best guess based on the information provided — not a final booked rate.</p>';
+      const spotlightHtml='<p class="lf-estimate-banner"><strong>Confirm pricing before scheduling.</strong> This is an estimate from our online tool. A PDF of your submitted answers is in your email — review your questions and make sure all information and access details are accurate when you call to confirm.</p>';
 
       result.innerHTML=
         '<h2>'+(isPickup?"Your Preliminary Consignor Pickup Estimate":"Your Preliminary Local Delivery Estimate")+'</h2>'+
@@ -1025,16 +1021,16 @@
         oversizeHtml+
         longHaulHtml+
         spotlightHtml+
-        rateConfirmHtml(estimateSpotlight)+
+        rateConfirmHtml(true)+
         driveStats+
         multiNote+
         stairNote+
         buyHtml+
         mapHtml+
         '<p>'+laborText+'</p>'+
-        '<p>Call the shop first for final rate confirmation — this is only our best guess based on the information provided.</p>'+
+        '<p>Confirm pricing before scheduling — this is an estimate from our online tool. Review your emailed PDF and make sure your answers are accurate when you call.</p>'+
         buyHtml+
-        (manual&&!estimateSpotlight
+        (manual
               ? '<p><strong>Additional review needed:</strong> Tight access, long carries, or special handling may change the final price.</p>'
               : '');
     }else{
@@ -1135,7 +1131,7 @@
     }
 
     if(!$("#lfReviewAgree").checked){
-      showReviewAlert("Please confirm that you understand this is a preliminary estimate.");
+      showReviewAlert("Please confirm that you understand this is an estimate and pricing must be confirmed before scheduling.");
       $("#lfReviewAgree").focus();
       return;
     }
