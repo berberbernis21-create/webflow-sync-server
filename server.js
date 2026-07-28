@@ -595,6 +595,22 @@ app.use("/brand", express.static(path.join(__dirname, "public", "brand"), {
   fallthrough: true,
 }));
 
+// Freight calculator Webflow embeds (HTML/CSS hosted here to stay under Webflow char limits).
+app.use(
+  "/embeds",
+  (req, res, next) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+    res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+    if (req.method === "OPTIONS") return res.sendStatus(204);
+    next();
+  },
+  express.static(path.join(__dirname, "public", "embeds"), {
+    maxAge: "5m",
+    fallthrough: true,
+  })
+);
+
 app.use("/api", consignmentRouter);
 app.use("/api", freightQuoteRouter);
 app.use(

@@ -1,12 +1,13 @@
-<!-- LF freight calc Part 2: paste Before </body> (needs Part 1 on page) -->
+<!-- LF freight calc Part 2: paste Before </body> (needs Part 1 mount on page) -->
 <script>
-(function(){
+(async function(){
   "use strict";
 
   const API_BASE="https://webflow-sync-server.onrender.com";
   const LOOKUP_URL=API_BASE+"/api/listing";
   const PREVIEW_URL=API_BASE+"/api/freight-quote/preview";
   const SUBMIT_URL=API_BASE+"/api/freight-quote";
+  const MARKUP_URL=API_BASE+"/embeds/freight-part1.html";
   const ORIGIN_ADDRESS="15530 N Greenway Hayden Loop Ste 100, Scottsdale, AZ 85260";
   const REDIRECT_URL="https://www.lostandfoundresale.com/faq";
   const REDIRECT_DELAY_MS=4500;
@@ -24,7 +25,32 @@
 
   const $=(s,r=document)=>r.querySelector(s);
   const $$=(s,r=document)=>Array.from(r.querySelectorAll(s));
+
+  // Part 1 Webflow embed is a tiny mount; pull full HTML/CSS from Render so we stay under Webflow limits.
+  async function ensureMarkup(){
+    if($("#lfForm"))return true;
+    const host=$("#lfCalcHost")||$("#lfCalc");
+    if(!host)return false;
+    const res=await fetch(MARKUP_URL,{cache:"no-cache"});
+    if(!res.ok)throw new Error("Failed to load calculator markup ("+res.status+")");
+    host.innerHTML=await res.text();
+    return Boolean($("#lfForm"));
+  }
+
+  try{
+    await ensureMarkup();
+  }catch(err){
+    const host=$("#lfCalcHost")||$("#lfCalc");
+    if(host)host.innerHTML='<p style="margin:24px auto;max-width:980px;padding:18px;font:14px/1.5 Arial,Helvetica,sans-serif;color:#9c2f2f;text-align:center">Could not load the delivery calculator. Please refresh the page.</p>';
+    console.error(err);
+    return;
+  }
+
   const form=$("#lfForm"),itemsWrap=$("#lfItems"),template=$("#lfItemTemplate");
+  if(!form||!itemsWrap||!template){
+    console.error("LF freight: calculator markup missing (#lfForm / #lfItems / #lfItemTemplate)");
+    return;
+  }
 
   function money(n){return new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",minimumFractionDigits:2,maximumFractionDigits:2}).format(Number(n)||0)}
   function num(v){const n=Number(v);return Number.isFinite(n)?n:0}

@@ -3,16 +3,24 @@ import { execFileSync } from "child_process";
 import path from "path";
 
 const dir = "webflow-embeds";
+const publicEmbeds = path.join("public", "embeds");
 const pastePath = path.join(dir, "PART1-embed-html-css.html");
 const sourcePath = path.join(dir, "PART1-embed-html-css.source.html");
 const rawCssPath = path.join(dir, "_part1-raw.css");
 const minCssPath = path.join(dir, "_part1-min.css");
+const hostedCssPath = path.join(publicEmbeds, "freight-part1.css");
+const hostedHtmlPath = path.join(publicEmbeds, "freight-part1.html");
+const API_BASE = "https://webflow-sync-server.onrender.com";
+
+fs.mkdirSync(publicEmbeds, { recursive: true });
 
 const paste = fs.readFileSync(pastePath, "utf8");
-// Promote paste → source when paste is still the readable (non-minified) version.
+// Only promote paste → source when paste is still a full readable Part 1 (never the tiny loader).
 if (
+  !paste.includes("loads CSS/HTML from Render") &&
   !paste.includes("minified for Webflow 50k") &&
-  (paste.includes("STRONG SELECTED STATES") || paste.includes("\n.lf-choice label {"))
+  paste.includes("STRONG SELECTED STATES") &&
+  paste.includes('id="lfForm"')
 ) {
   fs.writeFileSync(sourcePath, paste);
 }
@@ -39,14 +47,18 @@ const minCss = fs.readFileSync(minCssPath, "utf8").trim();
 let html = htmlAfter
   .replace(/<!--[\s\S]*?-->/g, "")
   .replace(/\r\n/g, "\n")
-  // Collapse whitespace between tags; keep single spaces in text nodes.
   .replace(/>\s+</g, "><")
   .replace(/\n{2,}/g, "\n")
   .trim();
 
-const out = `<!-- LF freight calc Part 1 (minified for Webflow 50k). Source: PART1-embed-html-css.source.html -->
-<style>${minCss}</style>
-${html}
+// Hosted assets (loaded by Part 2 + CSS link in the tiny Webflow embed).
+fs.writeFileSync(hostedCssPath, minCss + "\n");
+fs.writeFileSync(hostedHtmlPath, html + "\n");
+
+// Tiny Webflow Embed paste — stays far under any character limit.
+const out = `<!-- LF freight calc Part 1 (loads CSS/HTML from Render). Edit source: PART1-embed-html-css.source.html then run node scripts/minify-freight-part1.mjs -->
+<link rel="stylesheet" href="${API_BASE}/embeds/freight-part1.css">
+<div id="lfCalcHost"><p style="margin:24px auto;max-width:980px;padding:18px;font:14px/1.5 Arial,Helvetica,sans-serif;color:#555;text-align:center">Loading delivery calculator...</p></div>
 `;
 
 fs.writeFileSync(pastePath, out);
@@ -58,10 +70,11 @@ console.log(
     {
       sourceChars: source.length,
       pasteChars: out.length,
-      cssIn: css.length,
-      cssOut: minCss.length,
+      hostedCssChars: minCss.length,
+      hostedHtmlChars: html.length,
       under50k: out.length < 50000,
-      headroom: 50000 - out.length,
+      under10k: out.length < 10000,
+      headroom50k: 50000 - out.length,
     },
     null,
     2
