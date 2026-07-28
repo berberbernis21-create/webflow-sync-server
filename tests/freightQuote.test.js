@@ -295,10 +295,85 @@ test("stairs flights review reason", () => {
     stairs: true,
     stair_flights: 2,
     needs_more_than_two_people: true,
+    extra_people: 1,
     tight_turns_or_narrow_halls: true,
   });
   assert.ok(reasons.some((r) => /2 flights/i.test(r)));
-  assert.ok(reasons.some((r) => /More than two movers/i.test(r)));
+  assert.ok(reasons.some((r) => /1 extra person/i.test(r)));
+});
+
+test("local pricing: 1 extra person uses $130/hr", () => {
+  const est = calculateLocalRouteEstimate(15, {
+    access: { needs_more_than_two_people: true, extra_people: 1 },
+  });
+  assert.equal(est.hourly_rate, 130);
+  assert.equal(est.estimated_price, 130);
+});
+
+test("local pricing: 2 extra people doubles estimate", () => {
+  const est = calculateLocalRouteEstimate(15, {
+    access: { needs_more_than_two_people: true, extra_people: 2 },
+  });
+  assert.equal(est.truck_multiplier, 2);
+  assert.equal(est.estimated_price, 190);
+});
+
+test("local pricing: stairs first flight free then $75", () => {
+  const one = calculateLocalRouteEstimate(15, {
+    access: { stairs: true, stair_flights: 1 },
+  });
+  assert.equal(one.stair_fee, 0);
+  assert.equal(one.estimated_price, 95);
+
+  const two = calculateLocalRouteEstimate(15, {
+    access: { stairs: true, stair_flights: 2 },
+  });
+  assert.equal(two.stair_fee, 75);
+  assert.equal(two.estimated_price, 170);
+
+  const three = calculateLocalRouteEstimate(15, {
+    access: { stairs: true, stair_flights: 3 },
+  });
+  assert.equal(three.stair_fee, 150);
+  assert.equal(three.estimated_price, 245);
+});
+
+test("local pricing: round trip over 100 miles uses 80% of $95", () => {
+  const est = calculateLocalRouteEstimate(15, { distanceMiles: 55 });
+  assert.equal(est.long_haul, true);
+  assert.equal(est.hourly_rate, 76);
+  assert.equal(est.estimated_price, 80);
+});
+
+test("local pricing: oversize item forces $130/hr", () => {
+  const est = calculateLocalRouteEstimate(15, {
+    items: [{ title: "Huge armoire", width: 80, height: 80, weight: 300 }],
+  });
+  assert.equal(est.oversize_confirm, true);
+  assert.equal(est.hourly_rate, 130);
+  assert.equal(est.estimated_price, 130);
+});
+
+test("local validation requires extra_people when more than two selected", () => {
+  const v = validateFreightQuoteRequest({
+    customer_name: "Test User",
+    customer_email: "test@example.com",
+    customer_phone: "4805551212",
+    street: "7167 E Rancho Vista Dr",
+    city: "Scottsdale",
+    state: "AZ",
+    zip: "85251",
+    delivery_path: "local_az",
+    request_mode: "estimate",
+    access: {
+      stairs: false,
+      needs_more_than_two_people: true,
+      more_than_two_people_reason: "heavy",
+    },
+    items: [{ title: "Cabinet", width: 30, depth: 20, height: 40, weight: 70 }],
+  });
+  assert.equal(v.ok, false);
+  assert.match(String(v.error || ""), /1 extra person|2 extra people/i);
 });
 
 test("honeypot alone rejected; autofill ignored for real form", () => {

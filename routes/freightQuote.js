@@ -51,17 +51,24 @@ function accessorialsFromAccess(access = {}) {
 }
 
 function buildLocalDisplay(submission, local) {
-  const extraCrew = Boolean(submission.access?.needs_more_than_two_people);
+  const extraPeople = Number(submission.access?.extra_people) || 0;
+  const extraCrew = Boolean(submission.access?.needs_more_than_two_people) || extraPeople > 0;
+  const oversize = Boolean(local.local_estimate?.oversize_confirm);
+  const longHaul = Boolean(local.local_estimate?.long_haul);
   const isPickup = submission.delivery_path === "pickup_az";
   const amount = local.local_estimate?.estimated_price ?? null;
-  const label = extraCrew
-    ? "Approximate Two-Person Base:"
-    : "Your Preliminary Estimate Is";
+  let label = isPickup
+    ? "Your Preliminary Pickup Estimate"
+    : "Your Preliminary Delivery Estimate";
+  if (oversize) label = "Best-Guess Estimate (Oversized — Confirm)";
+  else if (longHaul) label = "Best-Guess Estimate (Out of Town — Confirm)";
+  else if (extraPeople >= 2) label = "Two-Truck Estimate";
+  else if (extraPeople === 1 || extraCrew) label = "3-Person Crew Estimate";
   return {
     estimate_label: label,
     display_amount: amount,
     display_amount_formatted: amount != null ? money(amount) : null,
-    headline: amount != null ? `${label} ${money(amount)}` : label,
+    headline: amount != null ? `${label}: ${money(amount)} (Estimate)` : label,
     drive_minutes: local.route?.drive_minutes ?? local.local_estimate?.drive_minutes ?? null,
     distance_miles: local.route?.distance_miles ?? null,
     map_image_url: local.route?.map_image_url ?? null,
@@ -72,6 +79,13 @@ function buildLocalDisplay(submission, local) {
     requires_manual_review: Boolean(local.requires_manual_review),
     review_reasons: local.review_reasons || [],
     extra_crew: extraCrew,
+    extra_people: extraPeople,
+    estimate_only_notice: Boolean(local.local_estimate?.estimate_only_notice),
+    oversize_confirm: oversize,
+    long_haul_confirm: longHaul,
+    stair_fee: local.local_estimate?.stair_fee ?? 0,
+    hourly_rate: local.local_estimate?.hourly_rate ?? null,
+    rate_label: local.local_estimate?.rate_label || null,
   };
 }
 
@@ -120,6 +134,7 @@ async function buildQuoteContext(submission) {
     destinationFull: submission.delivery_address.full,
     access: submission.access,
     itemCount: Array.isArray(submission.items) ? submission.items.length : 0,
+    items: submission.items || [],
   });
 
   if (local.ok === false) {

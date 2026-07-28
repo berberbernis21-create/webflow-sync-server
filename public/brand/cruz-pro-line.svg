@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="440" height="120" viewBox="0 0 440 120" role="img" aria-label="Cruz Pro Line">
+  <rect width="440" height="120" rx="12" fill="#0b1f3a"/>
+  <rect x="16" y="18" width="84" height="84" rx="10" fill="#f4b400"/>
+  <path d="M28 70h36l10-18h18v28h-8v-8H36v18h-8V70zm52-10h12l6 10H74l6-10z" fill="#0b1f3a"/>
+  <circle cx="40" cy="88" r="7" fill="#0b1f3a"/>
+  <circle cx="40" cy="88" r="3" fill="#f4b400"/>
+  <circle cx="78" cy="88" r="7" fill="#0b1f3a"/>
+  <circle cx="78" cy="88" r="3" fill="#f4b400"/>
+  <text x="120" y="52" fill="#ffffff" font-family="Arial, Helvetica, sans-serif" font-size="34" font-weight="800">Cruz Pro Line</text>
+  <text x="120" y="82" fill="#f4b400" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700">Local Moving &amp; Delivery</text>
+</svg>

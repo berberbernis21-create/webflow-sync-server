@@ -13,9 +13,13 @@
   const JSON_HDR={"Content-Type":"application/json","Accept":"application/json"};
   const LF_MAIL='<a href="mailto:info@lostandfoundresale.com"><strong>info@lostandfoundresale.com</strong></a>';
   const LF_TEL='<a href="tel:4805887006"><strong>480-588-7006</strong></a>';
-  const crewHelp=k=>"This is your opinion only — assume straps, dollies, and normal gear. If yes, briefly explain why. We'll review; if more than two movers are needed, the "+k+" price increases and we'll send an updated range before scheduling.";
+  const CRUZ_TEL='<a href="tel:4803769485"><strong>480-376-9485</strong></a>';
+  const CRUZ_LOGO=API_BASE+"/brand/cruz-pro-line-truck.png";
+  const LF_LOGO=API_BASE+"/brand/logo-wordmark.png";
+  const LF_STORE=API_BASE+"/brand/showroom-exterior.png";
+  const crewHelp=k=>"This is your opinion only — assume straps, dollies, and normal gear. If yes, choose 1 extra person ($130/hr) or 2 extra people (two trucks / 2×), then briefly explain why. We'll review; final "+k+" pricing must be confirmed with the shop or Cruz Pro Line.";
 
-  const LOCAL={baseMinutes:15,basePrice:95,referenceMinutes:8,referencePrice:15};
+  const LOCAL={baseMinutes:15,basePrice:95,referenceMinutes:8,referencePrice:15,threePersonHourly:130,longHaulRoundTripMiles:100,longHaulFactor:0.8,stairFeePerExtraFlight:75,oversizeWeight:299,oversizeHeight:72,oversizeWidth:72};
   let step=1,itemCounter=0,lastPreview=null,submitting=false;
 
   const $=(s,r=document)=>r.querySelector(s);
@@ -89,29 +93,96 @@
     };
   }
 
-  function localEstimate(minutes,itemCount){
+  function localEstimate(minutes,itemCount,opts){
     if(!Number.isFinite(Number(minutes))||Number(minutes)<=0)return null;
-
+    opts=opts||{};
     const m=Math.ceil(Number(minutes));
+    const access=opts.access||{};
+    const items=opts.items||[];
+    const distanceMiles=Number(opts.distanceMiles);
+    const roundTripMiles=Number.isFinite(distanceMiles)&&distanceMiles>0?distanceMiles*2:null;
+    const longHaul=roundTripMiles!=null&&roundTripMiles>LOCAL.longHaulRoundTripMiles;
+    const oversize=items.some(it=>{
+      const w=Number(it.weight),h=Number(it.height),wd=Number(it.width);
+      return Number.isFinite(w)&&Number.isFinite(h)&&Number.isFinite(wd)&&w>=LOCAL.oversizeWeight&&h>LOCAL.oversizeHeight&&wd>LOCAL.oversizeWidth;
+    });
+    let extraPeople=Number(access.extra_people)||0;
+    if(!access.needs_more_than_two_people&&!oversize)extraPeople=0;
+    if(oversize&&extraPeople<1)extraPeople=1;
+
+    let hourly=LOCAL.basePrice;
+    let trucks=1;
+    if(extraPeople>=2){
+      trucks=2;
+      hourly=longHaul?LOCAL.basePrice*LOCAL.longHaulFactor:LOCAL.basePrice;
+    }else if(extraPeople===1||oversize){
+      hourly=LOCAL.threePersonHourly;
+    }else if(longHaul){
+      hourly=LOCAL.basePrice*LOCAL.longHaulFactor;
+    }
+
+    const scale=hourly/LOCAL.basePrice;
+    const basePrice=LOCAL.basePrice*scale;
+    const refPrice=LOCAL.referencePrice*scale;
     const extraMinutes=Math.max(0,m-LOCAL.baseMinutes);
-    const perMinuteRate=LOCAL.referencePrice/LOCAL.referenceMinutes;
-    const rawEstimate=LOCAL.basePrice+(extraMinutes*perMinuteRate);
+    const perMinuteRate=refPrice/LOCAL.referenceMinutes;
+    const rawEstimate=basePrice+(extraMinutes*perMinuteRate);
     const routeRounded=Math.ceil(rawEstimate/5)*5;
     const n=Math.max(0,Math.floor(Number(itemCount)||0));
     const multiItemAdder=n>=3?10+(n-3)*5:0;
+    const flights=access.stairs?Math.max(0,Math.floor(Number(access.stair_flights)||0)):0;
+    const stairFee=flights>1?(flights-1)*LOCAL.stairFeePerExtraFlight:0;
+    const estimated=(routeRounded+multiItemAdder)*trucks+stairFee;
 
     return {
       drive_minutes:m,
       base_minutes:LOCAL.baseMinutes,
-      base_price:LOCAL.basePrice,
+      base_price:basePrice,
       extra_minutes:extraMinutes,
       per_minute_rate:perMinuteRate,
       raw_estimate:rawEstimate,
       route_price:routeRounded,
       item_count:n,
       multi_item_adder:multiItemAdder,
-      estimated_price:routeRounded+multiItemAdder
+      hourly_rate:hourly,
+      truck_multiplier:trucks,
+      stair_fee:stairFee,
+      long_haul:longHaul,
+      oversize_confirm:oversize,
+      extra_people:extraPeople,
+      estimated_price:estimated
     };
+  }
+
+  function rateConfirmHtml(strong){
+    return '<div class="lf-rate-confirm'+(strong?' strong':'')+'">'+
+      '<h3>These are estimates only</h3>'+
+      '<p>This is our <strong>best guess</strong> based on the information you provided — not a locked-in rate. Please call to confirm before scheduling.</p>'+
+      '<div class="lf-rate-stack">'+
+        '<div class="lf-rate-card-panel">'+
+          '<div class="lf-rate-card">'+
+            '<a href="tel:4803769485" aria-label="Call Cruz Pro Line"><img class="lf-rate-thumb" src="'+CRUZ_LOGO+'" alt="Cruz Pro Line"></a>'+
+            '<div>'+
+              '<span class="lf-rate-kicker">Delivery partner</span>'+
+              '<strong><a class="lf-rate-name" href="tel:4803769485">Cruz Pro Line</a></strong>'+
+              '<a class="lf-rate-phone" href="tel:4803769485">480-376-9485</a>'+
+              '<span class="lf-rate-shop-line">Call the shop: <a href="tel:4805887006">480-588-7006</a></span>'+
+            '</div>'+
+          '</div>'+
+        '</div>'+
+        '<div class="lf-rate-card-panel">'+
+          '<div class="lf-rate-card">'+
+            '<a href="tel:4805887006" aria-label="Call Lost and Found Resale"><img class="lf-rate-thumb lf-rate-store" src="'+LF_STORE+'" alt="Lost &amp; Found Scottsdale showroom"></a>'+
+            '<div>'+
+              '<span class="lf-rate-kicker">Call the shop</span>'+
+              '<strong><a class="lf-rate-name" href="tel:4805887006">Lost &amp; Found Resale</a></strong>'+
+              '<a class="lf-rate-phone" href="tel:4805887006">480-588-7006</a>'+
+              '<span class="lf-rate-sub">Scottsdale showroom · final rate confirmation</span>'+
+            '</div>'+
+          '</div>'+
+        '</div>'+
+      '</div>'+
+    '</div>';
   }
 
   function setStep(next){
@@ -147,19 +218,25 @@
     if(n===3&&$$(".lf-item",itemsWrap).length===0){valid=false;alert("Add at least one item.");}
     if(n===4&&bool("#lfStairs")){
       const flights=num(value("#lfFlights"));
-      const stairNotes=value("#lfStairNotes");
-
-      if(flights<1&&!stairNotes){
+      if(flights<1){
         valid=false;
-        fieldError($("#lfFlights"),"Enter the number of flights or add a stair note.");
-        fieldError($("#lfStairNotes"),"Enter a stair note or the number of flights.");
+        fieldError($("#lfFlights"),"Enter how many flights of stairs (1-20).");
       }else{
         fieldError($("#lfFlights"),"");
-        fieldError($("#lfStairNotes"),"");
       }
+      const banner=$("#lfStairsEstimateBanner");
+      if(banner)banner.hidden=false;
     }
     if(n===4&&bool("#lfCrew")&&!$("#lfCrewDetails")?.hidden){
       const why=value("#lfCrewWhy");
+      const extra=$('input[name="lf_extra_people"]:checked')?.value;
+      const extraErr=$("#lfExtraPeopleError");
+      if(!(extra==="1"||extra==="2")){
+        valid=false;
+        if(extraErr)extraErr.textContent="Choose 1 extra person or 2 extra people.";
+      }else if(extraErr){
+        extraErr.textContent="";
+      }
       if(!why){
         valid=false;
         fieldError($("#lfCrewWhy"),"Please explain why you think more than two people are needed.");
@@ -326,6 +403,7 @@
         $("#lfCrew").checked=false;
         if($("#lfCrewDetails"))$("#lfCrewDetails").hidden=true;
         if($("#lfCrewWhy"))$("#lfCrewWhy").value="";
+        $$('input[name="lf_extra_people"]').forEach(r=>{r.checked=false});
       }
     }else if($("#lfDock")&&!nationwide){
       $("#lfDock").checked=false;
@@ -558,6 +636,7 @@
       stair_flights:askInteriorAccess&&bool("#lfStairs")?num(value("#lfFlights")):0,
       stair_notes:askInteriorAccess&&bool("#lfStairs")?value("#lfStairNotes"):"",
       needs_more_than_two_people:path==="nationwide"?false:bool("#lfCrew"),
+      extra_people:path==="nationwide"||!bool("#lfCrew")?0:num($('input[name="lf_extra_people"]:checked')?.value||0),
       crew_review_required:path==="nationwide"?false:bool("#lfCrew"),
       more_than_two_people_reason:path==="nationwide"||!bool("#lfCrew")?"":value("#lfCrewWhy"),
       tight_turns_or_narrow_halls:askInteriorAccess&&bool("#lfTight"),
@@ -607,9 +686,8 @@
       flags.push(stairParts.length?"stairs: "+stairParts.join(" | "):"stairs");
     }
     if(a.needs_more_than_two_people){
-      flags.push(a.more_than_two_people_reason
-        ?"more than two people (opinion): "+a.more_than_two_people_reason
-        :"more than two people (customer opinion)");
+      flags.push(a.extra_people>=2?"extra crew: 2 people / two trucks":a.extra_people===1?"extra crew: 1 person ($130/hr)":"more than two people");
+      if(a.more_than_two_people_reason)flags.push("crew note: "+a.more_than_two_people_reason);
     }
     if(a.tight_turns_or_narrow_halls)flags.push("tight turns / narrow access");
     if(a.freight_elevator)flags.push("freight elevator");
@@ -712,21 +790,39 @@
     const result=$("#lfResult");
     if(pathLocal){
       const minutes=extractDriveMinutes(preview);
-      const est=localEstimate(minutes,(payload.items||[]).length);
+      const miles=Number(preview?.route?.distance_miles??preview?.display?.distance_miles);
+      const est=localEstimate(minutes,(payload.items||[]).length,{
+        access:payload.access,
+        items:payload.items||[],
+        distanceMiles:miles
+      });
       const manual=flags.length>0||payload.access.fragile_or_special_handling;
-      const serverPrice=Number(preview?.local_estimate?.estimated_price??preview?.display?.amount);
+      const serverPrice=Number(preview?.local_estimate?.estimated_price??preview?.display?.display_amount??preview?.display?.amount);
       const priceAmount=Number.isFinite(serverPrice)&&serverPrice>0?serverPrice:(est?est.estimated_price:null);
       const displayedAmount=priceAmount!=null?money(priceAmount):"$95.00";
       const multiAdder=Number(preview?.local_estimate?.multi_item_adder??est?.multi_item_adder)||0;
+      const stairFee=Number(preview?.local_estimate?.stair_fee??est?.stair_fee)||0;
       const itemCount=Number(preview?.local_estimate?.item_count??(payload.items||[]).length)||0;
       const multiNote=multiAdder>0
         ?'<p class="lf-drive-stats">Includes multi-item handling for '+itemCount+" items (+"+money(multiAdder)+").</p>"
         :"";
-      const priceLabel=payload.access.needs_more_than_two_people
-        ? "Approximate Two-Person Base: "
-        : "Your Preliminary Estimate Is ";
+      const stairNote=stairFee>0
+        ?'<p class="lf-drive-stats">Includes stair fee '+money(stairFee)+" (first flight free, then $75/flight).</p>"
+        :"";
+      const extraPeople=Number(payload.access.extra_people)||0;
+      const oversize=Boolean(preview?.local_estimate?.oversize_confirm||est?.oversize_confirm);
+      const longHaul=Boolean(preview?.local_estimate?.long_haul||est?.long_haul||(Number.isFinite(miles)&&miles*2>LOCAL.longHaulRoundTripMiles));
+      const estimateSpotlight=Boolean(payload.access.stairs||payload.access.needs_more_than_two_people||oversize||longHaul);
+      const priceLabel=oversize
+        ?"Best-Guess Estimate (Oversized — Confirm): "
+        :longHaul
+          ?"Best-Guess Estimate (Out of Town — Confirm): "
+          :extraPeople>=2
+            ?"Two-Truck Estimate: "
+            :extraPeople===1||payload.access.needs_more_than_two_people
+              ?"3-Person Crew Estimate: "
+              :"Your Preliminary Estimate Is ";
       const oneWay=est?est.drive_minutes:(minutes?Math.ceil(minutes):null);
-      const miles=Number(preview?.route?.distance_miles??preview?.display?.distance_miles);
       const milesText=Number.isFinite(miles)&&miles>0?" — "+miles+" mi":"";
       const driveStats=oneWay
         ? '<p class="lf-drive-stats">'+oneWay+" min one way — "+(oneWay*2)+" min round trip"+milesText+"</p>"
@@ -737,26 +833,35 @@
       const laborText=isPickup
         ?"Time is round-trip, not one way — includes prep, load/secure, return, offload, and placement."
         :"Time is round-trip, not one way — includes wrap/prep, load/secure, offload, and placement.";
-      const policyText=isPickup
-        ?'<p>Final pricing will need to be confirmed directly with the driver team. If you need final confirmed pricing, please email '+LF_MAIL+' or call '+LF_TEL+'.</p>'
-        :'<p><strong>We do not hold items.</strong> Purchase now and we can confirm delivery and freight shortly. If you need rates ASAP, please reach out to us: '+LF_MAIL+' — '+LF_TEL+'.</p>';
       const buyHtml=buyItemsHtml(payload.items,isPickup);
+      const oversizeHtml=oversize
+        ?'<p class="lf-estimate-banner warn"><strong>Needs confirmation due to item size.</strong> At least one item is 299+ lb and over 72&quot; high and 72&quot; wide. Some large items are easier to move than others — this was our best guess based on the information provided (priced like a 3-person / $130/hr job). Please contact us before scheduling. <strong>This is an estimate only.</strong></p>'
+        :"";
+      const longHaulHtml=longHaul
+        ?'<p class="lf-estimate-banner warn"><strong>Needs confirmation — out of town (100+ mile round trip).</strong> Rates can fluctuate with distance, traffic, and scheduling. This was our best guess based on the route information provided. Please contact us to confirm before scheduling. <strong>This is an estimate only.</strong></p>'
+        :"";
+      const spotlightHtml=estimateSpotlight
+        ?'<p class="lf-estimate-banner"><strong>ESTIMATE ONLY — please confirm.</strong> Extra crew, stairs, oversized pieces, and longer distances can change the final price. Call the shop or Cruz Pro Line before you rely on this number.</p>'
+        :'<p><strong>(Estimate)</strong> Best guess based on the information provided — not a final booked rate.</p>';
 
       result.innerHTML=
         '<h2>'+(isPickup?"Your Preliminary Consignor Pickup Estimate":"Your Preliminary Local Delivery Estimate")+'</h2>'+
-        '<div class="lf-price">'+priceLabel+displayedAmount+'</div>'+
+        '<div class="lf-price">'+priceLabel+displayedAmount+' <span class="lf-price-estimate-tag">(Estimate)</span></div>'+
+        oversizeHtml+
+        longHaulHtml+
+        spotlightHtml+
+        rateConfirmHtml(estimateSpotlight)+
         driveStats+
         multiNote+
+        stairNote+
         buyHtml+
         mapHtml+
         '<p>'+laborText+'</p>'+
-        policyText+
+        '<p>Call the shop first for final rate confirmation — this is only our best guess based on the information provided.</p>'+
         buyHtml+
-        (payload.access.needs_more_than_two_people
-          ? '<p><strong>Additional crew review required:</strong> Amount above is the standard two-person base only.</p>'
-          : (manual
-              ? '<p><strong>Additional review needed:</strong> Stairs, tight access, long carries, or special handling may change the final price.</p>'
-              : '<p>Best estimate only. Final pricing and scheduling confirmed by Lost &amp; Found Resale.</p>'));
+        (manual&&!estimateSpotlight
+              ? '<p><strong>Additional review needed:</strong> Tight access, long carries, or special handling may change the final price.</p>'
+              : '');
     }else{
       const rate=preview?.nationwide_rate||{};
       const display=preview?.display||{};
@@ -928,15 +1033,28 @@
   $("#lfAddItem").addEventListener("click",()=>addItem());
   $("#lfReviewSubmit").addEventListener("click",reviewEstimateAndEmail);
   form.addEventListener("submit",e=>e.preventDefault());
-  $("#lfStairs").addEventListener("change",e=>$("#lfStairDetails").hidden=!e.target.checked);
+  $("#lfStairs").addEventListener("change",e=>{
+    $("#lfStairDetails").hidden=!e.target.checked;
+    const banner=$("#lfStairsEstimateBanner");
+    if(banner)banner.hidden=!e.target.checked;
+    if(!e.target.checked){
+      if($("#lfFlights"))$("#lfFlights").value="";
+      fieldError($("#lfFlights"),"");
+    }
+  });
   $("#lfElevator").addEventListener("change",e=>$("#lfElevatorDetails").hidden=!e.target.checked);
   $("#lfGate").addEventListener("change",e=>$("#lfGateDetails").hidden=!e.target.checked);
   if($("#lfCrew"))$("#lfCrew").addEventListener("change",e=>{
     const details=$("#lfCrewDetails");
     if(details)details.hidden=!e.target.checked;
-    if(!e.target.checked&&$("#lfCrewWhy")){
-      $("#lfCrewWhy").value="";
-      fieldError($("#lfCrewWhy"),"");
+    if(!e.target.checked){
+      if($("#lfCrewWhy")){
+        $("#lfCrewWhy").value="";
+        fieldError($("#lfCrewWhy"),"");
+      }
+      $$('input[name="lf_extra_people"]').forEach(r=>{r.checked=false});
+      const extraErr=$("#lfExtraPeopleError");
+      if(extraErr)extraErr.textContent="";
     }
   });
   if($("#lfWhiteGlove"))$("#lfWhiteGlove").addEventListener("change",()=>updateWhiteGloveAccess());
