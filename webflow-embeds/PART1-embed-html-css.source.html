@@ -45,11 +45,11 @@ to remain visible inside the Webflow Designer.
 .lf-error{min-height:13px;margin-top:3px;color:var(--lf-red);font-size:10px;font-weight:700}
 .lf-required{color:var(--lf-red)}
 .lf-choice-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-.lf-path-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.lf-path-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;align-items:stretch}
 @media(max-width:900px){.lf-path-grid{grid-template-columns:1fr}}
-.lf-choice{position:relative;height:100%}
+.lf-choice{position:relative;height:100%;display:flex;flex-direction:column}
 .lf-choice input{position:absolute;opacity:0;pointer-events:none}
-.lf-choice label{display:block;height:100%;min-height:0;padding:16px;border:1px solid var(--lf-border);border-radius:12px;background:#fff;cursor:pointer;transition:border-color .18s ease,background .18s ease,box-shadow .18s ease,transform .18s ease}
+.lf-choice label{display:block;height:100%;min-height:0;padding:16px;border:1px solid var(--lf-border);border-radius:12px;background:#fff;cursor:pointer;transition:border-color .18s ease,background .18s ease,box-shadow .18s ease,transform .18s ease;overflow:visible}
 .lf-choice label:hover{transform:translateY(-2px);border-color:#b8b1a4;box-shadow:0 8px 22px rgba(21,21,21,.06)}
 .lf-choice input:focus+label{box-shadow:0 0 0 3px rgba(7,18,124,.12)}
 .lf-choice input:checked+label{border:2px solid var(--lf-navy);background:#f4f6ff}
@@ -658,8 +658,8 @@ legend.lf-heavy-prompt {
   <div class="lf-hero">
     <span class="lf-kicker">Scottsdale showroom</span>
     <h1>Delivery, Pickup &amp; Freight</h1>
-    <p>Get an estimate from our online tool for local delivery, consignor pickup, or nationwide freight. Confirm pricing before scheduling.</p>
-    <div class="lf-notice"><strong>Estimate only.</strong> This number comes from our online tool — not a locked-in rate. When you call to schedule, you will need to confirm pricing. Final pricing can change after measurements, travel time, call-out items, labor, carrier rates, packaging, and special handling are confirmed.</div>
+    <p>Get a personalized <strong>estimate</strong> for local delivery, consignor pickup, or nationwide freight using our online tool.</p>
+    <div class="lf-notice"><strong>Estimate only.</strong> Your result is based on the information provided and is intended as a helpful pricing guide. Final pricing may change after measurements, travel time, labor, packaging, carrier rates, access requirements, capacity and special handling are confirmed.</div>
   </div>
 
   <div class="lf-progress" aria-label="Calculator progress">
@@ -676,7 +676,7 @@ legend.lf-heavy-prompt {
     <section class="lf-step" data-step="1">
       <div class="lf-head">
         <h2>Choose your path</h2>
-        <p>One clear option — local delivery, consignor pickup, or nationwide freight.</p>
+        <p>Choose local delivery, consignor pickup, or nationwide freight to get started.</p>
       </div>
 
       <div class="lf-choice-grid lf-path-grid">
@@ -685,7 +685,7 @@ legend.lf-heavy-prompt {
           <label for="lfLocal">
             <em class="lf-choice-kicker">Local Arizona</em>
             <strong>Delivery to you</strong>
-            <span>$95/hour round-trip from our Scottsdale showroom — wrapping, loading, delivery, and placement.</span>
+            <span>Round-trip service from our Scottsdale showroom, including wrapping, loading, delivery, and placement.</span>
           </label>
         </div>
         <div class="lf-choice">
@@ -693,7 +693,7 @@ legend.lf-heavy-prompt {
           <label for="lfPickup">
             <em class="lf-choice-kicker">Consignor</em>
             <strong>Pickup to showroom</strong>
-            <span>$95/hour round-trip Arizona pickup — prep, loading, return to Scottsdale, and placement.</span>
+            <span>Round-trip Arizona pickup service, including preparation, wrapping, loading, transportation to our Scottsdale showroom, and placement.</span>
           </label>
         </div>
         <div class="lf-choice">
@@ -701,13 +701,13 @@ legend.lf-heavy-prompt {
           <label for="lfNational">
             <em class="lf-choice-kicker">Nationwide</em>
             <strong>Freight shipping</strong>
-            <span>Pallet-ready details and freight options — we get you a confirmed quote.</span>
+            <span>Provide the destination and item details to receive pallet-ready specifications and a preliminary shipping range. We then use that information to work with our freight partners and secure a final rate that fits your shipping needs.</span>
           </label>
         </div>
       </div>
 
       <input type="hidden" name="request_mode" id="lfRequestMode" value="estimate">
-      <div class="lf-step-note" id="lfWhatNext"><strong>What happens next:</strong> Now we enter where it’s going, then your item details, then access needs, then you review — and we email a preliminary estimate so we can confirm final pricing.</div>
+      <div class="lf-step-note" id="lfWhatNext"><strong>What happens next:</strong> Tell us where the item is going and provide the item and access details. You’ll receive a preliminary estimate based on the information submitted. We can then verify the details and use them to confirm local service pricing or secure a final rate with our freight partners.</div>
 
       <div class="lf-actions"><div></div><button class="lf-btn" type="button" data-next>Continue</button></div>
     </section>

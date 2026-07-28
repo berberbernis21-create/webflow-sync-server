@@ -361,15 +361,7 @@
     const el=$("#lfWhatNext");
     if(!el)return;
     const p=path||$('input[name="delivery_path"]:checked')?.value||"local_az";
-    let body="";
-    if(p==="pickup_az"){
-      body="Now we enter where we’re picking up from, then your item details, then access needs, then you review — and we email a preliminary estimate so we can confirm final pricing.";
-    }else if(p==="nationwide"){
-      body="Now we enter where it’s going, then your item details, then freight options, then you review — and we get you a confirmed quote.";
-    }else{
-      body="Now we enter where it’s going, then your item details, then access needs, then you review — and we email a preliminary estimate so we can confirm final pricing.";
-    }
-    el.innerHTML="<strong>What happens next:</strong> "+body;
+    el.innerHTML="<strong>What happens next:</strong> Tell us where the item is going and provide the item and access details. You’ll receive a preliminary estimate based on the information submitted. We can then verify the details and use them to confirm local service pricing or secure a final rate with our freight partners.";
 
     const addressNext=$("#lfAddressWhatNext");
     if(addressNext){
