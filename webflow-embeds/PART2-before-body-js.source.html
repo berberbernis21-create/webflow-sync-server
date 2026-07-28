@@ -478,7 +478,7 @@
     if(!copy)return;
     const safeEmail=escapeHtml(email||"");
     if(path==="nationwide"){
-      copy.innerHTML='Your freight request was submitted successfully. A receipt was emailed to <strong id="lfReceiptEmail">'+safeEmail+'</strong>, and Lost &amp; Found received the complete details for review.';
+      copy.innerHTML='Your freight request was submitted successfully. A receipt was emailed to <strong id="lfReceiptEmail">'+safeEmail+'</strong>, and Lost &amp; Found received the complete request for review.';
     }else{
       copy.innerHTML='Your summary appears directly below. We also emailed a receipt to <strong id="lfReceiptEmail">'+safeEmail+'</strong>, and Lost &amp; Found received the complete request for review.';
     }
@@ -1107,8 +1107,11 @@
       '</div>';
   }
 
-  function buyItemsHtml(items,isPickup){
+  function buyItemsHtml(items,isPickup,opts){
     if(isPickup)return"";
+    const buyTip=opts&&opts.buyTip
+      ?'<p class="lf-buy-tax-tip" style="margin:8px 0 0;font-size:13px;line-height:1.45;color:#333;">'+escapeHtml(opts.buyTip)+"</p>"
+      :"";
     const cards=(items||[]).map(i=>{
       const title=escapeHtml(i.title||"View item");
       const dims=[i.width,i.depth,i.height].every(v=>v!=null&&v!=="")
@@ -1133,7 +1136,7 @@
         "</div>";
     }).join("");
     if(!cards)return"";
-    return '<div class="lf-buy-block"><p>Buy your item(s)</p><div class="lf-buy-cards">'+cards+"</div></div>";
+    return '<div class="lf-buy-block"><p>Buy your item(s)</p><div class="lf-buy-cards">'+cards+"</div>"+buyTip+"</div>";
   }
 
   function extractDriveMinutes(data){
@@ -1264,23 +1267,24 @@
       const dirUrl=preview?.route?.directions_url||display?.directions_url||rate?.route?.directions_url||"";
       const mapHtml=routeMapHtml(mapUrl,dirUrl);
       const rangeText=hasRange?money(low)+" – "+money(high):"Freight-Ready";
-      const buyHtml=buyItemsHtml(payload.items,false);
+      const outOfAz=!isArizonaStateOrZip(payload.delivery_address?.state||payload.state,payload.delivery_address?.zip||payload.zip);
+      const taxHtml=outOfAz
+        ? '<p style="margin:0 0 4px;font-size:14px;line-height:1.5;color:#333;"><strong>Out-of-state purchase savings:</strong> When you purchase the item online and it is shipped outside Arizona, no Arizona sales tax is charged on the item purchase at checkout. That is approximately an 8% savings compared with an Arizona purchase.</p>'+
+          '<p style="margin:0 0 12px;font-size:12px;line-height:1.45;color:#666;">This applies to the merchandise purchase. Freight and other service charges are separate.</p>'
+        : "";
+      const buyHtml=buyItemsHtml(payload.items,false,outOfAz?{
+        buyTip:"Buy online to secure the item and receive the out-of-state no-sales-tax benefit on the merchandise purchase."
+      }:null);
       const oversizeHtml=oversizedPalletNoteHtml(payload.items);
       const liftgateYes=!!payload.access.liftgate_delivery;
       const whiteGloveHtml=payload.access.white_glove
         ?'<p style="margin:0 0 8px;font-size:13px;line-height:1.5;color:#333;"><strong>White Glove selected</strong> — that raises the quote versus standard threshold / curbside freight.</p>'
         :"";
-      const warehouseHtml=payload.access.warehouse_pickup
-        ?'<p style="margin:0 0 8px;font-size:13px;line-height:1.5;color:#333;"><strong>Tip:</strong> Warehouse / terminal pickup was selected. That option can often reduce cost versus residential delivery; confirmed savings will appear with your rates.</p>'
-        :'<p style="margin:0 0 8px;font-size:13px;line-height:1.5;color:#333;"><strong>Tip:</strong> Picking up from a nearby freight terminal may save approximately $150–$200 compared with residential delivery. Available options will be included with your confirmed rates.</p>';
       const notesHtml=[
-        oversizeHtml,
         whiteGloveHtml,
-        warehouseHtml,
         '<p style="margin:0 0 6px;font-size:13px;line-height:1.5;color:#333;"><strong>Liftgate at delivery:</strong> '+(liftgateYes?"Yes":"No")+'</p>',
-        '<p style="margin:0 0 6px;font-size:13px;line-height:1.5;color:#333;"><strong>Pickup loading at Lost &amp; Found:</strong> We will confirm whether a liftgate is required when requesting final carrier rates.</p>',
+        '<p style="margin:0 0 6px;font-size:13px;line-height:1.5;color:#333;"><strong>Pickup loading at Lost &amp; Found:</strong> We will confirm whether a liftgate is required when requesting confirmed carrier rates.</p>',
         '<p style="margin:0 0 10px;font-size:13px;line-height:1.5;color:#333;"><strong>Pickup and loading hours:</strong> 10:00 AM–5:00 PM, Monday–Saturday.</p>',
-        '<p style="margin:0 0 6px;font-size:13px;line-height:1.5;color:#333;">We do not hold items. Purchase the item online to secure it while our team confirms the available freight options.</p>',
         '<p style="margin:0;font-size:13px;line-height:1.5;color:#333;">Questions? Email '+LF_MAIL+' or call '+LF_TEL+'.</p>'
       ].filter(Boolean).join("");
 
@@ -1288,10 +1292,12 @@
         '<h2 style="margin:0 0 4px;">Your Preliminary Nationwide Freight Range</h2>'+
         '<div class="lf-price" style="margin:2px 0 6px;">'+rangeText+'</div>'+
         milesLine+
-        '<p style="margin:0 0 6px;font-size:14px;line-height:1.5;color:#333;text-align:center;">Our team will review your submitted details and email you confirmed carrier options and the best available rates.</p>'+
-        '<p style="margin:0 0 12px;font-size:13px;line-height:1.45;color:#555;text-align:center;">Questions about freight? Call FreightCenter at <a href="tel:8007167608"><strong>800-716-7608</strong></a>.</p>'+
+        '<p style="margin:0 0 10px;font-size:15px;line-height:1.5;color:#222;font-weight:700;">Our team will review your request and follow up by email with confirmed rates and the best available carrier options for you.</p>'+
+        '<p style="margin:0 0 10px;font-size:14px;line-height:1.5;color:#333;"><strong>Freight savings tip:</strong> Picking up from a nearby freight terminal or warehouse instead of choosing residential delivery can significantly reduce the final shipping cost. Available pickup options will be included with your confirmed rates.</p>'+
+        taxHtml+
         buyHtml+
         mapHtml+
+        oversizeHtml+
         '<div class="lf-result-notes" style="margin-top:10px;">'+notesHtml+'</div>';
     }
     result.classList.add("show");
