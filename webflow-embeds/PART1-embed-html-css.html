@@ -935,7 +935,7 @@ to remain visible inside the Webflow Designer.
       <div class="lf-field"><label>Depth (in.) <span class="lf-required">*</span></label><input class="lf-depth" type="number" min="1" step=".1" required><div class="lf-error"></div></div>
       <div class="lf-field"><label>Height (in.) <span class="lf-required">*</span></label><input class="lf-height" type="number" min="1" step=".1" required><div class="lf-error"></div></div>
       <div class="lf-field"><label>Estimated weight (lb.) <span class="lf-required">*</span></label><input class="lf-weight" type="number" min="1" step="1" required><div class="lf-error"></div></div>
-      <div class="lf-field"><label>Quantity</label><input class="lf-quantity" type="number" min="1" step="1" value="1"><div class="lf-help">Use 1 when the listing already represents a set. Raise qty only when shipping multiple of the same piece.</div></div>
+      <div class="lf-field"><label>Quantity</label><input class="lf-quantity" type="number" min="1" step="1" value="1"><div class="lf-help">Use 1 when the listing already represents a set. Raise qty for multiples of the same piece — local delivery/pickup counts qty toward overall handling; nationwide may ask about flip/stack on one pallet.</div></div>
       <div class="lf-field"><label>Listed price</label><input class="lf-price-input" type="number" min="0" step=".01"></div>
       <div class="lf-field">
   <label>Freight class <span style="font-weight:400">(if known)</span></label>
@@ -968,7 +968,7 @@ to remain visible inside the Webflow Designer.
     </div>
     <div class="lf-stack-ask" hidden>
       <fieldset class="lf-crew-extra" style="margin:10px 0 6px;border:0;padding:0;">
-        <legend style="font-size:13px;font-weight:800;margin:0 0 8px;">Qty is 2+. Can these pieces be flipped and stacked on <strong>one</strong> pallet? <span class="lf-required">*</span></legend>
+        <legend style="font-size:13px;font-weight:800;margin:0 0 8px;">Nationwide · qty 2+. Can these pieces be flipped and stacked on <strong>one</strong> pallet? <span class="lf-required">*</span></legend>
         <label class="lf-check"><input type="radio" class="lf-flip-stack" name="" value="yes"> Yes — flip/stack on one pallet (same footprint; height only goes up a little)</label>
         <label class="lf-check"><input type="radio" class="lf-flip-stack" name="" value="no"> No — too tall, awkward, or should not be stacked</label>
         <label class="lf-check"><input type="radio" class="lf-flip-stack" name="" value="unsure"> Not sure</label>

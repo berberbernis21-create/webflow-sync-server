@@ -137,7 +137,10 @@ async function buildQuoteContext(submission) {
     zip: submission.zip,
     destinationFull: submission.delivery_address.full,
     access: submission.access,
-    itemCount: Array.isArray(submission.items) ? submission.items.length : 0,
+    itemCount: (Array.isArray(submission.items) ? submission.items : []).reduce(
+      (sum, it) => sum + Math.max(1, Math.floor(Number(it.quantity) || 1)),
+      0
+    ),
     items: submission.items || [],
   });
 
@@ -147,25 +150,28 @@ async function buildQuoteContext(submission) {
 
   const items = mapItemsForClient(submission.items);
   const accessorials = accessorialsFromAccess(submission.access);
-  const stackConfirmReasons = (submission.items || [])
-    .filter(
-      (it) =>
-        (Number(it.quantity) || 1) >= 2 ||
-        it.pallet?.stack_confirm_required ||
-        it.packing?.stack_confirm_required
-    )
-    .map((it) => {
-      const claim = it.flip_stack_claimed || it.pallet?.flip_stack_claimed || "unanswered";
-      const claimLabel =
-        claim === "yes"
-          ? "customer says YES flip/stack"
-          : claim === "no"
-            ? "customer says NO stack"
-            : claim === "unsure"
-              ? "customer NOT SURE"
-              : "stack answer missing";
-      return `CONFIRM STACKING: ${it.title || "Item"} (qty ${it.quantity || 1}) — ${claimLabel}. Warehouse must verify before final freight rates.`;
-    });
+  const isNationwide = submission.delivery_path === "nationwide";
+  const stackConfirmReasons = isNationwide
+    ? (submission.items || [])
+        .filter(
+          (it) =>
+            (Number(it.quantity) || 1) >= 2 ||
+            it.pallet?.stack_confirm_required ||
+            it.packing?.stack_confirm_required
+        )
+        .map((it) => {
+          const claim = it.flip_stack_claimed || it.pallet?.flip_stack_claimed || "unanswered";
+          const claimLabel =
+            claim === "yes"
+              ? "customer says YES flip/stack"
+              : claim === "no"
+                ? "customer says NO stack"
+                : claim === "unsure"
+                  ? "customer NOT SURE"
+                  : "stack answer missing";
+          return `CONFIRM STACKING: ${it.title || "Item"} (qty ${it.quantity || 1}) — ${claimLabel}. Warehouse must verify before final freight rates.`;
+        })
+    : [];
 
   if (submission.delivery_path === "nationwide") {
     const nationwide_rate = await fetchNationwideLiveRate(submission);

@@ -335,7 +335,7 @@ test("qty 2 recliner flip-stack claim uses one pallet + small height add", () =>
 });
 
 test("qty 2 requires flip_stack_claimed on validate", () => {
-  const v = validateFreightQuoteRequest({
+  const missing = validateFreightQuoteRequest({
     customer_name: "Test User",
     customer_email: "test@example.com",
     customer_phone: "4805551212",
@@ -357,8 +357,38 @@ test("qty 2 requires flip_stack_claimed on validate", () => {
       },
     ],
   });
-  assert.equal(v.ok, false);
-  assert.match(String(v.error || ""), /flipped\/stacked|flip\/stack/i);
+  assert.equal(missing.ok, false);
+  assert.match(String(missing.error || ""), /flipped\/stacked|flip\/stack/i);
+
+  const localOk = validateFreightQuoteRequest({
+    customer_name: "Test User",
+    customer_email: "test@example.com",
+    customer_phone: "4805551212",
+    street: "7167 E Rancho Vista Dr",
+    city: "Scottsdale",
+    state: "AZ",
+    zip: "85251",
+    delivery_path: "local_az",
+    request_mode: "estimate",
+    access: { stairs: false, needs_more_than_two_people: false },
+    items: [
+      {
+        title: "La-Z-Boy Talladega Wall Recliner",
+        width: 38,
+        depth: 32,
+        height: 46,
+        weight: 95,
+        quantity: 2,
+      },
+    ],
+  });
+  assert.equal(localOk.ok, true);
+  assert.equal(localOk.submission.items[0].flip_stack_claimed, "");
+});
+
+test("local multi-item adder uses total quantity across lines", () => {
+  assert.equal(calculateLocalRouteEstimate(15, { itemCount: 2 }).estimated_price, 95);
+  assert.equal(calculateLocalRouteEstimate(15, { itemCount: 3 }).estimated_price, 105);
 });
 
 test("local pricing: 1 extra person uses $130/hr", () => {

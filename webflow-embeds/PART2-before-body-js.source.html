@@ -69,15 +69,37 @@
   function palletize(item){
     const w=num(item.width),d=num(item.depth),h=num(item.height),wt=num(item.weight);
     const qty=Math.max(1,Math.floor(num(item.quantity)||1));
+    const path=$('input[name="delivery_path"]:checked')?.value||"local_az";
+    const nationwide=path==="nationwide";
     const selectedClass=item.freight_class===null||item.freight_class===""?null:num(item.freight_class);
     const setFromTitle=Math.max(1,parseSetCount(item.title));
     const pieceCount=Math.max(1,setFromTitle*qty);
-    const claim=String(item.flip_stack_claimed||"").toLowerCase();
-    const forceFlip=qty>1&&claim==="yes";
-    const nestable=canNestStack(item.title,item.non_stackable);
+    const claim=nationwide?String(item.flip_stack_claimed||"").toLowerCase():"";
+    const forceFlip=nationwide&&qty>1&&claim==="yes";
+    const nestable=nationwide&&canNestStack(item.title,item.non_stackable);
     let freightH=h;
     let stackNote="";
     let packingMode="single";
+
+    // Local AZ truck jobs: qty only affects overall piece count / handling — no flip-stack packing.
+    if(!nationwide){
+      return {
+        width:w<=48?48:roundUp5(w),
+        depth:d<=40?40:roundUp5(d),
+        height:Math.ceil(h+5),
+        weight:Math.ceil(wt+30),
+        freight_class:selectedClass,
+        packaging_type:"Pallet(s)",
+        non_stackable:!!item.non_stackable,
+        set_count:1,
+        stack_note:qty>1?("Qty "+qty+" counted toward local handling"):(item.non_stackable?"non-stackable":""),
+        packing_mode:"local_single",
+        packing_notes:qty>1?["Local path: quantity counts toward overall local item/handling count."]:[],
+        stack_confirm_required:false,
+        flip_stack_claimed:null
+      };
+    }
+
     if(pieceCount>1&&(forceFlip||nestable)){
       const add=forceFlip&&!nestable?3:nestAddIn(h,item.title);
       freightH=h+(pieceCount-1)*add;
@@ -240,10 +262,11 @@
     });
     if(n===3&&$$(".lf-item",itemsWrap).length===0){valid=false;alert("Add at least one item.");}
     if(n===3){
+      const nationwide=$('input[name="delivery_path"]:checked')?.value==="nationwide";
       $$(".lf-item",itemsWrap).forEach(node=>{
         const qty=Math.max(1,Math.floor(num($(".lf-quantity",node).value)||1));
         const err=$(".lf-flip-stack-error",node);
-        if(qty>=2){
+        if(nationwide&&qty>=2){
           const claim=$(".lf-flip-stack:checked",node)?.value||"";
           if(!(claim==="yes"||claim==="no"||claim==="unsure")){
             valid=false;
@@ -550,8 +573,9 @@
     const syncStackAsk=()=>{
       const ask=$(".lf-stack-ask",node);
       const q=Math.max(1,Math.floor(num(qtyInput.value)||1));
-      if(ask)ask.hidden=q<2;
-      if(q<2){
+      const nationwide=$('input[name="delivery_path"]:checked')?.value==="nationwide";
+      if(ask)ask.hidden=!(nationwide&&q>=2);
+      if(!nationwide||q<2){
         $$(".lf-flip-stack",node).forEach(r=>{r.checked=false});
         const err=$(".lf-flip-stack-error",node);
         if(err)err.textContent="";
@@ -579,7 +603,8 @@
   function itemFromNode(node){
     const pickup=$('input[name="delivery_path"]:checked')?.value==="pickup_az";
     const qty=Math.max(1,num($(".lf-quantity",node).value)||1);
-    const flip=$(".lf-flip-stack:checked",node)?.value||"";
+    const nationwide=$('input[name="delivery_path"]:checked')?.value==="nationwide";
+    const flip=nationwide?($(".lf-flip-stack:checked",node)?.value||""):"";
     const item={
       source:pickup?"manual":($(".lf-source",node).value||"manual"),
       title:$(".lf-title",node).value.trim(),
@@ -593,7 +618,7 @@
       image_url:pickup?"":($(".lf-image-url",node)?.value||"").trim(),
       freight_class:$(".lf-class",node).value===""?null:num($(".lf-class",node).value),
       non_stackable:$(".lf-nonstack",node).checked,
-      flip_stack_claimed:qty>=2?flip:""
+      flip_stack_claimed:nationwide&&qty>=2?flip:""
     };
     item.pallet=palletize(item);
     return item;
@@ -856,7 +881,8 @@
     if(pathLocal){
       const minutes=extractDriveMinutes(preview);
       const miles=Number(preview?.route?.distance_miles??preview?.display?.distance_miles);
-      const est=localEstimate(minutes,(payload.items||[]).length,{
+      const qtyTotal=(payload.items||[]).reduce((sum,it)=>sum+Math.max(1,Math.floor(num(it.quantity)||1)),0);
+      const est=localEstimate(minutes,qtyTotal,{
         access:payload.access,
         items:payload.items||[],
         distanceMiles:miles
@@ -867,7 +893,7 @@
       const displayedAmount=priceAmount!=null?money(priceAmount):"$95.00";
       const multiAdder=Number(preview?.local_estimate?.multi_item_adder??est?.multi_item_adder)||0;
       const stairFee=Number(preview?.local_estimate?.stair_fee??est?.stair_fee)||0;
-      const itemCount=Number(preview?.local_estimate?.item_count??(payload.items||[]).length)||0;
+      const itemCount=Number(preview?.local_estimate?.item_count??qtyTotal)||0;
       const multiNote=multiAdder>0
         ?'<p class="lf-drive-stats">Includes multi-item handling for '+itemCount+" items (+"+money(multiAdder)+").</p>"
         :"";
@@ -1129,6 +1155,19 @@
     updateAddressCopy(path);
     updateAccessCopy(path);
     updateWhatNext(path);
+    // Flip/stack ask is nationwide-only; hide/clear when switching to local/pickup.
+    $$(".lf-item",itemsWrap).forEach(node=>{
+      const ask=$(".lf-stack-ask",node);
+      const q=Math.max(1,Math.floor(num($(".lf-quantity",node).value)||1));
+      const nationwide=path==="nationwide";
+      if(ask)ask.hidden=!(nationwide&&q>=2);
+      if(!nationwide||q<2){
+        $$(".lf-flip-stack",node).forEach(r=>{r.checked=false});
+        const err=$(".lf-flip-stack-error",node);
+        if(err)err.textContent="";
+      }
+      updatePallet(node);
+    });
   }));
 
   updateAddressCopy();
