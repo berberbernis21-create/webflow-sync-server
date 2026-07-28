@@ -24,8 +24,12 @@ to remain visible inside the Webflow Designer.
 .lf-hero>p{max-width:640px;margin:0 auto;font-size:14px;line-height:1.55;color:#3a3a3a}
 .lf-notice{margin-top:16px;padding:12px 14px;border:1px solid #e3ddd0;border-left:3px solid var(--lf-olive);border-radius:8px;background:rgba(255,255,255,.72);font-size:12px;line-height:1.5;text-align:left;color:#3a3a3a;width:100%;box-sizing:border-box}
 .lf-progress{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin:14px 0;width:100%;box-sizing:border-box}
-.lf-progress div{padding:9px 6px;border:1px solid transparent;border-radius:999px;background:var(--lf-soft);color:var(--lf-muted);text-align:center;font-size:10px;font-weight:800;letter-spacing:.02em;min-width:0}
-.lf-progress div.active{border-color:var(--lf-navy);background:var(--lf-navy);color:#fff;box-shadow:0 2px 8px rgba(7,18,124,.18)}
+.lf-progress [data-progress]{appearance:none;-webkit-appearance:none;display:block;width:100%;padding:9px 6px;border:1px solid transparent;border-radius:999px;background:#e4e0d8;color:#7a756c;text-align:center;font:inherit;font-size:10px;font-weight:800;letter-spacing:.02em;min-width:0;line-height:1.2;cursor:default;transition:background .15s ease,color .15s ease,border-color .15s ease,box-shadow .15s ease}
+.lf-progress [data-progress].done{border-color:#2a522c;background:var(--lf-green);color:#fff;cursor:pointer}
+.lf-progress [data-progress].done:hover{background:#264a28}
+.lf-progress [data-progress].active{border-color:var(--lf-navy);background:var(--lf-navy);color:#fff;box-shadow:0 2px 8px rgba(7,18,124,.18);cursor:default}
+.lf-progress [data-progress].reachable:not(.active){cursor:pointer}
+.lf-progress [data-progress]:disabled{opacity:1;cursor:default}
 .lf-step{margin-top:0;text-align:left}
 .lf-step[hidden]{display:none!important}
 .lf-head{margin-bottom:16px;text-align:left}
@@ -152,8 +156,8 @@ to remain visible inside the Webflow Designer.
 @media(max-width:767px){
  .lf-hero,.lf-step{padding:16px}
  .lf-grid,.lf-grid3,.lf-choice-grid,.lf-access-grid,.lf-lookup-row{grid-template-columns:1fr}
- .lf-progress{grid-template-columns:1fr}
- .lf-progress div{display:none}.lf-progress div.active{display:block}
+ .lf-progress{grid-template-columns:repeat(5,minmax(0,1fr));gap:5px}
+ .lf-progress [data-progress]{display:block;padding:8px 4px;font-size:9px}
  .lf-actions,.lf-actions-right{flex-direction:column;width:100%;margin-left:0}
  .lf-path-mismatch .lf-actions .lf-btn{min-width:0;width:100%}
  .lf-btn{width:100%;min-height:48px;font-size:15px}
@@ -701,11 +705,11 @@ legend.lf-heavy-prompt {
   </div>
 
   <div class="lf-progress" aria-label="Calculator progress">
-    <div class="active" data-progress="1">1. Path</div>
-    <div data-progress="2">2. Address</div>
-    <div data-progress="3">3. Items</div>
-    <div data-progress="4">4. Access</div>
-    <div data-progress="5">5. Review</div>
+    <button type="button" class="active" data-progress="1" aria-current="step">1. Path</button>
+    <button type="button" data-progress="2">2. Address</button>
+    <button type="button" data-progress="3">3. Items</button>
+    <button type="button" data-progress="4">4. Access</button>
+    <button type="button" data-progress="5">5. Review</button>
   </div>
 
   <form id="lfForm" novalidate>

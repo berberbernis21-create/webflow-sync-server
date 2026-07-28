@@ -19,7 +19,7 @@
 
   const LOCAL={baseMinutes:15,basePrice:95,referenceMinutes:8,referencePrice:15,threePersonHourly:130,longHaulRoundTripMiles:100,longHaulFactor:0.8,stairFeePerExtraFlight:7,oversizeWeight:299,oversizeHeight:72,oversizeAlwaysWeight:550};
   const DRAFT_KEY="lfFreightDraft_v1";
-  let step=1,itemCounter=0,lastPreview=null,submitting=false;
+  let step=1,maxStepReached=1,itemCounter=0,lastPreview=null,submitting=false;
   let pathMismatchAcknowledged=false;
   let pendingPathMismatch=null;
   let zipLookupTimer=null;
@@ -262,8 +262,20 @@
 
   function setStep(next,opts){
     step=Math.max(1,Math.min(5,next));
+    maxStepReached=Math.max(maxStepReached,step);
     $$(".lf-step").forEach(el=>el.hidden=Number(el.dataset.step)!==step);
-    $$(".lf-progress div").forEach(el=>el.classList.toggle("active",Number(el.dataset.progress)===step));
+    $$(".lf-progress [data-progress]").forEach(el=>{
+      const n=Number(el.dataset.progress);
+      const isActive=n===step;
+      const isDone=n<step;
+      const reachable=n<=maxStepReached;
+      el.classList.toggle("active",isActive);
+      el.classList.toggle("done",isDone);
+      el.classList.toggle("reachable",reachable&&!isActive);
+      el.setAttribute("aria-current",isActive?"step":"false");
+      el.disabled=!reachable;
+      el.tabIndex=reachable?0:-1;
+    });
     if(step===4)syncHeavyAccessPrompts();
     if(!opts||opts.scroll!==false)$("#lfCalc").scrollIntoView({behavior:"smooth",block:"start"});
     if(step<5)scheduleSaveDraft();
@@ -277,6 +289,7 @@
     clearDraft();
     submitting=false;
     lastPreview=null;
+    maxStepReached=1;
     pathMismatchAcknowledged=false;
     pendingPathMismatch=null;
     hidePathMismatch();
@@ -326,6 +339,7 @@
     return {
       v:1,
       step:Math.min(step,4),
+      maxStepReached:Math.min(Math.max(maxStepReached,step),4),
       pathMismatchAcknowledged:!!pathMismatchAcknowledged,
       path:$('input[name="delivery_path"]:checked')?.value||"local_az",
       fields,
@@ -381,6 +395,10 @@
       const items=Array.isArray(draft.items)&&draft.items.length?draft.items:[{}];
       items.forEach(it=>addItem(it));
       pathMismatchAcknowledged=!!draft.pathMismatchAcknowledged;
+      maxStepReached=Math.max(
+        1,
+        Math.min(4,Number(draft.maxStepReached)||Number(draft.step)||1)
+      );
       const path=$('input[name="delivery_path"]:checked')?.value||"local_az";
       updatePathBadges(path);
       updateAddressCopy(path);
@@ -1614,6 +1632,13 @@
     if(validateStep(step)){updatePathDefaults();setStep(step+1)}
   }));
   $$("[data-back]").forEach(btn=>btn.addEventListener("click",()=>setStep(step-1)));
+  $$(".lf-progress [data-progress]").forEach(btn=>btn.addEventListener("click",()=>{
+    const target=Number(btn.dataset.progress);
+    if(!Number.isFinite(target)||target<1||target>5)return;
+    if(target>maxStepReached)return;
+    if(target===step)return;
+    setStep(target);
+  }));
   $("#lfAddItem").addEventListener("click",()=>addItem());
   $("#lfReviewSubmit").addEventListener("click",reviewEstimateAndEmail);
   ["#lfStartNewQuote","#lfStartNewQuoteTop"].forEach(sel=>{
