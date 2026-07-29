@@ -1420,7 +1420,8 @@
       else if(a.assembly_required==="no")flags.push("disassembly & reassembly: no");
       else if(a.assembly_over_15==="yes"){
         const mins=Math.max(0,Math.floor(Number(a.assembly_extra_minutes)||0));
-        flags.push(mins>0?"disassembly & reassembly: "+mins+" minutes":"disassembly & reassembly: yes");
+        const total=mins>0?15+mins:0;
+        flags.push(total>0?"disassembly & reassembly: "+total+" minutes":"disassembly & reassembly: yes");
       }else if(a.assembly_over_15==="idk")flags.push("disassembly & reassembly: idk");
       else flags.push("disassembly & reassembly: within free 15 minutes");
     }else if(a.disassembly_or_assembly){
@@ -1556,10 +1557,11 @@
         :"";
       const assemblyFee=Number(preview?.local_estimate?.assembly_fee??est?.assembly_fee)||0;
       const assemblyMins=Number(preview?.local_estimate?.assembly_extra_minutes??est?.assembly_extra_minutes)||0;
+      const assemblyTotal=assemblyMins>0?15+assemblyMins:0;
       const assemblyRequired=Boolean(preview?.local_estimate?.assembly_required??est?.assembly_required);
       const assemblyOver60=Boolean(preview?.local_estimate?.assembly_confirm_over_60??est?.assembly_confirm_over_60);
-      const assemblyNote=assemblyFee>0&&assemblyMins>0
-        ?'<p class="lf-drive-stats"><strong>Additional Disassembly &amp; Reassembly Time | '+assemblyMins+' Minutes</strong></p>'
+      const assemblyNote=assemblyFee>0&&assemblyTotal>0
+        ?'<p class="lf-drive-stats"><strong>Additional Disassembly &amp; Reassembly Time | '+assemblyTotal+' Minutes</strong></p>'
         :assemblyRequired
           ?'<p class="lf-drive-stats">Disassembly &amp; reassembly needed (within free 15 minutes with wrapping/prep — no extra charge).</p>'
           :"";
