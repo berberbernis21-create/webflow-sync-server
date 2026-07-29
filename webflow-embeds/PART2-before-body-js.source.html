@@ -1145,7 +1145,8 @@
       ? String(prefill.freight_class)
       : "";
     $(".lf-class",node).value=initialClass;
-    $(".lf-nonstack",node).checked=prefill.non_stackable??auto.nonStackable;
+    const nationwidePrefill=$('input[name="delivery_path"]:checked')?.value==="nationwide";
+    $(".lf-nonstack",node).checked=nationwidePrefill?(prefill.non_stackable??auto.nonStackable):false;
     const flipName="lf_flip_stack_"+itemCounter;
     $$(".lf-flip-stack",node).forEach(r=>{
       r.name=flipName;
@@ -1180,7 +1181,9 @@
     $$(".lf-flip-stack",node).forEach(r=>r.addEventListener("change",()=>updatePallet(node)));
     title.addEventListener("change",()=>{
       const c=classify(title.value);
-      $(".lf-nonstack",node).checked=c.nonStackable;
+      if($('input[name="delivery_path"]:checked')?.value==="nationwide"){
+        $(".lf-nonstack",node).checked=c.nonStackable;
+      }
       updatePallet(node);
     });
 
@@ -1208,7 +1211,7 @@
       product_url:pickup?"":$(".lf-url",node).value.trim(),
       image_url:pickup?"":($(".lf-image-url",node)?.value||"").trim(),
       freight_class:$(".lf-class",node).value===""?null:num($(".lf-class",node).value),
-      non_stackable:$(".lf-nonstack",node).checked,
+      non_stackable:nationwide?$(".lf-nonstack",node).checked:false,
       flip_stack_claimed:nationwide&&qty>=2?flip:""
     };
     item.pallet=palletize(item);
@@ -1276,7 +1279,11 @@
       if(data.freight_class!==undefined&&data.freight_class!==null&&data.freight_class!==""){
         $(".lf-class",node).value=String(data.freight_class);
       }
-      $(".lf-nonstack",node).checked=c.nonStackable;
+      if($('input[name="delivery_path"]:checked')?.value==="nationwide"){
+        $(".lf-nonstack",node).checked=c.nonStackable;
+      }else{
+        $(".lf-nonstack",node).checked=false;
+      }
       msg.textContent="Item found. Please review the dimensions, weight, price, and link before continuing.";
       msg.classList.add("show");
       updatePallet(node);
@@ -1914,6 +1921,10 @@
         $$(".lf-flip-stack",node).forEach(r=>{r.checked=false});
         const err=$(".lf-flip-stack-error",node);
         if(err)err.textContent="";
+      }
+      if(!nationwide){
+        const ns=$(".lf-nonstack",node);
+        if(ns)ns.checked=false;
       }
       updatePallet(node);
     });

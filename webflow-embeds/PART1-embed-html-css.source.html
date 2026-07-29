@@ -1104,8 +1104,10 @@ legend.lf-heavy-prompt {
         <strong>Team must confirm.</strong> Stacking is only a best guess from what you select. Lost &amp; Found will verify before final freight rates.
       </div>
     </div>
-    <label class="lf-check"><input class="lf-nonstack" type="checkbox"> Treat as non-stackable / fragile freight</label>
-    <div class="lf-help" style="margin:4px 0 0;">Leave unchecked when pieces can be stacked for freight (pairs of chairs usually stack — freight height stays near one piece plus stack padding, not double height). Non-stackable adds about $50 on nationwide estimates.</div>
+    <div class="lf-nationwide-only" hidden>
+      <label class="lf-check"><input class="lf-nonstack" type="checkbox"> Treat as non-stackable / fragile freight</label>
+      <div class="lf-help" style="margin:4px 0 0;">Leave unchecked when pieces can be stacked for freight (pairs of chairs usually stack — freight height stays near one piece plus stack padding, not double height). Non-stackable adds about $50 on nationwide estimates.</div>
+    </div>
     <div class="lf-pallet">Enter dimensions and weight to see the SOP freight entry.</div>
   </article>
 </template>
