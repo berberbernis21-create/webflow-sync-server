@@ -1461,8 +1461,8 @@
         :"";
 
       const timingHtml=isPickup
-        ?'<p class="lf-estimate-banner" style="border-left-color:#1f4e79;"><strong>Typical timing:</strong> Same-day pickup is possible; most pickups are next-day. Provide your preferred days and windows — we use your preferred delivery request and expedite.</p>'
-        :'<p class="lf-estimate-banner" style="border-left-color:#1f4e79;"><strong>Typical timing:</strong> Same-day delivery is possible; most items are next-day after purchase. Provide your preferred days and windows — we use your preferred delivery request and expedite.</p>';
+        ?'<p class="lf-estimate-banner" style="border-left-color:#1f4e79;"><strong>Typical timing:</strong> Same-day pickup is possible; most pickups are next-day. We use what you said for pickup and expedite.</p>'
+        :'<p class="lf-estimate-banner" style="border-left-color:#1f4e79;"><strong>Typical timing:</strong> Same-day delivery is possible; most items are next-day after purchase. We use what you said for delivery and expedite.</p>';
 
       result.innerHTML=
         '<h2>'+(isPickup?"Your Preliminary Consignor Pickup Estimate":"Your Preliminary Local Delivery Estimate")+'</h2>'+
@@ -1520,7 +1520,7 @@
         '<h2 style="margin:0 0 4px;">Your Preliminary Nationwide Freight Range</h2>'+
         '<div class="lf-price" style="margin:2px 0 6px;">'+rangeText+'</div>'+
         milesLine+
-        '<p class="lf-estimate-banner" style="border-left-color:#1f4e79;"><strong>Typical timing:</strong> Nationwide freight is typically 3–5 business days after booking. We use your preferred delivery request and expedite once the item is purchased.</p>'+
+        '<p class="lf-estimate-banner" style="border-left-color:#1f4e79;"><strong>Typical timing:</strong> Nationwide freight is typically 3–5 business days after booking.</p>'+
         '<p style="margin:0 0 10px;font-size:15px;line-height:1.5;color:#222;font-weight:700;">Our team will review your request and follow up by email with confirmed rates and the best available carrier options for you.</p>'+
         '<p style="margin:0 0 10px;font-size:14px;line-height:1.5;color:#333;"><strong>Freight savings tip:</strong> Picking up from a nearby freight terminal or warehouse instead of choosing residential delivery can significantly reduce the final shipping cost. Available pickup options will be included with your confirmed rates.</p>'+
         taxHtml+
