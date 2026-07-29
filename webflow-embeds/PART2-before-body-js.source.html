@@ -79,10 +79,15 @@
     const t=String(title||"");
     let m=t.match(/\bsets?\s+of\s+(\d{1,2})\b/i);
     if(m)return Math.min(24,parseInt(m[1],10));
+    const words={two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,twelve:12};
+    m=t.match(/\bsets?\s+of\s+(two|three|four|five|six|seven|eight|nine|ten|twelve)\b/i);
+    if(m)return words[m[1].toLowerCase()]||1;
     if(/\bpair\b/i.test(t))return 2;
     m=t.match(/\b(\d{1,2})\s*-?\s*(?:pc|pcs|piece|pieces)\b/i);
     if(m)return Math.min(24,parseInt(m[1],10));
     m=t.match(/\b(\d{1,2})\s+chairs?\b/i);
+    if(m)return Math.min(24,parseInt(m[1],10));
+    m=t.match(/\b(\d{1,2})\s+stools?\b/i);
     if(m)return Math.min(24,parseInt(m[1],10));
     return 1;
   }
@@ -581,7 +586,7 @@
         const required=$('input[name="lf_assembly_required"]:checked')?.value||"";
         if(!(required==="yes"||required==="no"||required==="idk")){
           valid=false;
-          if(reqErr)reqErr.textContent="Choose Yes, No, or idk.";
+          if(reqErr)reqErr.textContent="Choose Yes, No, or Not sure.";
         }else if(reqErr){
           reqErr.textContent="";
         }
@@ -589,7 +594,7 @@
           const over=$('input[name="lf_assembly_over15"]:checked')?.value||"";
           if(!(over==="yes"||over==="no"||over==="idk")){
             valid=false;
-            if(overErr)overErr.textContent="Choose Yes, No, or idk.";
+            if(overErr)overErr.textContent="Choose Yes, No, or Not sure.";
           }else if(overErr){
             overErr.textContent="";
           }
@@ -1228,15 +1233,19 @@
         :"Enter dimensions and weight to see the size used for your estimate.";
       return;
     }
+    const setCount=Math.max(1,parseSetCount(i.title));
+    const qty=Math.max(1,Math.floor(Number(i.quantity)||1));
+    const countBits=[];
+    if(setCount>1)countBits.push("Set of "+setCount);
+    if(qty>1)countBits.push("Qty "+qty);
+    const countBit=countBits.length?" · "+countBits.join(" · "):"";
     if(!nationwide){
-      const qtyBit=i.quantity>1?" · Qty "+i.quantity:"";
-      box.innerHTML="<strong>Item size for estimate:</strong> "+i.width+'" W × '+i.depth+'" D × '+i.height+'" H · '+i.weight+" lb"+qtyBit;
+      box.innerHTML="<strong>Item size for estimate:</strong> "+i.width+'" W × '+i.depth+'" D × '+i.height+'" H · '+i.weight+" lb"+countBit;
       return;
     }
     const classText=i.pallet.freight_class===null?"Class to be confirmed":"Class "+i.pallet.freight_class;
     const stackBit=i.pallet.stack_note?" · "+i.pallet.stack_note:(i.pallet.non_stackable?" · Non-stackable":"");
-    const qtyBit=i.quantity>1?" · Qty "+i.quantity:"";
-    box.innerHTML="<strong>Freight-ready entry:</strong> "+i.pallet.width+'" W × '+i.pallet.depth+'" D × '+i.pallet.height+'" H · '+i.pallet.weight+" lb · "+classText+qtyBit+stackBit;
+    box.innerHTML="<strong>Freight-ready entry:</strong> "+i.pallet.width+'" W × '+i.pallet.depth+'" D × '+i.pallet.height+'" H · '+i.pallet.weight+" lb · "+classText+countBit+stackBit;
   }
 
   function extractListing(raw){
@@ -1416,13 +1425,13 @@
     if(a.room_placement)flags.push(isPickup?"carry-out from room / inside":"room placement");
     if(a.unpacking_or_debris_removal)flags.push("unpacking / debris removal");
     if(a.assembly_required==="yes"||a.assembly_required==="no"||a.assembly_required==="idk"){
-      if(a.assembly_required==="idk")flags.push("disassembly & reassembly: idk");
+      if(a.assembly_required==="idk")flags.push("disassembly & reassembly: Not sure");
       else if(a.assembly_required==="no")flags.push("disassembly & reassembly: no");
       else if(a.assembly_over_15==="yes"){
         const mins=Math.max(0,Math.floor(Number(a.assembly_extra_minutes)||0));
         const total=mins>0?15+mins:0;
         flags.push(total>0?"disassembly & reassembly: "+total+" minutes":"disassembly & reassembly: yes");
-      }else if(a.assembly_over_15==="idk")flags.push("disassembly & reassembly: idk");
+      }else if(a.assembly_over_15==="idk")flags.push("disassembly & reassembly: Not sure");
       else flags.push("disassembly & reassembly: within free 15 minutes");
     }else if(a.disassembly_or_assembly){
       flags.push(isPickup?"disassembly may be required":"assembly or disassembly");
@@ -1520,7 +1529,12 @@
     const flags=accessFlags(payload.access,isPickup);
       const itemHtml=payload.items.map((i,idx)=>{
       if(pathLocal){
-        return '<li><strong>'+escapeHtml(i.title||("Item "+(idx+1)))+'</strong>: '+i.width+'" × '+i.depth+'" × '+i.height+'" · '+i.weight+' lb'+(i.quantity>1?' · Qty '+i.quantity:'')+'</li>';
+        const setCount=Math.max(1,parseSetCount(i.title));
+        const qty=Math.max(1,Math.floor(Number(i.quantity)||1));
+        const bits=[];
+        if(setCount>1)bits.push("Set of "+setCount);
+        if(qty>1)bits.push("Qty "+qty);
+        return '<li><strong>'+escapeHtml(i.title||("Item "+(idx+1)))+'</strong>: '+i.width+'" × '+i.depth+'" × '+i.height+'" · '+i.weight+' lb'+(bits.length?' · '+bits.join(' · '):'')+'</li>';
       }
       const classText=i.pallet.freight_class===null?"Class to be confirmed":"Class "+i.pallet.freight_class;
       return '<li><strong>'+escapeHtml(i.title||("Item "+(idx+1)))+'</strong>: '+i.width+'" × '+i.depth+'" × '+i.height+'" · '+i.weight+' lb · Freight '+i.pallet.width+'" × '+i.pallet.depth+'" × '+i.pallet.height+'" · '+i.pallet.weight+' lb · '+classText+(i.pallet.non_stackable?" · Non-stackable":"")+'</li>';
