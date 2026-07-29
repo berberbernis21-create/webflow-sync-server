@@ -343,7 +343,7 @@
   }
 
   function collectDraft(){
-    const fieldIds=["lfName","lfEmail","lfPhone","lfType","lfStreet","lfUnit","lfCity","lfState","lfZip","lfStairs","lfFlights","lfStairNotes","lfTight","lfInside","lfUnpack","lfElevator","lfElevatorNotes","lfGate","lfGateCode","lfCrew","lfCrewWhy","lfDisassembly","lfLongCarry","lfParking","lfFragile","lfNotes","lfWhiteGlove","lfWarehousePickup","lfLiftgateDelivery","lfDock","lfRequestMode","lfReviewAgree"];
+    const fieldIds=["lfName","lfEmail","lfPhone","lfType","lfStreet","lfUnit","lfCity","lfState","lfZip","lfStairs","lfFlights","lfStairNotes","lfTight","lfInside","lfUnpack","lfElevator","lfElevatorNotes","lfGate","lfGateCode","lfCrew","lfCrewWhy","lfDisassembly","lfLongCarry","lfParking","lfFragile","lfPreferredSchedule","lfNotes","lfWhiteGlove","lfWarehousePickup","lfLiftgateDelivery","lfDock","lfRequestMode","lfReviewAgree"];
     const fields={};
     fieldIds.forEach(id=>{
       const el=$("#"+id);
@@ -983,6 +983,9 @@
       setTextSafe("#lfLongCarryLabel","Long carry from entrance to the truck");
       setTextSafe("#lfLongCarryHelp","Long carry = about 75+ feet from entrance/elevator/pickup area to where the truck can park.");
       setTextSafe("#lfParkingLabel","Limited truck parking, low clearance, or restricted pickup hours");
+      setTextSafe("#lfPreferredScheduleLabel","Please enter a few pickup days and 4-hour windows that work for you on those days.");
+      const preferred=$("#lfPreferredSchedule");
+      if(preferred)preferred.placeholder="Example: Tue or Wed, 10am–2pm or 1pm–5pm";
       setTextSafe("#lfSmartDefaults","<strong>Note:</strong> Residential pickup is the default. Check any stairs, access, or handling items that apply so we can price the job accurately.",true);
       setTextSafe("#lfAgreeLabel","I understand this is an estimate from the online tool and I must confirm pricing before scheduling.");
       const notes=$("#lfNotes");
@@ -999,6 +1002,8 @@
       setTextSafe("#lfParkingLabel","Limited truck parking, low clearance, appointment windows, or HOA restrictions");
       setTextSafe("#lfSmartDefaults","<strong>Nationwide freight:</strong> This is a preliminary range — every carrier prices differently. <strong>We will get you a quote:</strong> our team reviews your request and emails you full rates. You can also call FreightCenter anytime. Lost &amp; Found pickup / loading hours: <strong>10am–5pm, Monday–Saturday</strong>.",true);
       setTextSafe("#lfAgreeLabel","I understand this is a preliminary freight range only, and Lost &amp; Found will get me a confirmed quote before freight is booked.");
+      const preferred=$("#lfPreferredSchedule");
+      if(preferred)preferred.value="";
       const notes=$("#lfNotes");
       if(notes)notes.placeholder="Share dock hours, appointment needs, HOA rules, or anything the carrier should know.";
       const summaryHelp=$("#lfSummaryHelp");
@@ -1012,6 +1017,9 @@
       setTextSafe("#lfLongCarryLabel","Long carry from truck to entrance");
       setTextSafe("#lfLongCarryHelp","Long carry = about 75+ feet from truck parking to entrance/elevator/delivery area.");
       setTextSafe("#lfParkingLabel","Limited truck parking, low clearance, or restricted delivery hours");
+      setTextSafe("#lfPreferredScheduleLabel","Please enter a few delivery days and 4-hour windows that work for you on those days.");
+      const preferred=$("#lfPreferredSchedule");
+      if(preferred)preferred.placeholder="Example: Tue or Wed, 10am–2pm or 1pm–5pm";
       setTextSafe("#lfSmartDefaults","<strong>Note:</strong> Residential delivery is the default. Check any stairs, access, or handling items that apply so we can price the job accurately.",true);
       setTextSafe("#lfAgreeLabel","I understand this is an estimate from the online tool and I must confirm pricing before scheduling.");
       const notes=$("#lfNotes");
@@ -1243,6 +1251,7 @@
       no_liftgate:!liftgateDelivery,
       liftgate_pickup_staff_to_confirm:path==="nationwide",
       notes:value("#lfNotes"),
+      preferred_days_windows:path==="nationwide"?"":value("#lfPreferredSchedule"),
       liftgate_pickup:path==="nationwide"||path==="pickup_az",
       liftgate_delivery:liftgateDelivery
     };

@@ -914,9 +914,14 @@ legend.lf-heavy-prompt {
         <div class="lf-access-card">
           <h3>Parking &amp; Other Restrictions</h3>
           <label class="lf-check" id="lfParkingWrap"><input id="lfParking" type="checkbox"> <span id="lfParkingLabel">Limited truck parking, low clearance, or restricted delivery hours</span></label>
+          <div class="lf-field lf-local-truck-only" id="lfPreferredScheduleWrap" style="margin-top:9px">
+            <label for="lfPreferredSchedule" id="lfPreferredScheduleLabel">Please enter a few delivery days and 4-hour windows that work for you on those days.</label>
+            <textarea id="lfPreferredSchedule" placeholder="Example: Tue or Wed, 10am–2pm or 1pm–5pm"></textarea>
+            <div class="lf-help" id="lfPreferredScheduleHelp">Optional — helps us schedule faster once the item is purchased.</div>
+          </div>
           <div class="lf-field" style="margin-top:9px">
             <label for="lfNotes">Other access notes</label>
-            <textarea id="lfNotes" placeholder="For local delivery, include preferred delivery days. Share anything else the team should know."></textarea>
+            <textarea id="lfNotes" placeholder="Share anything else the delivery team or carrier should know."></textarea>
           </div>
         </div>
       </div>
