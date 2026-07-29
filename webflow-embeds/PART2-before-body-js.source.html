@@ -1316,8 +1316,20 @@
   }
 
   function buyItemsHtml(items,isPickup,opts){
-    if(isPickup)return"";
-    const buyTip=opts&&opts.buyTip
+    opts=opts||{};
+    const addr=String(opts.address||"").trim();
+    const preferred=String(opts.preferred||"").trim();
+    const addrHtml=addr
+      ?'<p style="margin:10px 0 0;font-size:12px;color:#555;">'+(isPickup?"Pickup":"Delivery")+": "+escapeHtml(addr)+"</p>"
+      :"";
+    const preferredHtml=preferred
+      ?'<p style="margin:6px 0 0;font-size:12px;color:#555;"><strong>Preferred days / windows:</strong> '+escapeHtml(preferred)+"</p>"
+      :"";
+    if(isPickup){
+      if(!addr&&!preferred)return"";
+      return '<div class="lf-buy-block"><p>Your pickup details</p>'+addrHtml+preferredHtml+"</div>";
+    }
+    const buyTip=opts.buyTip
       ?'<p class="lf-buy-tax-tip" style="margin:8px 0 0;font-size:13px;line-height:1.45;color:#333;">'+escapeHtml(opts.buyTip)+"</p>"
       :"";
     const cards=(items||[]).map(i=>{
@@ -1343,8 +1355,8 @@
         '<a class="lf-buy-card-cta" href="'+url+'" target="_blank" rel="noopener">'+(rawUrl?"Buy Now":"Find Item")+'</a>'+
         "</div>";
     }).join("");
-    if(!cards)return"";
-    return '<div class="lf-buy-block"><p>Buy your item(s)</p><div class="lf-buy-cards">'+cards+"</div>"+buyTip+"</div>";
+    if(!cards&&!addrHtml&&!preferredHtml)return"";
+    return '<div class="lf-buy-block">'+(cards?'<p>Buy your item(s)</p><div class="lf-buy-cards">'+cards+"</div>":"")+buyTip+addrHtml+preferredHtml+"</div>";
   }
 
   function extractDriveMinutes(data){
@@ -1437,7 +1449,10 @@
       const laborText=isPickup
         ?"Your estimated time is round-trip and includes preparation, wrapping, loading and securing, return to the showroom, unloading, and placement."
         :"Your estimated time is round-trip and includes wrapping and preparation, loading and securing, delivery, unloading, and placement.";
-      const buyHtml=buyItemsHtml(payload.items,isPickup);
+      const buyHtml=buyItemsHtml(payload.items,isPickup,{
+        address:payload.delivery_address?.full||"",
+        preferred:payload.access?.preferred_days_windows||""
+      });
       const oversizeHtml=oversize
         ?'<p class="lf-estimate-banner warn"><strong>Size-based 3-person estimate.</strong> This quote assumes three people may be needed because at least one item is 299+ lb and over 72&quot; high, or over 550 lb — even if you did not select extra crew. Final rates are often lower if the delivery team confirms two people are enough (typically closer to our $95/hour rate). <strong>Please confirm with the delivery team before scheduling. This is an estimate only.</strong></p>'
         :"";
