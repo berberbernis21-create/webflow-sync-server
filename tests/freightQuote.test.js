@@ -399,7 +399,7 @@ test("qty 2 requires flip_stack_claimed on validate", () => {
     zip: "85251",
     delivery_path: "local_az",
     request_mode: "estimate",
-    access: { stairs: false, needs_more_than_two_people: false },
+    access: { stairs: false, needs_more_than_two_people: false, assembly_required: "no" },
     items: [
       {
         title: "La-Z-Boy Talladega Wall Recliner",
@@ -408,7 +408,6 @@ test("qty 2 requires flip_stack_claimed on validate", () => {
         height: 46,
         weight: 95,
         quantity: 2,
-        assembly_required: "no",
       },
     ],
   });
@@ -486,6 +485,17 @@ test("local pricing: assembly beyond 15 min adds rounded fee", () => {
   assert.equal(overIdk.assembly_fee, 0);
   assert.equal(overIdk.assembly_required, true);
 
+  // Also works from access-level answers (form Labor section).
+  const fromAccess = calculateLocalRouteEstimate(15, {
+    access: {
+      assembly_required: "yes",
+      assembly_over_15: "yes",
+      assembly_extra_minutes: 20,
+    },
+  });
+  assert.equal(fromAccess.assembly_fee, 40);
+  assert.equal(fromAccess.estimated_price, 135);
+
   const over60 = calculateLocalRouteEstimate(15, {
     items: [
       {
@@ -535,6 +545,11 @@ test("local/pickup requires assembly questionnaire answers", () => {
     state: "AZ",
     zip: "85260",
     destination_type: "Residential",
+    access: {
+      assembly_required: "yes",
+      assembly_over_15: "yes",
+      assembly_extra_minutes: 20,
+    },
     items: [
       {
         title: "Table",
@@ -543,15 +558,13 @@ test("local/pickup requires assembly questionnaire answers", () => {
         height: 30,
         weight: 50,
         quantity: 1,
-        assembly_required: "yes",
-        assembly_over_15: "yes",
-        assembly_extra_minutes: 20,
       },
     ],
   });
   assert.equal(ok.ok, true);
-  assert.equal(ok.submission.items[0].assembly_required, "yes");
-  assert.equal(ok.submission.items[0].assembly_extra_minutes, 20);
+  assert.equal(ok.submission.access.assembly_required, "yes");
+  assert.equal(ok.submission.access.assembly_extra_minutes, 20);
+  assert.equal(ok.submission.access.disassembly_or_assembly, true);
 
   const idkOk = validateFreightQuoteRequest({
     delivery_path: "local_az",
@@ -563,6 +576,7 @@ test("local/pickup requires assembly questionnaire answers", () => {
     state: "AZ",
     zip: "85260",
     destination_type: "Residential",
+    access: { assembly_required: "idk" },
     items: [
       {
         title: "Table",
@@ -571,13 +585,13 @@ test("local/pickup requires assembly questionnaire answers", () => {
         height: 30,
         weight: 50,
         quantity: 1,
-        assembly_required: "idk",
       },
     ],
   });
   assert.equal(idkOk.ok, true);
-  assert.equal(idkOk.submission.items[0].assembly_required, "idk");
-  assert.equal(idkOk.submission.items[0].assembly_extra_minutes, 0);
+  assert.equal(idkOk.submission.access.assembly_required, "idk");
+  assert.equal(idkOk.submission.access.assembly_extra_minutes, 0);
+  assert.equal(idkOk.submission.access.disassembly_or_assembly, false);
 });
 
 test("local pricing: stairs first flight free then $7", () => {
@@ -655,8 +669,9 @@ test("local validation requires extra_people when more than two selected", () =>
       stairs: false,
       needs_more_than_two_people: true,
       more_than_two_people_reason: "heavy",
+      assembly_required: "no",
     },
-    items: [{ title: "Cabinet", width: 30, depth: 20, height: 40, weight: 70, assembly_required: "no" }],
+    items: [{ title: "Cabinet", width: 30, depth: 20, height: 40, weight: 70 }],
   });
   assert.equal(v.ok, false);
   assert.match(String(v.error || ""), /1 extra person|2 extra people/i);
@@ -679,6 +694,7 @@ test("honeypot alone rejected; autofill ignored for real form", () => {
     zip: "85251",
     delivery_path: "local_az",
     request_mode: "estimate",
+    access: { assembly_required: "no" },
     items: [
       {
         title: "Table",
@@ -686,7 +702,6 @@ test("honeypot alone rejected; autofill ignored for real form", () => {
         depth: 30,
         height: 30,
         weight: 149,
-        assembly_required: "no",
         pallet: { width: 60, depth: 40, height: 35, weight: 179 },
       },
     ],
@@ -726,10 +741,11 @@ test("multiple items stay separate pallet entries", () => {
       stairs: false,
       needs_more_than_two_people: false,
       tight_turns_or_narrow_halls: false,
+      assembly_required: "no",
     },
     items: [
-      { title: "A", width: 24, depth: 20, height: 30, weight: 40, assembly_required: "no" },
-      { title: "B", width: 24, depth: 20, height: 30, weight: 40, assembly_required: "no" },
+      { title: "A", width: 24, depth: 20, height: 30, weight: 40 },
+      { title: "B", width: 24, depth: 20, height: 30, weight: 40 },
     ],
   });
   assert.equal(v.ok, true);
@@ -795,8 +811,9 @@ test("consignor pickup_az accepted for Arizona address", () => {
       stairs: false,
       needs_more_than_two_people: false,
       tight_turns_or_narrow_halls: false,
+      assembly_required: "no",
     },
-    items: [{ title: "Console", width: 48, depth: 18, height: 30, weight: 80, assembly_required: "no" }],
+    items: [{ title: "Console", width: 48, depth: 18, height: 30, weight: 80 }],
   });
   assert.equal(v.ok, true);
   assert.equal(v.submission.delivery_path, "pickup_az");

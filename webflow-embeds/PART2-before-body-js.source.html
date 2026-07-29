@@ -215,14 +215,26 @@
     const stairFee=flights>1?(flights-1)*LOCAL.stairFeePerExtraFlight:0;
 
     let assemblyMinutes=0,assemblyRequired=false,assemblyConfirmOver60=false;
-    (items||[]).forEach(it=>{
-      if(String(it.assembly_required||"").toLowerCase()!=="yes")return;
-      assemblyRequired=true;
-      if(String(it.assembly_over_15||"").toLowerCase()!=="yes")return;
-      const mins=Math.max(0,Math.floor(Number(it.assembly_extra_minutes)||0));
-      if(mins>60)assemblyConfirmOver60=true;
-      assemblyMinutes+=mins;
-    });
+    const accessAssembly=String(access.assembly_required||"").toLowerCase();
+    if(accessAssembly==="yes"||accessAssembly==="no"||accessAssembly==="idk"){
+      if(accessAssembly==="yes"){
+        assemblyRequired=true;
+        if(String(access.assembly_over_15||"").toLowerCase()==="yes"){
+          const mins=Math.max(0,Math.floor(Number(access.assembly_extra_minutes)||0));
+          if(mins>60)assemblyConfirmOver60=true;
+          assemblyMinutes+=mins;
+        }
+      }
+    }else{
+      (items||[]).forEach(it=>{
+        if(String(it.assembly_required||"").toLowerCase()!=="yes")return;
+        assemblyRequired=true;
+        if(String(it.assembly_over_15||"").toLowerCase()!=="yes")return;
+        const mins=Math.max(0,Math.floor(Number(it.assembly_extra_minutes)||0));
+        if(mins>60)assemblyConfirmOver60=true;
+        assemblyMinutes+=mins;
+      });
+    }
     const assemblyFee=assemblyMinutes>0?Math.ceil((assemblyMinutes*perMinuteRate)/5)*5:0;
     const estimated=(routeRounded+multiItemAdder)*trucks+stairFee+assemblyFee;
 
@@ -358,7 +370,7 @@
   }
 
   function collectDraft(){
-    const fieldIds=["lfName","lfEmail","lfPhone","lfType","lfStreet","lfUnit","lfCity","lfState","lfZip","lfStairs","lfFlights","lfStairNotes","lfTight","lfInside","lfUnpack","lfElevator","lfElevatorNotes","lfGate","lfGateCode","lfCrew","lfCrewWhy","lfDisassembly","lfLongCarry","lfParking","lfFragile","lfPreferredSchedule","lfNotes","lfWhiteGlove","lfWarehousePickup","lfLiftgateDelivery","lfDock","lfRequestMode","lfReviewAgree"];
+    const fieldIds=["lfName","lfEmail","lfPhone","lfType","lfStreet","lfUnit","lfCity","lfState","lfZip","lfStairs","lfFlights","lfStairNotes","lfTight","lfInside","lfUnpack","lfElevator","lfElevatorNotes","lfGate","lfGateCode","lfCrew","lfCrewWhy","lfDisassembly","lfLongCarry","lfParking","lfFragile","lfPreferredSchedule","lfNotes","lfWhiteGlove","lfWarehousePickup","lfLiftgateDelivery","lfDock","lfRequestMode","lfReviewAgree","lfAssemblyExtraMins"];
     const fields={};
     fieldIds.forEach(id=>{
       const el=$("#"+id);
@@ -373,6 +385,8 @@
       path:$('input[name="delivery_path"]:checked')?.value||"local_az",
       fields,
       extraPeople:$('input[name="lf_extra_people"]:checked')?.value||"",
+      assemblyRequired:$('input[name="lf_assembly_required"]:checked')?.value||"",
+      assemblyOver15:$('input[name="lf_assembly_over15"]:checked')?.value||"",
       items:$$(".lf-item",itemsWrap).map(node=>({
         title:$(".lf-title",node)?.value||"",
         width:$(".lf-width",node)?.value||"",
@@ -386,10 +400,7 @@
         source:$(".lf-source",node)?.value||"manual",
         freight_class:$(".lf-class",node)?.value||"",
         non_stackable:!!$(".lf-nonstack",node)?.checked,
-        flip_stack_claimed:$(".lf-flip-stack:checked",node)?.value||"",
-        assembly_required:$(".lf-assembly-required:checked",node)?.value||"",
-        assembly_over_15:$(".lf-assembly-over15:checked",node)?.value||"",
-        assembly_extra_minutes:$(".lf-assembly-extra-mins",node)?.value||""
+        flip_stack_claimed:$(".lf-flip-stack:checked",node)?.value||""
       }))
     };
   }
@@ -418,10 +429,19 @@
         const r=$('input[name="lf_extra_people"][value="'+draft.extraPeople+'"]');
         if(r)r.checked=true;
       }
+      if(draft.assemblyRequired){
+        const r=$('input[name="lf_assembly_required"][value="'+draft.assemblyRequired+'"]');
+        if(r)r.checked=true;
+      }
+      if(draft.assemblyOver15){
+        const r=$('input[name="lf_assembly_over15"][value="'+draft.assemblyOver15+'"]');
+        if(r)r.checked=true;
+      }
       if($("#lfStairDetails"))$("#lfStairDetails").hidden=!bool("#lfStairs");
       if($("#lfElevatorDetails"))$("#lfElevatorDetails").hidden=!bool("#lfElevator");
       if($("#lfGateDetails"))$("#lfGateDetails").hidden=!bool("#lfGate");
       if($("#lfCrewDetails"))$("#lfCrewDetails").hidden=!bool("#lfCrew");
+      syncAccessAssemblyAsk();
       itemsWrap.innerHTML="";
       itemCounter=0;
       const items=Array.isArray(draft.items)&&draft.items.length?draft.items:[{}];
@@ -507,9 +527,7 @@
     }
     if(n===3&&$$(".lf-item",itemsWrap).length===0){valid=false;alert("Add at least one item.");}
     if(n===3){
-      const path=$('input[name="delivery_path"]:checked')?.value||"local_az";
-      const nationwide=path==="nationwide";
-      const localTruck=path==="local_az"||path==="pickup_az";
+      const nationwide=$('input[name="delivery_path"]:checked')?.value==="nationwide";
       $$(".lf-item",itemsWrap).forEach(node=>{
         const qty=Math.max(1,Math.floor(num($(".lf-quantity",node).value)||1));
         const err=$(".lf-flip-stack-error",node);
@@ -523,52 +541,6 @@
           }
         }else if(err){
           err.textContent="";
-        }
-
-        const reqErr=$(".lf-assembly-required-error",node);
-        const overErr=$(".lf-assembly-over15-error",node);
-        const extraErr=$(".lf-assembly-extra-error",node);
-        const extraInput=$(".lf-assembly-extra-mins",node);
-        if(localTruck){
-          const required=$(".lf-assembly-required:checked",node)?.value||"";
-          if(!(required==="yes"||required==="no"||required==="idk")){
-            valid=false;
-            if(reqErr)reqErr.textContent="Choose Yes, No, or idk.";
-          }else if(reqErr){
-            reqErr.textContent="";
-          }
-          if(required==="yes"){
-            const over=$(".lf-assembly-over15:checked",node)?.value||"";
-            if(!(over==="yes"||over==="no"||over==="idk")){
-              valid=false;
-              if(overErr)overErr.textContent="Choose Yes, No, or idk.";
-            }else if(overErr){
-              overErr.textContent="";
-            }
-            if(over==="yes"){
-              const mins=Math.floor(num(extraInput?.value));
-              if(!(mins>=1)||!/^\d+$/.test(String(extraInput?.value||"").trim())){
-                valid=false;
-                if(extraErr)extraErr.textContent="Enter minutes beyond 15 (numbers only).";
-                if(extraInput)fieldError(extraInput,"Enter minutes beyond 15 (numbers only).");
-              }else{
-                if(extraErr)extraErr.textContent=mins>60?"Over 60 minutes will be flagged for confirmation — it increases cost.":"";
-                if(extraInput)fieldError(extraInput,"");
-              }
-            }else{
-              if(extraErr)extraErr.textContent="";
-              if(extraInput){extraInput.value="";fieldError(extraInput,"");}
-            }
-          }else{
-            if(overErr)overErr.textContent="";
-            if(extraErr)extraErr.textContent="";
-            if(extraInput){extraInput.value="";fieldError(extraInput,"");}
-          }
-        }else{
-          if(reqErr)reqErr.textContent="";
-          if(overErr)overErr.textContent="";
-          if(extraErr)extraErr.textContent="";
-          if(extraInput)fieldError(extraInput,"");
         }
       });
     }
@@ -596,6 +568,55 @@
         fieldError($("#lfCrewWhy"),"Please explain why you think more than two people are needed.");
       }else{
         fieldError($("#lfCrewWhy"),"");
+      }
+    }
+    if(n===4){
+      const path=$('input[name="delivery_path"]:checked')?.value||"local_az";
+      const localTruck=path==="local_az"||path==="pickup_az";
+      const reqErr=$("#lfAssemblyRequiredError");
+      const overErr=$("#lfAssemblyOver15Error");
+      const extraErr=$("#lfAssemblyExtraError");
+      const extraInput=$("#lfAssemblyExtraMins");
+      if(localTruck){
+        const required=$('input[name="lf_assembly_required"]:checked')?.value||"";
+        if(!(required==="yes"||required==="no"||required==="idk")){
+          valid=false;
+          if(reqErr)reqErr.textContent="Choose Yes, No, or idk.";
+        }else if(reqErr){
+          reqErr.textContent="";
+        }
+        if(required==="yes"){
+          const over=$('input[name="lf_assembly_over15"]:checked')?.value||"";
+          if(!(over==="yes"||over==="no"||over==="idk")){
+            valid=false;
+            if(overErr)overErr.textContent="Choose Yes, No, or idk.";
+          }else if(overErr){
+            overErr.textContent="";
+          }
+          if(over==="yes"){
+            const mins=Math.floor(num(extraInput?.value));
+            if(!(mins>=1)||!/^\d+$/.test(String(extraInput?.value||"").trim())){
+              valid=false;
+              if(extraErr)extraErr.textContent="Enter minutes beyond 15 (numbers only).";
+              if(extraInput)fieldError(extraInput,"Enter minutes beyond 15 (numbers only).");
+            }else{
+              if(extraErr)extraErr.textContent=mins>60?"Over 60 minutes will be flagged for confirmation — it increases cost.":"";
+              if(extraInput)fieldError(extraInput,"");
+            }
+          }else{
+            if(extraErr)extraErr.textContent="";
+            if(extraInput){extraInput.value="";fieldError(extraInput,"");}
+          }
+        }else{
+          if(overErr)overErr.textContent="";
+          if(extraErr)extraErr.textContent="";
+          if(extraInput){extraInput.value="";fieldError(extraInput,"");}
+        }
+      }else{
+        if(reqErr)reqErr.textContent="";
+        if(overErr)overErr.textContent="";
+        if(extraErr)extraErr.textContent="";
+        if(extraInput)fieldError(extraInput,"");
       }
     }
     return valid;
@@ -1130,18 +1151,6 @@
       r.name=flipName;
       r.checked=String(prefill.flip_stack_claimed||"")===r.value;
     });
-    const assemblyReqName="lf_assembly_required_"+itemCounter;
-    const assemblyOverName="lf_assembly_over15_"+itemCounter;
-    $$(".lf-assembly-required",node).forEach(r=>{
-      r.name=assemblyReqName;
-      r.checked=String(prefill.assembly_required||"")===r.value;
-    });
-    $$(".lf-assembly-over15",node).forEach(r=>{
-      r.name=assemblyOverName;
-      r.checked=String(prefill.assembly_over_15||"")===r.value;
-    });
-    const extraMins=$(".lf-assembly-extra-mins",node);
-    if(extraMins)extraMins.value=prefill.assembly_extra_minutes||"";
 
     $(".lf-remove",node).addEventListener("click",()=>{
       node.remove();renumberItems();
@@ -1163,51 +1172,12 @@
       }
       updatePallet(node);
     };
-    const syncAssemblyAsk=()=>{
-      const path=$('input[name="delivery_path"]:checked')?.value||"local_az";
-      const localTruck=path==="local_az"||path==="pickup_az";
-      const ask=$(".lf-assembly-ask",node);
-      const overWrap=$(".lf-assembly-over15",node);
-      const extraWrap=$(".lf-assembly-extra",node);
-      if(ask)ask.hidden=!localTruck;
-      if(!localTruck){
-        $$(".lf-assembly-required",node).forEach(r=>{r.checked=false});
-        $$(".lf-assembly-over15",node).forEach(r=>{r.checked=false});
-        if(extraMins)extraMins.value="";
-        const reqErr=$(".lf-assembly-required-error",node);
-        const overErr=$(".lf-assembly-over15-error",node);
-        const extraErr=$(".lf-assembly-extra-error",node);
-        if(reqErr)reqErr.textContent="";
-        if(overErr)overErr.textContent="";
-        if(extraErr)extraErr.textContent="";
-        if(overWrap)overWrap.hidden=true;
-        if(extraWrap)extraWrap.hidden=true;
-        return;
-      }
-      const required=$(".lf-assembly-required:checked",node)?.value||"";
-      if(overWrap)overWrap.hidden=required!=="yes";
-      if(required!=="yes"){
-        $$(".lf-assembly-over15",node).forEach(r=>{r.checked=false});
-        if(extraMins)extraMins.value="";
-      }
-      const over=$(".lf-assembly-over15:checked",node)?.value||"";
-      if(extraWrap)extraWrap.hidden=!(required==="yes"&&over==="yes");
-      if(!(required==="yes"&&over==="yes")&&extraMins)extraMins.value="";
-    };
     [title,w,d,h,wt,$(".lf-class",node),$(".lf-nonstack",node),qtyInput].forEach(el=>el.addEventListener("input",()=>{
       if(el===qtyInput)syncStackAsk();
       else updatePallet(node);
       if(el===wt)syncHeavyAccessPrompts();
     }));
     $$(".lf-flip-stack",node).forEach(r=>r.addEventListener("change",()=>updatePallet(node)));
-    $$(".lf-assembly-required",node).forEach(r=>r.addEventListener("change",syncAssemblyAsk));
-    $$(".lf-assembly-over15",node).forEach(r=>r.addEventListener("change",syncAssemblyAsk));
-    if(extraMins){
-      extraMins.addEventListener("input",()=>{
-        const cleaned=String(extraMins.value||"").replace(/[^\d]/g,"");
-        if(extraMins.value!==cleaned)extraMins.value=cleaned;
-      });
-    }
     title.addEventListener("change",()=>{
       const c=classify(title.value);
       $(".lf-nonstack",node).checked=c.nonStackable;
@@ -1217,7 +1187,6 @@
     itemsWrap.appendChild(node);
     applyItemFieldCopy(node,$('input[name="delivery_path"]:checked')?.value==="pickup_az");
     syncStackAsk();
-    syncAssemblyAsk();
   }
 
   function renumberItems(){$$(".lf-item",itemsWrap).forEach((el,i)=>$(".lf-item-number",el).textContent=String(i+1))}
@@ -1225,15 +1194,8 @@
   function itemFromNode(node){
     const pickup=$('input[name="delivery_path"]:checked')?.value==="pickup_az";
     const qty=Math.max(1,num($(".lf-quantity",node).value)||1);
-    const path=$('input[name="delivery_path"]:checked')?.value||"local_az";
-    const nationwide=path==="nationwide";
-    const localTruck=path==="local_az"||path==="pickup_az";
+    const nationwide=$('input[name="delivery_path"]:checked')?.value==="nationwide";
     const flip=nationwide?($(".lf-flip-stack:checked",node)?.value||""):"";
-    const assemblyRequired=localTruck?($(".lf-assembly-required:checked",node)?.value||""):"";
-    const assemblyOver15=localTruck&&assemblyRequired==="yes"?($(".lf-assembly-over15:checked",node)?.value||""):"";
-    const assemblyExtra=localTruck&&assemblyRequired==="yes"&&assemblyOver15==="yes"
-      ?Math.max(0,Math.floor(num($(".lf-assembly-extra-mins",node)?.value)||0))
-      :0;
     const item={
       source:pickup?"manual":($(".lf-source",node).value||"manual"),
       title:$(".lf-title",node).value.trim(),
@@ -1247,10 +1209,7 @@
       image_url:pickup?"":($(".lf-image-url",node)?.value||"").trim(),
       freight_class:$(".lf-class",node).value===""?null:num($(".lf-class",node).value),
       non_stackable:$(".lf-nonstack",node).checked,
-      flip_stack_claimed:nationwide&&qty>=2?flip:"",
-      assembly_required:assemblyRequired,
-      assembly_over_15:assemblyOver15,
-      assembly_extra_minutes:assemblyExtra
+      flip_stack_claimed:nationwide&&qty>=2?flip:""
     };
     item.pallet=palletize(item);
     return item;
@@ -1368,7 +1327,19 @@
       inside_delivery:path==="nationwide"?whiteGlove:bool("#lfInside"),
       room_placement:path==="nationwide"?whiteGlove:false,
       unpacking_or_debris_removal:path==="pickup_az"?false:(path==="nationwide"?whiteGlove&&bool("#lfUnpack"):bool("#lfUnpack")),
-      disassembly_or_assembly:bool("#lfDisassembly"),
+      disassembly_or_assembly:path==="nationwide"?bool("#lfDisassembly"):($('input[name="lf_assembly_required"]:checked')?.value==="yes"),
+      assembly_required:path==="nationwide"?"":($('input[name="lf_assembly_required"]:checked')?.value||""),
+      assembly_over_15:path==="nationwide"?"":(
+        $('input[name="lf_assembly_required"]:checked')?.value==="yes"
+          ?($('input[name="lf_assembly_over15"]:checked')?.value||"")
+          :""
+      ),
+      assembly_extra_minutes:path==="nationwide"?0:(
+        $('input[name="lf_assembly_required"]:checked')?.value==="yes"&&
+        $('input[name="lf_assembly_over15"]:checked')?.value==="yes"
+          ?Math.max(0,Math.floor(num(value("#lfAssemblyExtraMins"))||0))
+          :0
+      ),
       long_carry:bool("#lfLongCarry"),
       parking_or_time_restrictions:bool("#lfParking"),
       fragile_or_special_handling:bool("#lfFragile"),
@@ -1425,7 +1396,15 @@
     if(a.inside_delivery)flags.push(isPickup?"inside pickup":"inside delivery");
     if(a.room_placement)flags.push(isPickup?"carry-out from room / inside":"room placement");
     if(a.unpacking_or_debris_removal)flags.push("unpacking / debris removal");
-    if(a.disassembly_or_assembly)flags.push(isPickup?"disassembly may be required":"assembly or disassembly");
+    if(a.assembly_required==="yes"||a.assembly_required==="no"||a.assembly_required==="idk"){
+      if(a.assembly_required==="idk")flags.push("disassembly & reassembly: idk");
+      else if(a.assembly_required==="no")flags.push("disassembly & reassembly: no");
+      else if(a.assembly_over_15==="yes")flags.push("disassembly & reassembly: yes · +"+Math.max(0,Math.floor(Number(a.assembly_extra_minutes)||0))+" min beyond 15");
+      else if(a.assembly_over_15==="idk")flags.push("disassembly & reassembly: yes · over 15 min: idk");
+      else flags.push("disassembly & reassembly: yes (within 15 min)");
+    }else if(a.disassembly_or_assembly){
+      flags.push(isPickup?"disassembly may be required":"assembly or disassembly");
+    }
     if(a.long_carry)flags.push("long carry");
     if(a.parking_or_time_restrictions)flags.push(isPickup?"parking or pickup-time restrictions":"parking or time restrictions");
     return flags;
@@ -1519,28 +1498,7 @@
     const flags=accessFlags(payload.access,isPickup);
       const itemHtml=payload.items.map((i,idx)=>{
       const classText=i.pallet.freight_class===null?"Class to be confirmed":"Class "+i.pallet.freight_class;
-      let assemblyBit="";
-      if(pathLocal){
-        const req=String(i.assembly_required||"").toLowerCase();
-        if(req==="yes"){
-          const over=String(i.assembly_over_15||"").toLowerCase();
-          if(over==="yes"){
-            const mins=Math.max(0,Math.floor(Number(i.assembly_extra_minutes)||0));
-            assemblyBit=" · Disassembly &amp; reassembly: yes, +"+mins+" min beyond 15"+(mins>60?" (confirm — over 60)":"");
-          }else if(over==="idk"){
-            assemblyBit=" · Disassembly &amp; reassembly: yes · over 15 min: idk";
-          }else if(over==="no"){
-            assemblyBit=" · Disassembly &amp; reassembly: yes (within 15 min)";
-          }else{
-            assemblyBit=" · Disassembly &amp; reassembly: yes";
-          }
-        }else if(req==="idk"){
-          assemblyBit=" · Disassembly &amp; reassembly: idk";
-        }else if(req==="no"){
-          assemblyBit=" · Disassembly &amp; reassembly: no";
-        }
-      }
-      return '<li><strong>'+escapeHtml(i.title||("Item "+(idx+1)))+'</strong>: '+i.width+'" × '+i.depth+'" × '+i.height+'" · '+i.weight+' lb · Freight '+i.pallet.width+'" × '+i.pallet.depth+'" × '+i.pallet.height+'" · '+i.pallet.weight+' lb · '+classText+(i.pallet.non_stackable?" · Non-stackable":"")+assemblyBit+'</li>';
+      return '<li><strong>'+escapeHtml(i.title||("Item "+(idx+1)))+'</strong>: '+i.width+'" × '+i.depth+'" × '+i.height+'" · '+i.weight+' lb · Freight '+i.pallet.width+'" × '+i.pallet.depth+'" × '+i.pallet.height+'" · '+i.pallet.weight+' lb · '+classText+(i.pallet.non_stackable?" · Non-stackable":"")+'</li>';
     }).join("");
 
     const liftgateLine=path==="nationwide"
@@ -1946,44 +1904,75 @@
     updateHeroNotice(path);
     syncHeavyAccessPrompts();
     refreshPathMismatchPanel();
-    // Flip/stack ask is nationwide-only; assembly ask is local/pickup-only.
+    // Flip/stack ask is nationwide-only; assembly ask is local/pickup on access step.
     $$(".lf-item",itemsWrap).forEach(node=>{
       const ask=$(".lf-stack-ask",node);
       const q=Math.max(1,Math.floor(num($(".lf-quantity",node).value)||1));
       const nationwide=path==="nationwide";
-      const localTruck=path==="local_az"||path==="pickup_az";
       if(ask)ask.hidden=!(nationwide&&q>=2);
       if(!nationwide||q<2){
         $$(".lf-flip-stack",node).forEach(r=>{r.checked=false});
         const err=$(".lf-flip-stack-error",node);
         if(err)err.textContent="";
       }
-      const assemblyAsk=$(".lf-assembly-ask",node);
-      if(assemblyAsk)assemblyAsk.hidden=!localTruck;
-      if(!localTruck){
-        $$(".lf-assembly-required",node).forEach(r=>{r.checked=false});
-        $$(".lf-assembly-over15",node).forEach(r=>{r.checked=false});
-        const extraMins=$(".lf-assembly-extra-mins",node);
-        if(extraMins)extraMins.value="";
-        const overWrap=$(".lf-assembly-over15",node);
-        const extraWrap=$(".lf-assembly-extra",node);
-        if(overWrap)overWrap.hidden=true;
-        if(extraWrap)extraWrap.hidden=true;
-      }else{
-        const required=$(".lf-assembly-required:checked",node)?.value||"";
-        const over=$(".lf-assembly-over15:checked",node)?.value||"";
-        const overWrap=$(".lf-assembly-over15",node);
-        const extraWrap=$(".lf-assembly-extra",node);
-        if(overWrap)overWrap.hidden=required!=="yes";
-        if(extraWrap)extraWrap.hidden=!(required==="yes"&&over==="yes");
-      }
       updatePallet(node);
     });
+    syncAccessAssemblyAsk();
   }));
+
+  function syncAccessAssemblyAsk(){
+    const path=$('input[name="delivery_path"]:checked')?.value||"local_az";
+    const localTruck=path==="local_az"||path==="pickup_az";
+    const block=$("#lfAssemblyAccess");
+    const overWrap=$("#lfAssemblyOver15Wrap");
+    const extraWrap=$("#lfAssemblyExtraWrap");
+    const extraInput=$("#lfAssemblyExtraMins");
+    if(block)block.hidden=!localTruck;
+    if(!localTruck){
+      $$('input[name="lf_assembly_required"]').forEach(r=>{r.checked=false});
+      $$('input[name="lf_assembly_over15"]').forEach(r=>{r.checked=false});
+      if(extraInput)extraInput.value="";
+      if(overWrap)overWrap.hidden=true;
+      if(extraWrap)extraWrap.hidden=true;
+      const reqErr=$("#lfAssemblyRequiredError");
+      const overErr=$("#lfAssemblyOver15Error");
+      const extraErr=$("#lfAssemblyExtraError");
+      if(reqErr)reqErr.textContent="";
+      if(overErr)overErr.textContent="";
+      if(extraErr)extraErr.textContent="";
+      return;
+    }
+    const required=$('input[name="lf_assembly_required"]:checked')?.value||"";
+    if(overWrap)overWrap.hidden=required!=="yes";
+    if(required!=="yes"){
+      $$('input[name="lf_assembly_over15"]').forEach(r=>{r.checked=false});
+      if(extraInput)extraInput.value="";
+    }
+    const over=$('input[name="lf_assembly_over15"]:checked')?.value||"";
+    if(extraWrap)extraWrap.hidden=!(required==="yes"&&over==="yes");
+    if(!(required==="yes"&&over==="yes")&&extraInput)extraInput.value="";
+  }
+
+  $$('input[name="lf_assembly_required"]').forEach(r=>r.addEventListener("change",()=>{
+    syncAccessAssemblyAsk();
+    scheduleSaveDraft();
+  }));
+  $$('input[name="lf_assembly_over15"]').forEach(r=>r.addEventListener("change",()=>{
+    syncAccessAssemblyAsk();
+    scheduleSaveDraft();
+  }));
+  if($("#lfAssemblyExtraMins")){
+    $("#lfAssemblyExtraMins").addEventListener("input",()=>{
+      const el=$("#lfAssemblyExtraMins");
+      const cleaned=String(el.value||"").replace(/[^\d]/g,"");
+      if(el.value!==cleaned)el.value=cleaned;
+    });
+  }
 
   updatePathBadges();
   updateAddressCopy();
   updateAccessCopy();
+  syncAccessAssemblyAsk();
   updateWhatNext();
   updateHeroNotice();
   form.addEventListener("input",scheduleSaveDraft);

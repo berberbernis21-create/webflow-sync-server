@@ -903,8 +903,35 @@ legend.lf-heavy-prompt {
               <div class="lf-error"></div>
             </div>
           </div>
+          <div class="lf-assembly-access lf-local-truck-only" id="lfAssemblyAccess">
+            <p style="margin:10px 0 6px;font-size:13px;font-weight:800;">Disassembly &amp; Reassembly</p>
+            <fieldset class="lf-crew-extra" style="margin:0 0 6px;border:0;padding:0;">
+              <legend style="font-size:13px;font-weight:800;margin:0 0 8px;">Will this item require disassembly and reassembly to move safely? <span class="lf-required">*</span></legend>
+              <label class="lf-check"><input type="radio" name="lf_assembly_required" class="lf-access-assembly-required" value="yes"> Yes</label>
+              <label class="lf-check"><input type="radio" name="lf_assembly_required" class="lf-access-assembly-required" value="no"> No</label>
+              <label class="lf-check"><input type="radio" name="lf_assembly_required" class="lf-access-assembly-required" value="idk"> idk</label>
+              <div class="lf-help" style="margin:6px 0 0;">Best guess is fine — you don’t need an exact answer.</div>
+              <div class="lf-error" id="lfAssemblyRequiredError"></div>
+            </fieldset>
+            <div class="lf-assembly-access-over15" id="lfAssemblyOver15Wrap" hidden>
+              <fieldset class="lf-crew-extra" style="margin:8px 0 6px;border:0;padding:0;">
+                <legend style="font-size:13px;font-weight:800;margin:0 0 8px;">Will disassembly &amp; reassembly take longer than 15 minutes? <span class="lf-required">*</span></legend>
+                <label class="lf-check"><input type="radio" name="lf_assembly_over15" class="lf-access-assembly-over15" value="yes"> Yes</label>
+                <label class="lf-check"><input type="radio" name="lf_assembly_over15" class="lf-access-assembly-over15" value="no"> No</label>
+                <label class="lf-check"><input type="radio" name="lf_assembly_over15" class="lf-access-assembly-over15" value="idk"> idk</label>
+                <div class="lf-help" style="margin:6px 0 0;">Best guess is fine.</div>
+                <div class="lf-error" id="lfAssemblyOver15Error"></div>
+              </fieldset>
+            </div>
+            <div class="lf-field lf-assembly-access-extra" id="lfAssemblyExtraWrap" hidden style="margin-top:8px;">
+              <label for="lfAssemblyExtraMins">How many more minutes beyond 15? <span class="lf-required">*</span></label>
+              <input id="lfAssemblyExtraMins" type="number" min="1" step="1" inputmode="numeric" placeholder="Numbers only">
+              <div class="lf-help">Best guess is fine for the extra minutes. Only the minutes beyond 15 are added to the estimate (rounded up). Over 60 minutes is flagged for confirmation — it increases cost.</div>
+              <div class="lf-error" id="lfAssemblyExtraError"></div>
+            </div>
+          </div>
           <label class="lf-check"><input id="lfFragile" type="checkbox"> Fragile, antique, glass, artwork, wicker, cane, rattan, or high-end item</label>
-          <label class="lf-check" id="lfDisassemblyWrap"><input id="lfDisassembly" type="checkbox"> <span id="lfDisassemblyLabel">Disassembly or assembly may be required</span></label>
+          <label class="lf-check lf-nationwide-only" id="lfDisassemblyWrap" hidden><input id="lfDisassembly" type="checkbox"> <span id="lfDisassemblyLabel">Disassembly or assembly may be required</span></label>
           <label class="lf-check" id="lfLongCarryWrap"><input id="lfLongCarry" type="checkbox"> <span id="lfLongCarryLabel">Long carry from truck to entrance</span></label>
           <div class="lf-help" id="lfLongCarryHelp" style="margin:-2px 4px 8px 4px;">
             A long carry means the movers must carry the item an extended distance, generally about 75 feet or more, from where the truck can park to the entrance, elevator, or delivery area.
@@ -1064,33 +1091,6 @@ legend.lf-heavy-prompt {
       <div class="lf-field"><label>Product link</label><input class="lf-url" type="url" placeholder="https://..."></div>
       <div class="lf-field"><label>Source</label><select class="lf-source"><option value="manual">Manual entry</option><option value="listing">Website lookup</option></select></div>
       <input class="lf-image-url" type="hidden" value="">
-    </div>
-    <div class="lf-assembly-ask lf-local-truck-only" hidden>
-      <p style="margin:12px 0 6px;font-size:13px;font-weight:800;">Disassembly &amp; Reassembly</p>
-      <fieldset class="lf-crew-extra" style="margin:0 0 6px;border:0;padding:0;">
-        <legend style="font-size:13px;font-weight:800;margin:0 0 8px;">Will this item require disassembly and reassembly to move safely? <span class="lf-required">*</span></legend>
-        <label class="lf-check"><input type="radio" class="lf-assembly-required" name="" value="yes"> Yes</label>
-        <label class="lf-check"><input type="radio" class="lf-assembly-required" name="" value="no"> No</label>
-        <label class="lf-check"><input type="radio" class="lf-assembly-required" name="" value="idk"> idk</label>
-        <div class="lf-help" style="margin:6px 0 0;">Best guess is fine — you don’t need an exact answer.</div>
-        <div class="lf-error lf-assembly-required-error"></div>
-      </fieldset>
-      <div class="lf-assembly-over15" hidden>
-        <fieldset class="lf-crew-extra" style="margin:8px 0 6px;border:0;padding:0;">
-          <legend style="font-size:13px;font-weight:800;margin:0 0 8px;">Will disassembly &amp; reassembly take longer than 15 minutes? <span class="lf-required">*</span></legend>
-          <label class="lf-check"><input type="radio" class="lf-assembly-over15" name="" value="yes"> Yes</label>
-          <label class="lf-check"><input type="radio" class="lf-assembly-over15" name="" value="no"> No</label>
-          <label class="lf-check"><input type="radio" class="lf-assembly-over15" name="" value="idk"> idk</label>
-          <div class="lf-help" style="margin:6px 0 0;">Best guess is fine.</div>
-          <div class="lf-error lf-assembly-over15-error"></div>
-        </fieldset>
-      </div>
-      <div class="lf-assembly-extra lf-field" hidden style="margin-top:8px;">
-        <label>How many more minutes beyond 15? <span class="lf-required">*</span></label>
-        <input class="lf-assembly-extra-mins" type="number" min="1" step="1" inputmode="numeric" placeholder="Numbers only">
-        <div class="lf-help">Best guess is fine for the extra minutes. Only the minutes beyond 15 are added to the estimate (rounded up). Over 60 minutes is flagged for confirmation — it increases cost.</div>
-        <div class="lf-error lf-assembly-extra-error"></div>
-      </div>
     </div>
     <div class="lf-stack-ask" hidden>
       <fieldset class="lf-crew-extra" style="margin:10px 0 6px;border:0;padding:0;">
