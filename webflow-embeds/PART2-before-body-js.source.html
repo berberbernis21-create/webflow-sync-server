@@ -1461,8 +1461,8 @@
         :"";
 
       const timingHtml=isPickup
-        ?'<p class="lf-estimate-banner" style="border-left-color:#1f4e79;"><strong>Typical timing:</strong> Same-day pickup is possible; most pickups are next-day. We use what you said for pickup and expedite.</p>'
-        :'<p class="lf-estimate-banner" style="border-left-color:#1f4e79;"><strong>Typical timing:</strong> Same-day delivery is possible; most items are next-day after purchase. We use what you said for delivery and expedite.</p>';
+        ?'<p class="lf-estimate-banner" style="border-left-color:#1f4e79;"><strong>Typical timing:</strong> Same-day pickup is possible; most pickups are next-day, and we always do our best to accommodate requested pickup windows.</p>'
+        :'<p class="lf-estimate-banner" style="border-left-color:#1f4e79;"><strong>Typical timing:</strong> Same-day delivery is possible; most items are next-day after purchase, and we always do our best to accommodate requested delivery windows.</p>';
 
       result.innerHTML=
         '<h2>'+(isPickup?"Your Preliminary Consignor Pickup Estimate":"Your Preliminary Local Delivery Estimate")+'</h2>'+
