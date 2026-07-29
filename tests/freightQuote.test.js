@@ -408,6 +408,7 @@ test("qty 2 requires flip_stack_claimed on validate", () => {
         height: 46,
         weight: 95,
         quantity: 2,
+        assembly_required: "no",
       },
     ],
   });
@@ -434,6 +435,149 @@ test("local pricing: 2 extra people doubles estimate", () => {
   });
   assert.equal(est.truck_multiplier, 2);
   assert.equal(est.estimated_price, 190);
+});
+
+test("local pricing: assembly beyond 15 min adds rounded fee", () => {
+  const none = calculateLocalRouteEstimate(15, {
+    items: [{ title: "Desk", assembly_required: "no" }],
+  });
+  assert.equal(none.assembly_fee, 0);
+  assert.equal(none.estimated_price, 95);
+
+  const within = calculateLocalRouteEstimate(15, {
+    items: [{ title: "Desk", assembly_required: "yes", assembly_over_15: "no" }],
+  });
+  assert.equal(within.assembly_fee, 0);
+  assert.equal(within.assembly_required, true);
+  assert.equal(within.estimated_price, 95);
+
+  // 20 min beyond 15 @ $15/8 per min = $37.50 → round up to $40
+  const billed = calculateLocalRouteEstimate(15, {
+    items: [
+      {
+        title: "Armoire",
+        assembly_required: "yes",
+        assembly_over_15: "yes",
+        assembly_extra_minutes: 20,
+      },
+    ],
+  });
+  assert.equal(billed.assembly_extra_minutes, 20);
+  assert.equal(billed.assembly_fee, 40);
+  assert.equal(billed.estimated_price, 135);
+  assert.equal(billed.assembly_confirm_over_60, false);
+
+  const idk = calculateLocalRouteEstimate(15, {
+    items: [{ title: "Desk", assembly_required: "idk" }],
+  });
+  assert.equal(idk.assembly_fee, 0);
+  assert.equal(idk.assembly_required, false);
+  assert.equal(idk.estimated_price, 95);
+
+  const overIdk = calculateLocalRouteEstimate(15, {
+    items: [
+      {
+        title: "Desk",
+        assembly_required: "yes",
+        assembly_over_15: "idk",
+      },
+    ],
+  });
+  assert.equal(overIdk.assembly_fee, 0);
+  assert.equal(overIdk.assembly_required, true);
+
+  const over60 = calculateLocalRouteEstimate(15, {
+    items: [
+      {
+        title: "Wall unit",
+        assembly_required: "yes",
+        assembly_over_15: "yes",
+        assembly_extra_minutes: 75,
+      },
+    ],
+  });
+  assert.equal(over60.assembly_confirm_over_60, true);
+  assert.ok(over60.assembly_fee > 0);
+});
+
+test("local/pickup requires assembly questionnaire answers", () => {
+  const missing = validateFreightQuoteRequest({
+    delivery_path: "local_az",
+    customer_name: "Test User",
+    customer_email: "test@example.com",
+    customer_phone: "4805551212",
+    street: "1 Main St",
+    city: "Scottsdale",
+    state: "AZ",
+    zip: "85260",
+    destination_type: "Residential",
+    items: [
+      {
+        title: "Table",
+        width: 40,
+        depth: 20,
+        height: 30,
+        weight: 50,
+        quantity: 1,
+      },
+    ],
+  });
+  assert.equal(missing.ok, false);
+  assert.match(String(missing.error || ""), /disassembly and reassembly/i);
+
+  const ok = validateFreightQuoteRequest({
+    delivery_path: "local_az",
+    customer_name: "Test User",
+    customer_email: "test@example.com",
+    customer_phone: "4805551212",
+    street: "1 Main St",
+    city: "Scottsdale",
+    state: "AZ",
+    zip: "85260",
+    destination_type: "Residential",
+    items: [
+      {
+        title: "Table",
+        width: 40,
+        depth: 20,
+        height: 30,
+        weight: 50,
+        quantity: 1,
+        assembly_required: "yes",
+        assembly_over_15: "yes",
+        assembly_extra_minutes: 20,
+      },
+    ],
+  });
+  assert.equal(ok.ok, true);
+  assert.equal(ok.submission.items[0].assembly_required, "yes");
+  assert.equal(ok.submission.items[0].assembly_extra_minutes, 20);
+
+  const idkOk = validateFreightQuoteRequest({
+    delivery_path: "local_az",
+    customer_name: "Test User",
+    customer_email: "test@example.com",
+    customer_phone: "4805551212",
+    street: "1 Main St",
+    city: "Scottsdale",
+    state: "AZ",
+    zip: "85260",
+    destination_type: "Residential",
+    items: [
+      {
+        title: "Table",
+        width: 40,
+        depth: 20,
+        height: 30,
+        weight: 50,
+        quantity: 1,
+        assembly_required: "idk",
+      },
+    ],
+  });
+  assert.equal(idkOk.ok, true);
+  assert.equal(idkOk.submission.items[0].assembly_required, "idk");
+  assert.equal(idkOk.submission.items[0].assembly_extra_minutes, 0);
 });
 
 test("local pricing: stairs first flight free then $7", () => {
@@ -512,7 +656,7 @@ test("local validation requires extra_people when more than two selected", () =>
       needs_more_than_two_people: true,
       more_than_two_people_reason: "heavy",
     },
-    items: [{ title: "Cabinet", width: 30, depth: 20, height: 40, weight: 70 }],
+    items: [{ title: "Cabinet", width: 30, depth: 20, height: 40, weight: 70, assembly_required: "no" }],
   });
   assert.equal(v.ok, false);
   assert.match(String(v.error || ""), /1 extra person|2 extra people/i);
@@ -542,6 +686,7 @@ test("honeypot alone rejected; autofill ignored for real form", () => {
         depth: 30,
         height: 30,
         weight: 149,
+        assembly_required: "no",
         pallet: { width: 60, depth: 40, height: 35, weight: 179 },
       },
     ],
@@ -583,8 +728,8 @@ test("multiple items stay separate pallet entries", () => {
       tight_turns_or_narrow_halls: false,
     },
     items: [
-      { title: "A", width: 24, depth: 20, height: 30, weight: 40 },
-      { title: "B", width: 24, depth: 20, height: 30, weight: 40 },
+      { title: "A", width: 24, depth: 20, height: 30, weight: 40, assembly_required: "no" },
+      { title: "B", width: 24, depth: 20, height: 30, weight: 40, assembly_required: "no" },
     ],
   });
   assert.equal(v.ok, true);
@@ -651,7 +796,7 @@ test("consignor pickup_az accepted for Arizona address", () => {
       needs_more_than_two_people: false,
       tight_turns_or_narrow_halls: false,
     },
-    items: [{ title: "Console", width: 48, depth: 18, height: 30, weight: 80 }],
+    items: [{ title: "Console", width: 48, depth: 18, height: 30, weight: 80, assembly_required: "no" }],
   });
   assert.equal(v.ok, true);
   assert.equal(v.submission.delivery_path, "pickup_az");

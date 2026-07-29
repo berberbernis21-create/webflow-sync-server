@@ -1065,6 +1065,33 @@ legend.lf-heavy-prompt {
       <div class="lf-field"><label>Source</label><select class="lf-source"><option value="manual">Manual entry</option><option value="listing">Website lookup</option></select></div>
       <input class="lf-image-url" type="hidden" value="">
     </div>
+    <div class="lf-assembly-ask lf-local-truck-only" hidden>
+      <p style="margin:12px 0 6px;font-size:13px;font-weight:800;">Disassembly &amp; Reassembly</p>
+      <fieldset class="lf-crew-extra" style="margin:0 0 6px;border:0;padding:0;">
+        <legend style="font-size:13px;font-weight:800;margin:0 0 8px;">Will this item require disassembly and reassembly to move safely? <span class="lf-required">*</span></legend>
+        <label class="lf-check"><input type="radio" class="lf-assembly-required" name="" value="yes"> Yes</label>
+        <label class="lf-check"><input type="radio" class="lf-assembly-required" name="" value="no"> No</label>
+        <label class="lf-check"><input type="radio" class="lf-assembly-required" name="" value="idk"> idk</label>
+        <div class="lf-help" style="margin:6px 0 0;">Best guess is fine — you don’t need an exact answer.</div>
+        <div class="lf-error lf-assembly-required-error"></div>
+      </fieldset>
+      <div class="lf-assembly-over15" hidden>
+        <fieldset class="lf-crew-extra" style="margin:8px 0 6px;border:0;padding:0;">
+          <legend style="font-size:13px;font-weight:800;margin:0 0 8px;">Will disassembly &amp; reassembly take longer than 15 minutes? <span class="lf-required">*</span></legend>
+          <label class="lf-check"><input type="radio" class="lf-assembly-over15" name="" value="yes"> Yes</label>
+          <label class="lf-check"><input type="radio" class="lf-assembly-over15" name="" value="no"> No</label>
+          <label class="lf-check"><input type="radio" class="lf-assembly-over15" name="" value="idk"> idk</label>
+          <div class="lf-help" style="margin:6px 0 0;">Best guess is fine.</div>
+          <div class="lf-error lf-assembly-over15-error"></div>
+        </fieldset>
+      </div>
+      <div class="lf-assembly-extra lf-field" hidden style="margin-top:8px;">
+        <label>How many more minutes beyond 15? <span class="lf-required">*</span></label>
+        <input class="lf-assembly-extra-mins" type="number" min="1" step="1" inputmode="numeric" placeholder="Numbers only">
+        <div class="lf-help">Best guess is fine for the extra minutes. Only the minutes beyond 15 are added to the estimate (rounded up). Over 60 minutes is flagged for confirmation — it increases cost.</div>
+        <div class="lf-error lf-assembly-extra-error"></div>
+      </div>
+    </div>
     <div class="lf-stack-ask" hidden>
       <fieldset class="lf-crew-extra" style="margin:10px 0 6px;border:0;padding:0;">
         <legend style="font-size:13px;font-weight:800;margin:0 0 8px;">Nationwide · qty 2+. Can these pieces be flipped and stacked on <strong>one</strong> pallet? <span class="lf-required">*</span></legend>

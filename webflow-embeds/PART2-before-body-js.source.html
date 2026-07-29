@@ -213,7 +213,18 @@
     const multiItemAdder=n>=3?10+(n-3)*5:0;
     const flights=access.stairs?Math.max(0,Math.floor(Number(access.stair_flights)||0)):0;
     const stairFee=flights>1?(flights-1)*LOCAL.stairFeePerExtraFlight:0;
-    const estimated=(routeRounded+multiItemAdder)*trucks+stairFee;
+
+    let assemblyMinutes=0,assemblyRequired=false,assemblyConfirmOver60=false;
+    (items||[]).forEach(it=>{
+      if(String(it.assembly_required||"").toLowerCase()!=="yes")return;
+      assemblyRequired=true;
+      if(String(it.assembly_over_15||"").toLowerCase()!=="yes")return;
+      const mins=Math.max(0,Math.floor(Number(it.assembly_extra_minutes)||0));
+      if(mins>60)assemblyConfirmOver60=true;
+      assemblyMinutes+=mins;
+    });
+    const assemblyFee=assemblyMinutes>0?Math.ceil((assemblyMinutes*perMinuteRate)/5)*5:0;
+    const estimated=(routeRounded+multiItemAdder)*trucks+stairFee+assemblyFee;
 
     return {
       drive_minutes:m,
@@ -228,6 +239,10 @@
       hourly_rate:hourly,
       truck_multiplier:trucks,
       stair_fee:stairFee,
+      assembly_required:assemblyRequired,
+      assembly_extra_minutes:assemblyMinutes,
+      assembly_fee:assemblyFee,
+      assembly_confirm_over_60:assemblyConfirmOver60,
       long_haul:longHaul,
       oversize_confirm:oversize,
       extra_people:extraPeople,
@@ -371,7 +386,10 @@
         source:$(".lf-source",node)?.value||"manual",
         freight_class:$(".lf-class",node)?.value||"",
         non_stackable:!!$(".lf-nonstack",node)?.checked,
-        flip_stack_claimed:$(".lf-flip-stack:checked",node)?.value||""
+        flip_stack_claimed:$(".lf-flip-stack:checked",node)?.value||"",
+        assembly_required:$(".lf-assembly-required:checked",node)?.value||"",
+        assembly_over_15:$(".lf-assembly-over15:checked",node)?.value||"",
+        assembly_extra_minutes:$(".lf-assembly-extra-mins",node)?.value||""
       }))
     };
   }
@@ -489,7 +507,9 @@
     }
     if(n===3&&$$(".lf-item",itemsWrap).length===0){valid=false;alert("Add at least one item.");}
     if(n===3){
-      const nationwide=$('input[name="delivery_path"]:checked')?.value==="nationwide";
+      const path=$('input[name="delivery_path"]:checked')?.value||"local_az";
+      const nationwide=path==="nationwide";
+      const localTruck=path==="local_az"||path==="pickup_az";
       $$(".lf-item",itemsWrap).forEach(node=>{
         const qty=Math.max(1,Math.floor(num($(".lf-quantity",node).value)||1));
         const err=$(".lf-flip-stack-error",node);
@@ -503,6 +523,52 @@
           }
         }else if(err){
           err.textContent="";
+        }
+
+        const reqErr=$(".lf-assembly-required-error",node);
+        const overErr=$(".lf-assembly-over15-error",node);
+        const extraErr=$(".lf-assembly-extra-error",node);
+        const extraInput=$(".lf-assembly-extra-mins",node);
+        if(localTruck){
+          const required=$(".lf-assembly-required:checked",node)?.value||"";
+          if(!(required==="yes"||required==="no"||required==="idk")){
+            valid=false;
+            if(reqErr)reqErr.textContent="Choose Yes, No, or idk.";
+          }else if(reqErr){
+            reqErr.textContent="";
+          }
+          if(required==="yes"){
+            const over=$(".lf-assembly-over15:checked",node)?.value||"";
+            if(!(over==="yes"||over==="no"||over==="idk")){
+              valid=false;
+              if(overErr)overErr.textContent="Choose Yes, No, or idk.";
+            }else if(overErr){
+              overErr.textContent="";
+            }
+            if(over==="yes"){
+              const mins=Math.floor(num(extraInput?.value));
+              if(!(mins>=1)||!/^\d+$/.test(String(extraInput?.value||"").trim())){
+                valid=false;
+                if(extraErr)extraErr.textContent="Enter minutes beyond 15 (numbers only).";
+                if(extraInput)fieldError(extraInput,"Enter minutes beyond 15 (numbers only).");
+              }else{
+                if(extraErr)extraErr.textContent=mins>60?"Over 60 minutes will be flagged for confirmation — it increases cost.":"";
+                if(extraInput)fieldError(extraInput,"");
+              }
+            }else{
+              if(extraErr)extraErr.textContent="";
+              if(extraInput){extraInput.value="";fieldError(extraInput,"");}
+            }
+          }else{
+            if(overErr)overErr.textContent="";
+            if(extraErr)extraErr.textContent="";
+            if(extraInput){extraInput.value="";fieldError(extraInput,"");}
+          }
+        }else{
+          if(reqErr)reqErr.textContent="";
+          if(overErr)overErr.textContent="";
+          if(extraErr)extraErr.textContent="";
+          if(extraInput)fieldError(extraInput,"");
         }
       });
     }
@@ -1064,6 +1130,18 @@
       r.name=flipName;
       r.checked=String(prefill.flip_stack_claimed||"")===r.value;
     });
+    const assemblyReqName="lf_assembly_required_"+itemCounter;
+    const assemblyOverName="lf_assembly_over15_"+itemCounter;
+    $$(".lf-assembly-required",node).forEach(r=>{
+      r.name=assemblyReqName;
+      r.checked=String(prefill.assembly_required||"")===r.value;
+    });
+    $$(".lf-assembly-over15",node).forEach(r=>{
+      r.name=assemblyOverName;
+      r.checked=String(prefill.assembly_over_15||"")===r.value;
+    });
+    const extraMins=$(".lf-assembly-extra-mins",node);
+    if(extraMins)extraMins.value=prefill.assembly_extra_minutes||"";
 
     $(".lf-remove",node).addEventListener("click",()=>{
       node.remove();renumberItems();
@@ -1085,12 +1163,51 @@
       }
       updatePallet(node);
     };
+    const syncAssemblyAsk=()=>{
+      const path=$('input[name="delivery_path"]:checked')?.value||"local_az";
+      const localTruck=path==="local_az"||path==="pickup_az";
+      const ask=$(".lf-assembly-ask",node);
+      const overWrap=$(".lf-assembly-over15",node);
+      const extraWrap=$(".lf-assembly-extra",node);
+      if(ask)ask.hidden=!localTruck;
+      if(!localTruck){
+        $$(".lf-assembly-required",node).forEach(r=>{r.checked=false});
+        $$(".lf-assembly-over15",node).forEach(r=>{r.checked=false});
+        if(extraMins)extraMins.value="";
+        const reqErr=$(".lf-assembly-required-error",node);
+        const overErr=$(".lf-assembly-over15-error",node);
+        const extraErr=$(".lf-assembly-extra-error",node);
+        if(reqErr)reqErr.textContent="";
+        if(overErr)overErr.textContent="";
+        if(extraErr)extraErr.textContent="";
+        if(overWrap)overWrap.hidden=true;
+        if(extraWrap)extraWrap.hidden=true;
+        return;
+      }
+      const required=$(".lf-assembly-required:checked",node)?.value||"";
+      if(overWrap)overWrap.hidden=required!=="yes";
+      if(required!=="yes"){
+        $$(".lf-assembly-over15",node).forEach(r=>{r.checked=false});
+        if(extraMins)extraMins.value="";
+      }
+      const over=$(".lf-assembly-over15:checked",node)?.value||"";
+      if(extraWrap)extraWrap.hidden=!(required==="yes"&&over==="yes");
+      if(!(required==="yes"&&over==="yes")&&extraMins)extraMins.value="";
+    };
     [title,w,d,h,wt,$(".lf-class",node),$(".lf-nonstack",node),qtyInput].forEach(el=>el.addEventListener("input",()=>{
       if(el===qtyInput)syncStackAsk();
       else updatePallet(node);
       if(el===wt)syncHeavyAccessPrompts();
     }));
     $$(".lf-flip-stack",node).forEach(r=>r.addEventListener("change",()=>updatePallet(node)));
+    $$(".lf-assembly-required",node).forEach(r=>r.addEventListener("change",syncAssemblyAsk));
+    $$(".lf-assembly-over15",node).forEach(r=>r.addEventListener("change",syncAssemblyAsk));
+    if(extraMins){
+      extraMins.addEventListener("input",()=>{
+        const cleaned=String(extraMins.value||"").replace(/[^\d]/g,"");
+        if(extraMins.value!==cleaned)extraMins.value=cleaned;
+      });
+    }
     title.addEventListener("change",()=>{
       const c=classify(title.value);
       $(".lf-nonstack",node).checked=c.nonStackable;
@@ -1100,6 +1217,7 @@
     itemsWrap.appendChild(node);
     applyItemFieldCopy(node,$('input[name="delivery_path"]:checked')?.value==="pickup_az");
     syncStackAsk();
+    syncAssemblyAsk();
   }
 
   function renumberItems(){$$(".lf-item",itemsWrap).forEach((el,i)=>$(".lf-item-number",el).textContent=String(i+1))}
@@ -1107,8 +1225,15 @@
   function itemFromNode(node){
     const pickup=$('input[name="delivery_path"]:checked')?.value==="pickup_az";
     const qty=Math.max(1,num($(".lf-quantity",node).value)||1);
-    const nationwide=$('input[name="delivery_path"]:checked')?.value==="nationwide";
+    const path=$('input[name="delivery_path"]:checked')?.value||"local_az";
+    const nationwide=path==="nationwide";
+    const localTruck=path==="local_az"||path==="pickup_az";
     const flip=nationwide?($(".lf-flip-stack:checked",node)?.value||""):"";
+    const assemblyRequired=localTruck?($(".lf-assembly-required:checked",node)?.value||""):"";
+    const assemblyOver15=localTruck&&assemblyRequired==="yes"?($(".lf-assembly-over15:checked",node)?.value||""):"";
+    const assemblyExtra=localTruck&&assemblyRequired==="yes"&&assemblyOver15==="yes"
+      ?Math.max(0,Math.floor(num($(".lf-assembly-extra-mins",node)?.value)||0))
+      :0;
     const item={
       source:pickup?"manual":($(".lf-source",node).value||"manual"),
       title:$(".lf-title",node).value.trim(),
@@ -1122,7 +1247,10 @@
       image_url:pickup?"":($(".lf-image-url",node)?.value||"").trim(),
       freight_class:$(".lf-class",node).value===""?null:num($(".lf-class",node).value),
       non_stackable:$(".lf-nonstack",node).checked,
-      flip_stack_claimed:nationwide&&qty>=2?flip:""
+      flip_stack_claimed:nationwide&&qty>=2?flip:"",
+      assembly_required:assemblyRequired,
+      assembly_over_15:assemblyOver15,
+      assembly_extra_minutes:assemblyExtra
     };
     item.pallet=palletize(item);
     return item;
@@ -1389,9 +1517,30 @@
     const pathLocal=isLocalStylePath(path);
     const isPickup=path==="pickup_az";
     const flags=accessFlags(payload.access,isPickup);
-    const itemHtml=payload.items.map((i,idx)=>{
+      const itemHtml=payload.items.map((i,idx)=>{
       const classText=i.pallet.freight_class===null?"Class to be confirmed":"Class "+i.pallet.freight_class;
-      return '<li><strong>'+escapeHtml(i.title||("Item "+(idx+1)))+'</strong>: '+i.width+'" × '+i.depth+'" × '+i.height+'" · '+i.weight+' lb · Freight '+i.pallet.width+'" × '+i.pallet.depth+'" × '+i.pallet.height+'" · '+i.pallet.weight+' lb · '+classText+(i.pallet.non_stackable?" · Non-stackable":"")+'</li>';
+      let assemblyBit="";
+      if(pathLocal){
+        const req=String(i.assembly_required||"").toLowerCase();
+        if(req==="yes"){
+          const over=String(i.assembly_over_15||"").toLowerCase();
+          if(over==="yes"){
+            const mins=Math.max(0,Math.floor(Number(i.assembly_extra_minutes)||0));
+            assemblyBit=" · Disassembly &amp; reassembly: yes, +"+mins+" min beyond 15"+(mins>60?" (confirm — over 60)":"");
+          }else if(over==="idk"){
+            assemblyBit=" · Disassembly &amp; reassembly: yes · over 15 min: idk";
+          }else if(over==="no"){
+            assemblyBit=" · Disassembly &amp; reassembly: yes (within 15 min)";
+          }else{
+            assemblyBit=" · Disassembly &amp; reassembly: yes";
+          }
+        }else if(req==="idk"){
+          assemblyBit=" · Disassembly &amp; reassembly: idk";
+        }else if(req==="no"){
+          assemblyBit=" · Disassembly &amp; reassembly: no";
+        }
+      }
+      return '<li><strong>'+escapeHtml(i.title||("Item "+(idx+1)))+'</strong>: '+i.width+'" × '+i.depth+'" × '+i.height+'" · '+i.weight+' lb · Freight '+i.pallet.width+'" × '+i.pallet.depth+'" × '+i.pallet.height+'" · '+i.pallet.weight+' lb · '+classText+(i.pallet.non_stackable?" · Non-stackable":"")+assemblyBit+'</li>';
     }).join("");
 
     const liftgateLine=path==="nationwide"
@@ -1422,6 +1571,20 @@
       const itemCount=Number(preview?.local_estimate?.item_count??qtyTotal)||0;
       const multiNote=multiAdder>0
         ?'<p class="lf-drive-stats">Includes multi-item handling for '+itemCount+" items.</p>"
+        :"";
+      const assemblyFee=Number(preview?.local_estimate?.assembly_fee??est?.assembly_fee)||0;
+      const assemblyMins=Number(preview?.local_estimate?.assembly_extra_minutes??est?.assembly_extra_minutes)||0;
+      const assemblyRequired=Boolean(preview?.local_estimate?.assembly_required??est?.assembly_required);
+      const assemblyOver60=Boolean(preview?.local_estimate?.assembly_confirm_over_60??est?.assembly_confirm_over_60);
+      const assemblyTimeLabel=isPickup?"Estimated Pickup Time":"Estimated Delivery Time";
+      const assemblyNote=assemblyFee>0&&assemblyMins>0
+        ?'<p class="lf-drive-stats"><strong>Additional Disassembly &amp; Reassembly Time | '+assemblyMins+' Minutes</strong></p>'+
+          '<p class="lf-drive-stats">'+assemblyTimeLabel+' + '+assemblyMins+' Minutes for Disassembly &amp; Reassembly'+(assemblyFee>0?' · +'+money(assemblyFee)+' (rounded up)':'')+'.</p>'
+        :assemblyRequired
+          ?'<p class="lf-drive-stats">Disassembly &amp; reassembly needed (within 15 minutes — no extra charge).</p>'
+          :"";
+      const assemblyFlag=assemblyOver60
+        ?'<p class="lf-estimate-banner warn"><strong>Confirm disassembly &amp; reassembly time with the customer.</strong> Extra time over 60 minutes was entered and increases cost.</p>'
         :"";
       const stairNote="";
       const extraPeople=Number(payload.access.extra_people)||0;
@@ -1467,6 +1630,8 @@
       result.innerHTML=
         '<h2>'+(isPickup?"Your Preliminary Consignor Pickup Estimate":"Your Preliminary Local Delivery Estimate")+'</h2>'+
         '<div class="lf-price">'+priceLabel+displayedAmount+'</div>'+
+        assemblyNote+
+        assemblyFlag+
         oversizeHtml+
         longHaulHtml+
         timingHtml+
@@ -1781,16 +1946,36 @@
     updateHeroNotice(path);
     syncHeavyAccessPrompts();
     refreshPathMismatchPanel();
-    // Flip/stack ask is nationwide-only; hide/clear when switching to local/pickup.
+    // Flip/stack ask is nationwide-only; assembly ask is local/pickup-only.
     $$(".lf-item",itemsWrap).forEach(node=>{
       const ask=$(".lf-stack-ask",node);
       const q=Math.max(1,Math.floor(num($(".lf-quantity",node).value)||1));
       const nationwide=path==="nationwide";
+      const localTruck=path==="local_az"||path==="pickup_az";
       if(ask)ask.hidden=!(nationwide&&q>=2);
       if(!nationwide||q<2){
         $$(".lf-flip-stack",node).forEach(r=>{r.checked=false});
         const err=$(".lf-flip-stack-error",node);
         if(err)err.textContent="";
+      }
+      const assemblyAsk=$(".lf-assembly-ask",node);
+      if(assemblyAsk)assemblyAsk.hidden=!localTruck;
+      if(!localTruck){
+        $$(".lf-assembly-required",node).forEach(r=>{r.checked=false});
+        $$(".lf-assembly-over15",node).forEach(r=>{r.checked=false});
+        const extraMins=$(".lf-assembly-extra-mins",node);
+        if(extraMins)extraMins.value="";
+        const overWrap=$(".lf-assembly-over15",node);
+        const extraWrap=$(".lf-assembly-extra",node);
+        if(overWrap)overWrap.hidden=true;
+        if(extraWrap)extraWrap.hidden=true;
+      }else{
+        const required=$(".lf-assembly-required:checked",node)?.value||"";
+        const over=$(".lf-assembly-over15:checked",node)?.value||"";
+        const overWrap=$(".lf-assembly-over15",node);
+        const extraWrap=$(".lf-assembly-extra",node);
+        if(overWrap)overWrap.hidden=required!=="yes";
+        if(extraWrap)extraWrap.hidden=!(required==="yes"&&over==="yes");
       }
       updatePallet(node);
     });
