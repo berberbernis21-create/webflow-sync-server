@@ -1220,7 +1220,19 @@
 
   function updatePallet(node){
     const i=itemFromNode(node),box=$(".lf-pallet",node);
-    if(!i.width||!i.depth||!i.height||!i.weight){box.textContent="Enter dimensions and weight to see the SOP freight entry.";return}
+    const path=$('input[name="delivery_path"]:checked')?.value||"local_az";
+    const nationwide=path==="nationwide";
+    if(!i.width||!i.depth||!i.height||!i.weight){
+      box.textContent=nationwide
+        ?"Enter dimensions and weight to see the SOP freight entry."
+        :"Enter dimensions and weight to see the size used for your estimate.";
+      return;
+    }
+    if(!nationwide){
+      const qtyBit=i.quantity>1?" · Qty "+i.quantity:"";
+      box.innerHTML="<strong>Item size for estimate:</strong> "+i.width+'" W × '+i.depth+'" D × '+i.height+'" H · '+i.weight+" lb"+qtyBit;
+      return;
+    }
     const classText=i.pallet.freight_class===null?"Class to be confirmed":"Class "+i.pallet.freight_class;
     const stackBit=i.pallet.stack_note?" · "+i.pallet.stack_note:(i.pallet.non_stackable?" · Non-stackable":"");
     const qtyBit=i.quantity>1?" · Qty "+i.quantity:"";
@@ -1506,6 +1518,9 @@
     const isPickup=path==="pickup_az";
     const flags=accessFlags(payload.access,isPickup);
       const itemHtml=payload.items.map((i,idx)=>{
+      if(pathLocal){
+        return '<li><strong>'+escapeHtml(i.title||("Item "+(idx+1)))+'</strong>: '+i.width+'" × '+i.depth+'" × '+i.height+'" · '+i.weight+' lb'+(i.quantity>1?' · Qty '+i.quantity:'')+'</li>';
+      }
       const classText=i.pallet.freight_class===null?"Class to be confirmed":"Class "+i.pallet.freight_class;
       return '<li><strong>'+escapeHtml(i.title||("Item "+(idx+1)))+'</strong>: '+i.width+'" × '+i.depth+'" × '+i.height+'" · '+i.weight+' lb · Freight '+i.pallet.width+'" × '+i.pallet.depth+'" × '+i.pallet.height+'" · '+i.pallet.weight+' lb · '+classText+(i.pallet.non_stackable?" · Non-stackable":"")+'</li>';
     }).join("");
