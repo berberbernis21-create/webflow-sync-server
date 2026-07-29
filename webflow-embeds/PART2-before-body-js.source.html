@@ -1432,7 +1432,7 @@
         const total=mins>0?15+mins:0;
         flags.push(total>0?"disassembly & reassembly: "+total+" minutes":"disassembly & reassembly: yes");
       }else if(a.assembly_over_15==="idk")flags.push("disassembly & reassembly: Not sure");
-      else flags.push("disassembly & reassembly: within free 15 minutes");
+      else flags.push("disassembly & reassembly: within 15 minutes");
     }else if(a.disassembly_or_assembly){
       flags.push(isPickup?"disassembly may be required":"assembly or disassembly");
     }
@@ -1578,7 +1578,7 @@
         ?'<p class="lf-drive-stats"><strong>Additional Disassembly &amp; Reassembly Time | '+assemblyMins+' Minutes</strong></p>'+
           '<p class="lf-drive-stats" style="margin-top:2px;"><strong>Total Disassembly &amp; Reassembly Time | '+assemblyTotal+' Minutes</strong></p>'
         :assemblyRequired
-          ?'<p class="lf-drive-stats">Disassembly &amp; reassembly needed (within free 15 minutes with wrapping/prep — no extra charge).</p>'
+          ?'<p class="lf-drive-stats">Disassembly &amp; reassembly needed (within 15 minutes with wrapping/prep — no extra charge).</p>'
           :"";
       const assemblyFlag=assemblyOver60
         ?'<p class="lf-estimate-banner warn"><strong>Confirm disassembly &amp; reassembly time with the customer.</strong> Extra time over 60 minutes was entered and increases cost.</p>'

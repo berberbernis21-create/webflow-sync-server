@@ -905,7 +905,7 @@ legend.lf-heavy-prompt {
           </div>
           <div class="lf-assembly-access lf-local-truck-only" id="lfAssemblyAccess">
             <p style="margin:10px 0 6px;font-size:13px;font-weight:800;">Disassembly &amp; Reassembly</p>
-            <div class="lf-help" style="margin:0 0 8px;">The first 15 minutes are free as part of wrapping and prep. Only time above 15 minutes is added to the estimate.</div>
+            <div class="lf-help" style="margin:0 0 8px;">The first 15 minutes are included with wrapping and prep. Only time above 15 minutes is added to the estimate.</div>
             <fieldset class="lf-crew-extra" style="margin:0 0 6px;border:0;padding:0;">
               <legend style="font-size:13px;font-weight:800;margin:0 0 8px;">Will this item require disassembly and reassembly to move safely? <span class="lf-required">*</span></legend>
               <label class="lf-check"><input type="radio" name="lf_assembly_required" class="lf-access-assembly-required" value="yes"> Yes</label>
@@ -916,18 +916,18 @@ legend.lf-heavy-prompt {
             </fieldset>
             <div class="lf-assembly-access-over15" id="lfAssemblyOver15Wrap" hidden>
               <fieldset class="lf-crew-extra" style="margin:8px 0 6px;border:0;padding:0;">
-                <legend style="font-size:13px;font-weight:800;margin:0 0 8px;">Will it take longer than the free 15 minutes? <span class="lf-required">*</span></legend>
+                <legend style="font-size:13px;font-weight:800;margin:0 0 8px;">Will it take longer than 15 minutes? <span class="lf-required">*</span></legend>
                 <label class="lf-check"><input type="radio" name="lf_assembly_over15" class="lf-access-assembly-over15" value="yes"> Yes</label>
                 <label class="lf-check"><input type="radio" name="lf_assembly_over15" class="lf-access-assembly-over15" value="no"> No</label>
                 <label class="lf-check"><input type="radio" name="lf_assembly_over15" class="lf-access-assembly-over15" value="idk"> Not sure</label>
-                <div class="lf-help" style="margin:6px 0 0;">Best guess is fine. No = covered by the free 15 minutes (no extra charge).</div>
+                <div class="lf-help" style="margin:6px 0 0;">Best guess is fine. No = within 15 minutes (no extra charge).</div>
                 <div class="lf-error" id="lfAssemblyOver15Error"></div>
               </fieldset>
             </div>
             <div class="lf-field lf-assembly-access-extra" id="lfAssemblyExtraWrap" hidden style="margin-top:8px;">
-              <label for="lfAssemblyExtraMins">How many more minutes above the free 15? <span class="lf-required">*</span></label>
+              <label for="lfAssemblyExtraMins">How many more minutes longer than 15? <span class="lf-required">*</span></label>
               <input id="lfAssemblyExtraMins" type="number" min="1" step="1" inputmode="numeric" placeholder="Numbers only">
-              <div class="lf-help">Best guess is fine. Only these extra minutes above the free 15 are added to the estimate. Over 60 minutes is flagged for confirmation — it increases cost.</div>
+              <div class="lf-help">Best guess is fine. Only these extra minutes above 15 are added to the estimate. Over 60 minutes is flagged for confirmation — it increases cost.</div>
               <div class="lf-error" id="lfAssemblyExtraError"></div>
             </div>
           </div>
