@@ -645,11 +645,11 @@
     if(itemsNext){
       let itemsBody="";
       if(p==="nationwide"){
-        itemsBody="After your items, we’ll ask about freight options (liftgate, dock, White Glove, and more) — then you review, and we get you a confirmed quote.";
+        itemsBody="You confirm and we get you an estimate. We email you and the team the receipt, which we use to confirm final pricing.";
       }else if(p==="pickup_az"){
-        itemsBody="After your items, we’ll ask about stairs, access, and handling for the pickup — then you review, and we email a preliminary estimate so we can confirm final pricing.";
+        itemsBody="You confirm and we get you an estimate. We email you and the team the receipt, which we use to confirm final pricing.";
       }else{
-        itemsBody="After your items, we’ll ask about stairs, access, and handling — then you review, and we email a preliminary estimate so we can confirm final pricing.";
+        itemsBody="You confirm and we get you an estimate. We email you and the team the receipt, which we use to confirm final pricing.";
       }
       itemsNext.innerHTML="<strong>What happens next:</strong> "+itemsBody;
     }
@@ -1073,7 +1073,7 @@
       setTextSafe("#lfPreferredScheduleLabel","Please enter a few pickup days and 4-hour windows that work for you on those days.");
       const preferred=$("#lfPreferredSchedule");
       if(preferred)preferred.placeholder="Example: Tue or Wed, 10am–2pm or 1pm–5pm";
-      setTextSafe("#lfSmartDefaults","<strong>Note:</strong> Residential pickup is the default. Check any stairs, access, or handling items that apply so we can price the job accurately.",true);
+      setTextSafe("#lfSmartDefaults","<strong>What happens next:</strong> You confirm and we get you an estimate. We email you and the team the receipt, which we use to confirm final pricing.",true);
       setTextSafe("#lfAgreeLabel","I understand this is an estimate from the online tool and I must confirm pricing before scheduling.");
       const notes=$("#lfNotes");
       if(notes)notes.placeholder="Share anything else the pickup team should know.";
@@ -1107,7 +1107,7 @@
       setTextSafe("#lfPreferredScheduleLabel","Please enter a few delivery days and 4-hour windows that work for you on those days.");
       const preferred=$("#lfPreferredSchedule");
       if(preferred)preferred.placeholder="Example: Tue or Wed, 10am–2pm or 1pm–5pm";
-      setTextSafe("#lfSmartDefaults","<strong>Note:</strong> Residential delivery is the default. Check any stairs, access, or handling items that apply so we can price the job accurately.",true);
+      setTextSafe("#lfSmartDefaults","<strong>What happens next:</strong> You confirm and we get you an estimate. We email you and the team the receipt, which we use to confirm final pricing.",true);
       setTextSafe("#lfAgreeLabel","I understand this is an estimate from the online tool and I must confirm pricing before scheduling.");
       const notes=$("#lfNotes");
       if(notes)notes.placeholder="Share anything else the delivery team or carrier should know.";
