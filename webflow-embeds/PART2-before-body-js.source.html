@@ -1544,9 +1544,9 @@
       const assemblyTimeLabel=isPickup?"Estimated Pickup Time":"Estimated Delivery Time";
       const assemblyNote=assemblyFee>0&&assemblyMins>0
         ?'<p class="lf-drive-stats"><strong>Additional Disassembly &amp; Reassembly Time | '+assemblyMins+' Minutes</strong></p>'+
-          '<p class="lf-drive-stats">'+assemblyTimeLabel+' + '+assemblyMins+' Minutes for Disassembly &amp; Reassembly'+(assemblyFee>0?' · +'+money(assemblyFee)+' (rounded up)':'')+'.</p>'
+          '<p class="lf-drive-stats">'+assemblyTimeLabel+' + '+assemblyMins+' Minutes for Disassembly &amp; Reassembly</p>'
         :assemblyRequired
-          ?'<p class="lf-drive-stats">Disassembly &amp; reassembly needed (within 15 minutes — no extra charge).</p>'
+          ?'<p class="lf-drive-stats">Disassembly &amp; reassembly needed (within free 15 minutes with wrapping/prep — no extra charge).</p>'
           :"";
       const assemblyFlag=assemblyOver60
         ?'<p class="lf-estimate-banner warn"><strong>Confirm disassembly &amp; reassembly time with the customer.</strong> Extra time over 60 minutes was entered and increases cost.</p>'
