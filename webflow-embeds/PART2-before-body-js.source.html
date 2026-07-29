@@ -1561,8 +1561,8 @@
       const assemblyRequired=Boolean(preview?.local_estimate?.assembly_required??est?.assembly_required);
       const assemblyOver60=Boolean(preview?.local_estimate?.assembly_confirm_over_60??est?.assembly_confirm_over_60);
       const assemblyNote=assemblyFee>0&&assemblyMins>0&&assemblyTotal>0
-        ?'<p class="lf-drive-stats"><strong>Additional Disassembly &amp; Reassembly Time | '+assemblyMins+' Minutes</strong></p>'+
-          '<p class="lf-drive-stats" style="margin-top:2px;"><strong>Total Disassembly &amp; Reassembly Time | '+assemblyTotal+' Minutes</strong></p>'
+        ?'<p class="lf-drive-stats"><strong>Additional Time | '+assemblyMins+' Minutes</strong></p>'+
+          '<p class="lf-drive-stats" style="margin-top:2px;"><strong>Total Time for Disassembly &amp; Reassembly | '+assemblyTotal+' Minutes</strong></p>'
         :assemblyRequired
           ?'<p class="lf-drive-stats">Disassembly &amp; reassembly needed (within free 15 minutes with wrapping/prep — no extra charge).</p>'
           :"";
