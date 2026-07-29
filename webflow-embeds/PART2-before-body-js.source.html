@@ -1381,7 +1381,7 @@
       flags.push(stairParts.length?"stairs: "+stairParts.join(" | "):"stairs");
     }
     if(a.needs_more_than_two_people){
-      flags.push(a.extra_people>=2?"extra crew: 2 people / two trucks":a.extra_people===1?"extra crew: 1 person":"more than two people");
+      flags.push(a.extra_people>=2?"extra crew: 2 people (4 total)":a.extra_people===1?"extra crew: 1 person (3 total)":"more than two people");
       if(a.more_than_two_people_reason)flags.push("crew note: "+a.more_than_two_people_reason);
     }
     if(a.tight_turns_or_narrow_halls)flags.push("tight turns / narrow access");
