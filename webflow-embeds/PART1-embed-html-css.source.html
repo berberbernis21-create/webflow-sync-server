@@ -703,6 +703,29 @@ legend.lf-heavy-prompt {
   font-weight: 800 !important;
 }
 
+/* Preferred delivery/pickup windows — always stand out under Access & Handling */
+#lfPreferredScheduleWrap {
+  margin: 0 0 14px;
+  padding: 14px 14px 12px;
+  border: 1px solid var(--lf-red);
+  border-radius: 10px;
+  background: #fff7f7;
+}
+#lfPreferredScheduleLabel {
+  color: var(--lf-red) !important;
+  font-weight: 800 !important;
+  font-size: 14px;
+  line-height: 1.4;
+}
+#lfPreferredScheduleHelp {
+  color: var(--lf-red);
+  font-weight: 700;
+  opacity: 0.85;
+}
+#lfPreferredSchedule {
+  border-color: #d5b4b4;
+}
+
 </style>
 
 <div class="lf-calc" id="lfCalc">
@@ -808,6 +831,12 @@ legend.lf-heavy-prompt {
 
     <section class="lf-step" data-step="4" hidden>
       <div class="lf-head"><span class="lf-path-badge" data-path-badge>Local Delivery</span><h2>Access &amp; Handling</h2><p id="lfAccessHeadHelp">Tell us about stairs, interior access, building access, and handling needs so the estimate is as accurate as possible.</p></div>
+
+      <div class="lf-field lf-local-truck-only" id="lfPreferredScheduleWrap">
+        <label for="lfPreferredSchedule" id="lfPreferredScheduleLabel">Please enter a few delivery days and 4-hour windows that work for you on those days.</label>
+        <textarea id="lfPreferredSchedule" placeholder="Example: Tue or Wed, 10am–2pm or 1pm–5pm"></textarea>
+        <div class="lf-help" id="lfPreferredScheduleHelp">Optional — helps us schedule faster once the item is purchased.</div>
+      </div>
 
       <div class="lf-access-grid">
         <div class="lf-access-card lf-nationwide-only" hidden>
@@ -942,11 +971,6 @@ legend.lf-heavy-prompt {
         <div class="lf-access-card">
           <h3>Parking &amp; Other Restrictions</h3>
           <label class="lf-check" id="lfParkingWrap"><input id="lfParking" type="checkbox"> <span id="lfParkingLabel">Limited truck parking, low clearance, or restricted delivery hours</span></label>
-          <div class="lf-field lf-local-truck-only" id="lfPreferredScheduleWrap" style="margin-top:9px">
-            <label for="lfPreferredSchedule" id="lfPreferredScheduleLabel">Please enter a few delivery days and 4-hour windows that work for you on those days.</label>
-            <textarea id="lfPreferredSchedule" placeholder="Example: Tue or Wed, 10am–2pm or 1pm–5pm"></textarea>
-            <div class="lf-help" id="lfPreferredScheduleHelp">Optional — helps us schedule faster once the item is purchased.</div>
-          </div>
           <div class="lf-field" style="margin-top:9px">
             <label for="lfNotes">Other access notes</label>
             <textarea id="lfNotes" placeholder="Share anything else the delivery team or carrier should know."></textarea>

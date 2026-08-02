@@ -5057,7 +5057,11 @@ async function loadLuxuryItemIndex() {
 
 /** Normalize product name for index (so we can find by name and avoid duplicate creates). */
 function normalizeProductNameForIndex(name) {
-  return (name ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+  return (name ?? "")
+    .trim()
+    .replace(/\s*\(\s*No Longer Available\s*\)\s*$/i, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ");
 }
 
 /** Pre-load Furniture products once per sync → O(1) lookup (CMS collection by default; ecommerce when opted in). */
@@ -10068,6 +10072,8 @@ function normalizeProductTitleForLooseMatch(name) {
   let s = String(name ?? "")
     .trim()
     .toLowerCase()
+    // Sold listings append this in Webflow — ignore for freight Find Item matching.
+    .replace(/\s*\(\s*no longer available\s*\)\s*$/i, "")
     .replace(/&/g, " and ")
     .replace(/[–—]/g, "-");
   s = s.replace(/[-_/]+/g, " ");
@@ -11866,7 +11872,7 @@ async function scanLuxuryCmsForListingSearch(query) {
     for (const item of items) {
       if (item.isArchived === true) continue;
       const fd = item.fieldData || {};
-      if (webflowListingLooksSold({ fieldData: fd }, "luxury")) continue;
+      // Include sold / Recently Sold — freight + helpers still need listing data after a sale.
       const name = fd.name ?? "";
       const score = listingTitleSearchScore(query, name);
       if (score <= 0) continue;
@@ -11903,8 +11909,7 @@ async function scanFurnitureEcommerceForListingSearch(query) {
       if (product.isArchived === true) continue;
       const fd = product.fieldData || {};
       const skus = listItem.skus ?? product.skus ?? [];
-      const merged = { ...product, fieldData: fd, skus };
-      if (webflowListingLooksSold(merged, "furniture")) continue;
+      // Include sold listings — do not skip when Webflow sold / date-sold is set.
       const name = fd.name ?? product.name ?? "";
       const score = listingTitleSearchScore(query, name);
       if (score <= 0) continue;
@@ -11947,6 +11952,7 @@ function mapLuxuryListingSearchHit(hit) {
       fieldData: fd,
     }
   );
+  const sold = webflowListingLooksSold({ fieldData: fd }, "luxury");
   return {
     title,
     price,
@@ -11959,6 +11965,7 @@ function mapLuxuryListingSearchHit(hit) {
     vendor: vendor || null,
     luxuryGoodsCategory,
     weight,
+    sold,
   };
 }
 
@@ -11991,6 +11998,10 @@ async function mapFurnitureListingSearchHit(hit, config) {
       fieldData: fd,
     }
   );
+  const sold = webflowListingLooksSold(
+    { fieldData: fd, skus },
+    "furniture"
+  );
   return {
     title,
     price,
@@ -12003,6 +12014,7 @@ async function mapFurnitureListingSearchHit(hit, config) {
     vendor: vendor || null,
     luxuryGoodsCategory: null,
     weight,
+    sold,
   };
 }
 
