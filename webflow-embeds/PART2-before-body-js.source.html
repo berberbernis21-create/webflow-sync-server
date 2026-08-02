@@ -1251,19 +1251,41 @@
   function extractListing(raw){
     const d=raw?.listing||raw?.product||raw?.data||raw||{};
     const dims=d.dimensions||d.dimension||d.size||"";
-    let width=d.width||d.item_width||d.width_in,depth=d.depth||d.item_depth||d.depth_in,height=d.height||d.item_height||d.height_in;
+    let width=d.width||d.item_width||d.width_in,depth=d.depth||d.item_depth||d.depth_in||d.length||d.length_in,height=d.height||d.item_height||d.height_in;
     const dimNum="(\\d*\\.\\d+|\\d+)";
     const parseThree=(text)=>{
       const m=String(text||"").replace(/[″"]/g,"").match(new RegExp(dimNum+"\\s*[x×X]\\s*"+dimNum+"\\s*[x×X]\\s*"+dimNum,"i"));
       return m?{width:m[1],depth:m[2],height:m[3]}:null;
     };
+    const parseLabeled=(text)=>{
+      const s=String(text||"");
+      if(!s.trim())return null;
+      const w=s.match(/\bWidth:\s*([\d.]+)\s*"?/i);
+      const dep=s.match(/\bDepth:\s*([\d.]+)\s*"?/i);
+      const len=s.match(/\bLength:\s*([\d.]+)\s*"?/i);
+      const h=s.match(/\bHeight:\s*([\d.]+)\s*"?/i);
+      const out={
+        width:w?w[1]:null,
+        depth:dep?dep[1]:(len?len[1]:null),
+        height:h?h[1]:null
+      };
+      return(out.width||out.depth||out.height)?out:null;
+    };
+    const applyPartial=(p)=>{
+      if(!p)return;
+      if(!width&&p.width)width=p.width;
+      if(!depth&&p.depth)depth=p.depth;
+      if(!height&&p.height)height=p.height;
+    };
     if((!width||!depth||!height)&&dims){
-      const p=parseThree(dims);
-      if(p){width=width||p.width;depth=depth||p.depth;height=height||p.height}
+      applyPartial(parseThree(dims));
+      applyPartial(parseLabeled(dims));
+    }
+    if((!width||!depth||!height)&&(d.description||d.body||d.product_description)){
+      applyPartial(parseLabeled(d.description||d.body||d.product_description));
     }
     if((!width||!depth||!height)&&(d.title||d.name)){
-      const p=parseThree(d.title||d.name);
-      if(p){width=width||p.width;depth=depth||p.depth;height=height||p.height}
+      applyPartial(parseThree(d.title||d.name));
     }
     return {
       title:d.title||d.name||d.product_name||"",
@@ -1305,7 +1327,13 @@
       }else{
         $(".lf-nonstack",node).checked=false;
       }
-      msg.textContent="Item found. Please review the dimensions, weight, price, and link before continuing.";
+      const missingDims=[];
+      if(!data.width)missingDims.push("width");
+      if(!data.depth)missingDims.push("depth");
+      if(!data.height)missingDims.push("height");
+      msg.textContent=missingDims.length
+        ?("Item found. Filled what the listing had — please enter "+missingDims.join(", ")+" (not listed), then review weight, price, and link.")
+        :"Item found. Please review the dimensions, weight, price, and link before continuing.";
       msg.classList.add("show");
       updatePallet(node);
     }catch(err){
