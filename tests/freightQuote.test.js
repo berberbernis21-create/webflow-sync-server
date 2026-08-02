@@ -510,8 +510,8 @@ test("local pricing: assembly beyond 15 min adds rounded fee", () => {
   assert.ok(over60.assembly_fee > 0);
 });
 
-test("local/pickup requires assembly questionnaire answers", () => {
-  const missing = validateFreightQuoteRequest({
+test("local/pickup assembly question is optional; follow-ups required when Yes", () => {
+  const unanswered = validateFreightQuoteRequest({
     delivery_path: "local_az",
     customer_name: "Test User",
     customer_email: "test@example.com",
@@ -532,8 +532,52 @@ test("local/pickup requires assembly questionnaire answers", () => {
       },
     ],
   });
-  assert.equal(missing.ok, false);
-  assert.match(String(missing.error || ""), /disassembly and reassembly/i);
+  assert.equal(unanswered.ok, true);
+
+  const nameWeightOnly = validateFreightQuoteRequest({
+    delivery_path: "local_az",
+    customer_name: "Test User",
+    customer_email: "test@example.com",
+    customer_phone: "4805551212",
+    street: "1 Main St",
+    city: "Scottsdale",
+    state: "AZ",
+    zip: "85260",
+    destination_type: "Residential",
+    items: [{ title: "Sofa", weight: 120, quantity: 1 }],
+  });
+  assert.equal(nameWeightOnly.ok, true);
+
+  const missingWeight = validateFreightQuoteRequest({
+    delivery_path: "local_az",
+    customer_name: "Test User",
+    customer_email: "test@example.com",
+    customer_phone: "4805551212",
+    street: "1 Main St",
+    city: "Scottsdale",
+    state: "AZ",
+    zip: "85260",
+    destination_type: "Residential",
+    items: [{ title: "Sofa", quantity: 1 }],
+  });
+  assert.equal(missingWeight.ok, false);
+  assert.match(String(missingWeight.error || ""), /weight/i);
+
+  const missingFollowUp = validateFreightQuoteRequest({
+    delivery_path: "local_az",
+    customer_name: "Test User",
+    customer_email: "test@example.com",
+    customer_phone: "4805551212",
+    street: "1 Main St",
+    city: "Scottsdale",
+    state: "AZ",
+    zip: "85260",
+    destination_type: "Residential",
+    access: { assembly_required: "yes" },
+    items: [{ title: "Table", weight: 50, quantity: 1 }],
+  });
+  assert.equal(missingFollowUp.ok, false);
+  assert.match(String(missingFollowUp.error || ""), /15 minutes/i);
 
   const ok = validateFreightQuoteRequest({
     delivery_path: "local_az",
@@ -621,7 +665,7 @@ test("local pricing: round trip over 100 miles uses 80% of $95", () => {
   assert.equal(est.estimated_price, 80);
 });
 
-test("local pricing: oversize needs 299+ lb and over 72 H, or over 550 lb", () => {
+test("local pricing: oversize needs 299+ lb and over 72 H, or 450+ lb", () => {
   const both = calculateLocalRouteEstimate(15, {
     items: [{ title: "Huge armoire", width: 40, height: 80, weight: 300 }],
   });
@@ -646,6 +690,12 @@ test("local pricing: oversize needs 299+ lb and over 72 H, or over 550 lb", () =
   });
   assert.equal(wideCouch.oversize_confirm, false);
   assert.equal(wideCouch.hourly_rate, 95);
+
+  const at450 = calculateLocalRouteEstimate(15, {
+    items: [{ title: "Safe", width: 30, height: 40, weight: 450 }],
+  });
+  assert.equal(at450.oversize_confirm, true);
+  assert.equal(at450.hourly_rate, 130);
 
   const veryHeavy = calculateLocalRouteEstimate(15, {
     items: [{ title: "Safe", width: 30, height: 40, weight: 551 }],
