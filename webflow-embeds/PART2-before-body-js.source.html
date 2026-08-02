@@ -584,12 +584,8 @@
       const extraInput=$("#lfAssemblyExtraMins");
       if(localTruck){
         const required=$('input[name="lf_assembly_required"]:checked')?.value||"";
-        if(!(required==="yes"||required==="no"||required==="idk")){
-          valid=false;
-          if(reqErr)reqErr.textContent="Choose Yes, No, or Not sure.";
-        }else if(reqErr){
-          reqErr.textContent="";
-        }
+        if(reqErr)reqErr.textContent="";
+        // Top D&R question is optional — only validate follow-ups when they chose Yes.
         if(required==="yes"){
           const over=$('input[name="lf_assembly_over15"]:checked')?.value||"";
           if(!(over==="yes"||over==="no"||over==="idk")){
@@ -1052,6 +1048,12 @@
       el.hidden=pickup||nationwide;
     });
     $$(".lf-pickup-only").forEach(el=>{el.hidden=!pickup});
+
+    // Local/pickup use the Disassembly & Reassembly radio block — never show the old checkbox too.
+    if($("#lfDisassemblyWrap")){
+      $("#lfDisassemblyWrap").hidden=!nationwide;
+      if(!nationwide&&$("#lfDisassembly"))$("#lfDisassembly").checked=false;
+    }
 
     if(pickup){
       if($("#lfUnpack"))$("#lfUnpack").checked=false;
