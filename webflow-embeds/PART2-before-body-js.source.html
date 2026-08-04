@@ -550,16 +550,14 @@
       for(let i=0;i<nodes.length;i++){
         const a=nodes[i];
         if(!a.isConnected)continue;
-        const key={title:$(".lf-title",a)?.value||"",product_url:$(".lf-url",a)?.value||""};
+        const key=itemNodeKey(a);
         if(!normalizeListingKey(key).title&&!normalizeListingKey(key).url)continue;
         for(let j=i+1;j<nodes.length;j++){
           const b=nodes[j];
           if(!b.isConnected)continue;
-          if(!listingKeysMatch(key,{title:$(".lf-title",b)?.value||"",product_url:$(".lf-url",b)?.value||""}))continue;
+          if(!listingKeysMatch(key,itemNodeKey(b)))continue;
           const addQty=Math.max(1,Math.floor(num($(".lf-quantity",b).value)||1));
-          const next=bumpItemQuantity(a,addQty);
-          showLookupMessage(a,"You already added this item. Quantity increased to "+next+".",true);
-          b.remove();
+          mergeDuplicateIntoExisting(a,b,addQty);
         }
       }
       renumberItems();
@@ -1378,8 +1376,19 @@
   }
 
   function normalizeListingKey({title,product_url}){
-    const url=String(product_url||"").trim().toLowerCase().replace(/\/+$/,"").split("?")[0];
-    const t=stripNoLongerAvailable(title||"").toLowerCase().replace(/\s+/g," ").trim();
+    const rawTitle=String(title||"").trim();
+    const rawUrl=String(product_url||"").trim();
+    const looksLikeUrl=(v)=>/^https?:\/\//i.test(v)||/lostandfoundresale\.com\//i.test(v);
+    let url=(rawUrl||(looksLikeUrl(rawTitle)?rawTitle:"")).trim().toLowerCase();
+    url=url
+      .replace(/^https?:\/\//,"")
+      .replace(/^www\./,"")
+      .replace(/\/+$/,"")
+      .split("?")[0]
+      .split("#")[0];
+    const t=looksLikeUrl(rawTitle)
+      ?""
+      :stripNoLongerAvailable(rawTitle).toLowerCase().replace(/\s+/g," ").trim();
     return {url,title:t};
   }
 
@@ -1390,13 +1399,17 @@
     return false;
   }
 
+  function itemNodeKey(node){
+    return {
+      title:$(".lf-title",node)?.value||"",
+      product_url:$(".lf-url",node)?.value||""
+    };
+  }
+
   function findExistingItemNode(data,exceptNode){
     return $$(".lf-item",itemsWrap).find(n=>{
       if(n===exceptNode)return false;
-      return listingKeysMatch(data,{
-        title:$(".lf-title",n)?.value||"",
-        product_url:$(".lf-url",n)?.value||""
-      });
+      return listingKeysMatch(data,itemNodeKey(n));
     })||null;
   }
 
@@ -1416,9 +1429,36 @@
     msg.className="lf-lookup-message show"+(bad?" bad":"");
   }
 
+  function mergeDuplicateIntoExisting(existing,duplicateNode,addQty){
+    const next=bumpItemQuantity(existing,addQty);
+    const msg="You already added this item. Quantity increased to "+next+".";
+    showLookupMessage(existing,msg,true);
+    if(duplicateNode&&duplicateNode!==existing&&duplicateNode.isConnected){
+      if($$(".lf-item",itemsWrap).length>1){
+        duplicateNode.remove();
+        renumberItems();
+      }else{
+        $(".lf-title",duplicateNode).value="";
+        $(".lf-url",duplicateNode).value="";
+        showLookupMessage(duplicateNode,msg,true);
+      }
+    }
+    scheduleSaveDraft();
+    return next;
+  }
+
   async function lookupItem(node){
     const title=$(".lf-title",node).value.trim(),btn=$(".lf-lookup",node),msg=$(".lf-lookup-message",node);
     if(!title){fieldError($(".lf-title",node),"Enter the listing title or product URL.");return}
+    // Catch duplicates before the network call (same title or same product URL already on the form).
+    const typedExisting=findExistingItemNode({
+      title,
+      product_url:$(".lf-url",node)?.value||""
+    },node);
+    if(typedExisting){
+      mergeDuplicateIntoExisting(typedExisting,node,1);
+      return;
+    }
     btn.disabled=true;btn.innerHTML='<span class="lf-spin"></span>Looking Up';
     msg.className="lf-lookup-message";
     try{
@@ -1428,23 +1468,12 @@
       const data=extractListing(raw);
       if(!data.width&&!data.depth&&!data.height&&!data.weight)throw new Error("The listing was found, but dimensions or weight were not returned. Please complete them manually.");
 
-      const existing=findExistingItemNode(data,node);
+      const existing=findExistingItemNode(data,node)||findExistingItemNode({
+        title:data.title||title,
+        product_url:data.product_url||""
+      },node);
       if(existing){
-        const next=bumpItemQuantity(existing,1);
-        showLookupMessage(
-          existing,
-          "You already added this item. Quantity increased to "+next+".",
-          true
-        );
-        // Drop the duplicate card when this row is a second add of the same listing.
-        if($$(".lf-item",itemsWrap).length>1){
-          node.remove();
-          renumberItems();
-        }else{
-          $(".lf-title",node).value="";
-          showLookupMessage(node,"You already added this item. Quantity increased to "+next+".",true);
-        }
-        scheduleSaveDraft();
+        mergeDuplicateIntoExisting(existing,node,1);
         return;
       }
 
