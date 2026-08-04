@@ -545,6 +545,24 @@
     }
     if(n===3&&$$(".lf-item",itemsWrap).length===0){valid=false;alert("Add at least one item.");}
     if(n===3){
+      // Merge same listing into one line (bump qty) before continuing.
+      const nodes=$$(".lf-item",itemsWrap);
+      for(let i=0;i<nodes.length;i++){
+        const a=nodes[i];
+        if(!a.isConnected)continue;
+        const key={title:$(".lf-title",a)?.value||"",product_url:$(".lf-url",a)?.value||""};
+        if(!normalizeListingKey(key).title&&!normalizeListingKey(key).url)continue;
+        for(let j=i+1;j<nodes.length;j++){
+          const b=nodes[j];
+          if(!b.isConnected)continue;
+          if(!listingKeysMatch(key,{title:$(".lf-title",b)?.value||"",product_url:$(".lf-url",b)?.value||""}))continue;
+          const addQty=Math.max(1,Math.floor(num($(".lf-quantity",b).value)||1));
+          const next=bumpItemQuantity(a,addQty);
+          showLookupMessage(a,"You already added this item. Quantity increased to "+next+".",true);
+          b.remove();
+        }
+      }
+      renumberItems();
       const nationwide=$('input[name="delivery_path"]:checked')?.value==="nationwide";
       $$(".lf-item",itemsWrap).forEach(node=>{
         const qty=Math.max(1,Math.floor(num($(".lf-quantity",node).value)||1));
@@ -1359,6 +1377,45 @@
     };
   }
 
+  function normalizeListingKey({title,product_url}){
+    const url=String(product_url||"").trim().toLowerCase().replace(/\/+$/,"").split("?")[0];
+    const t=stripNoLongerAvailable(title||"").toLowerCase().replace(/\s+/g," ").trim();
+    return {url,title:t};
+  }
+
+  function listingKeysMatch(a,b){
+    const A=normalizeListingKey(a),B=normalizeListingKey(b);
+    if(A.url&&B.url&&A.url===B.url)return true;
+    if(A.title&&B.title&&A.title===B.title)return true;
+    return false;
+  }
+
+  function findExistingItemNode(data,exceptNode){
+    return $$(".lf-item",itemsWrap).find(n=>{
+      if(n===exceptNode)return false;
+      return listingKeysMatch(data,{
+        title:$(".lf-title",n)?.value||"",
+        product_url:$(".lf-url",n)?.value||""
+      });
+    })||null;
+  }
+
+  function bumpItemQuantity(existing,by=1){
+    const qtyEl=$(".lf-quantity",existing);
+    const next=Math.max(1,Math.floor(Number(qtyEl?.value)||1))+Math.max(1,Math.floor(Number(by)||1));
+    if(qtyEl)qtyEl.value=String(next);
+    qtyEl?.dispatchEvent(new Event("input",{bubbles:true}));
+    updatePallet(existing);
+    return next;
+  }
+
+  function showLookupMessage(node,text,bad){
+    const msg=$(".lf-lookup-message",node);
+    if(!msg)return;
+    msg.textContent=text;
+    msg.className="lf-lookup-message show"+(bad?" bad":"");
+  }
+
   async function lookupItem(node){
     const title=$(".lf-title",node).value.trim(),btn=$(".lf-lookup",node),msg=$(".lf-lookup-message",node);
     if(!title){fieldError($(".lf-title",node),"Enter the listing title or product URL.");return}
@@ -1370,6 +1427,27 @@
       if(!res.ok)throw new Error(raw.error||raw.message||"Listing not found.");
       const data=extractListing(raw);
       if(!data.width&&!data.depth&&!data.height&&!data.weight)throw new Error("The listing was found, but dimensions or weight were not returned. Please complete them manually.");
+
+      const existing=findExistingItemNode(data,node);
+      if(existing){
+        const next=bumpItemQuantity(existing,1);
+        showLookupMessage(
+          existing,
+          "You already added this item. Quantity increased to "+next+".",
+          true
+        );
+        // Drop the duplicate card when this row is a second add of the same listing.
+        if($$(".lf-item",itemsWrap).length>1){
+          node.remove();
+          renumberItems();
+        }else{
+          $(".lf-title",node).value="";
+          showLookupMessage(node,"You already added this item. Quantity increased to "+next+".",true);
+        }
+        scheduleSaveDraft();
+        return;
+      }
+
       if(data.title)$(".lf-title",node).value=stripNoLongerAvailable(data.title);
       if(data.width)$(".lf-width",node).value=data.width;
       if(data.depth)$(".lf-depth",node).value=data.depth;
