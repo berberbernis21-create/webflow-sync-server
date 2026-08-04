@@ -1565,16 +1565,20 @@
     const cards=(items||[]).map(i=>{
       const sold=listingLooksSold(i);
       const cleanTitle=stripNoLongerAvailable(i.title||"View item");
-      const titleBase=escapeHtml(cleanTitle);
       const dims=[i.width,i.depth,i.height].every(v=>v!=null&&v!=="")
         ?escapeHtml(String(i.width)+"X"+String(i.depth)+"X"+String(i.height)+"H")
         :"";
-      const titleLine=dims?titleBase+" · "+dims:titleBase;
+      // Title stays the name only — dims + weight go on the line below (never beside the title).
+      const titleForDisplay=dims
+        ?cleanTitle.replace(/\s*[-–—]?\s*\d+(?:\.\d+)?\s*[xX×]\s*\d+(?:\.\d+)?(?:\s*[xX×]\s*\d+(?:\.\d+)?)?\s*H?\s*$/i,"").replace(/\s+/g," ").trim()||cleanTitle
+        :cleanTitle;
+      const titleBase=escapeHtml(titleForDisplay);
       const rawUrl=String(i.product_url||"").trim();
       const href=sold?SHOP_ALL_URL:(rawUrl||shopSearchUrl(cleanTitle));
       const url=escapeHtml(href);
       const cta=sold?"Shop All":(rawUrl?"Buy Now":"Find Item");
       const meta=[
+        dims||null,
         i.weight!=null?escapeHtml(i.weight)+" lb":null,
         i.price?money(i.price):null
       ].filter(Boolean).join(" · ");
@@ -1585,7 +1589,7 @@
         :'<div class="lf-buy-card-img lf-buy-card-img-empty" aria-hidden="true"></div>';
       return '<div class="lf-buy-card">'+img+
         '<div class="lf-buy-card-body">'+
-        '<p class="lf-buy-card-title">'+titleLine+"</p>"+
+        '<p class="lf-buy-card-title">'+titleBase+"</p>"+
         (meta?'<p class="lf-buy-card-meta">'+meta+"</p>":"")+
         soldLine+
         "</div>"+
