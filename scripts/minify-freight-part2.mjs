@@ -61,11 +61,13 @@ const minJs = fs.readFileSync(minJsPath, "utf8").trim();
 fs.writeFileSync(hostedJsPath, minJs + "\n");
 
 const hash = crypto.createHash("sha1").update(minJs).digest("hex").slice(0, 10);
-const loader = `<!-- LF freight calc Part 2 (loads JS from Render to stay under Webflow 50k). Source: PART2-before-body-js.source.html -->
+// Cache-bust with Date.now() so Webflow does not need a re-paste for every JS update.
+// Hash is still written into a comment for debugging / deploy checks.
+const loader = `<!-- LF freight calc Part 2 (loads JS from Render to stay under Webflow 50k). Source: PART2-before-body-js.source.html · build ${hash} -->
 <script>
 (function(){
   var s=document.createElement("script");
-  s.src="${API_BASE}/embeds/freight-part2.js?v=${hash}";
+  s.src="${API_BASE}/embeds/freight-part2.js?v="+Date.now();
   s.defer=true;
   s.onerror=function(){
     var host=document.getElementById("lfCalcHost")||document.getElementById("lfCalc");

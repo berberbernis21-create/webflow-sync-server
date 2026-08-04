@@ -701,9 +701,11 @@
       const field=input.closest(".lf-field");
       const label=field?.querySelector("label");
       if(dimsOptional){
+        // Local delivery + pickup: dims not required (no "(optional)" label).
         input.removeAttribute("required");
-        if(label)label.innerHTML=baseLabel+' <span style="font-weight:400">(optional)</span>';
+        if(label)label.textContent=baseLabel;
       }else{
+        // Nationwide: dims required.
         input.setAttribute("required","");
         if(label)label.innerHTML=baseLabel+' <span class="lf-required">*</span>';
       }
@@ -769,13 +771,13 @@
     const howTo=$("#lfItemsHowTo");
     if(pickup){
       if(headHelp){headHelp.hidden=true;headHelp.innerHTML=""}
-      if(howTo)howTo.innerHTML="<strong>How to enter items:</strong> Enter each piece as Item 1, Item 2, and so on with a short description and weight. Width, depth, and height are optional. Use <strong>+ Add Another Item</strong> for more pieces.";
+      if(howTo)howTo.innerHTML="<strong>How to enter items:</strong> Enter each piece as Item 1, Item 2, and so on with a short description and weight. Use <strong>+ Add Another Item</strong> for more pieces.";
     }else if(localTruck){
       if(headHelp){headHelp.hidden=true;headHelp.innerHTML=""}
-      if(howTo)howTo.innerHTML="<strong>How to look up an item:</strong> On the product page, copy the <strong>entire listing title</strong> or the <strong>full product page URL</strong>, paste it below, then click Find Item. <strong>Name and weight are required</strong> — width, depth, and height are optional for local delivery.";
+      if(howTo)howTo.innerHTML="<strong>How to look up an item:</strong> On the product page, copy the <strong>entire listing title</strong> or the <strong>full product page URL</strong>, paste it below, then click Find Item. <strong>Name and weight are required</strong> for local delivery.";
     }else{
       if(headHelp){headHelp.hidden=true;headHelp.innerHTML=""}
-      if(howTo)howTo.innerHTML="<strong>How to look up an item:</strong> On the product page, copy the <strong>entire listing title</strong> or the <strong>full product page URL</strong> from your browser’s address bar, paste it below, then click Find Item. Partial titles often won’t match. You can still enter dimensions manually if nothing is found.";
+      if(howTo)howTo.innerHTML="<strong>How to look up an item:</strong> On the product page, copy the <strong>entire listing title</strong> or the <strong>full product page URL</strong> from your browser’s address bar, paste it below, then click Find Item. Partial titles often won’t match. <strong>Name, weight, width, depth, and height are required</strong> for nationwide freight.";
     }
     $$(".lf-item",itemsWrap).forEach(node=>applyItemFieldCopy(node,pickup));
   }
@@ -1851,8 +1853,9 @@
 
       result.innerHTML=
         '<h2>'+(isPickup?"Your Preliminary Consignor Pickup Estimate":"Your Preliminary Local Delivery Estimate")+'</h2>'+
-        '<div class="lf-price">'+priceLabel+displayedAmount+'</div>'+
-        '<p class="lf-price-rate">'+rateNote+'</p>'+
+        '<div class="lf-price">'+priceLabel+displayedAmount+
+          '<div class="lf-price-rate" style="display:block;margin:8px 0 0;font-size:18px;font-weight:800;color:#07127c;line-height:1.25;">'+rateNote+"</div>"+
+        "</div>"+
         assemblyNote+
         assemblyFlag+
         oversizeHtml+
