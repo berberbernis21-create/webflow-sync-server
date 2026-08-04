@@ -40,6 +40,7 @@ import {
   isAllowedConsignmentOrigin,
 } from "./lib/consignmentCors.js";
 import { parseSetCountFromTitle, parseDimsFromTitle, parseDimsFromDescription } from "./lib/freightPalletize.js";
+import { stripNoLongerAvailableSuffix, listingLooksSold } from "./lib/listingTitleDisplay.js";
 import consignmentRouter from "./routes/consignmentSubmission.js";
 import freightQuoteRouter from "./routes/freightQuote.js";
 import { recoverStaleConsignmentIntakes } from "./lib/consignmentIntakeRecovery.js";
@@ -448,15 +449,21 @@ const WEBFLOW_MIN_DELAY_MS = Math.max(500, parseInt(process.env.WEBFLOW_MIN_DELA
 const WEBFLOW_429_MAX_RETRIES = Math.min(5, Math.max(1, parseInt(process.env.WEBFLOW_429_MAX_RETRIES || "3", 10)));
 
 let lastWebflowRequestTime = 0;
+/** Serialize spacing so concurrent syncs cannot bypass WEBFLOW_MIN_DELAY_MS. */
+let webflowRequestChain = Promise.resolve();
 
 axios.interceptors.request.use(async (config) => {
   if (!config.url || !String(config.url).startsWith(WEBFLOW_ORIGIN)) return config;
-  const now = Date.now();
-  const elapsed = now - lastWebflowRequestTime;
-  if (elapsed < WEBFLOW_MIN_DELAY_MS) {
-    await new Promise((r) => setTimeout(r, WEBFLOW_MIN_DELAY_MS - elapsed));
-  }
-  lastWebflowRequestTime = Date.now();
+  const waitTurn = webflowRequestChain.then(async () => {
+    const now = Date.now();
+    const elapsed = now - lastWebflowRequestTime;
+    if (elapsed < WEBFLOW_MIN_DELAY_MS) {
+      await new Promise((r) => setTimeout(r, WEBFLOW_MIN_DELAY_MS - elapsed));
+    }
+    lastWebflowRequestTime = Date.now();
+  });
+  webflowRequestChain = waitTurn.catch(() => {});
+  await waitTurn;
   if (LOG_REQUESTS) {
     webflowRequestLog(config.method?.toUpperCase() ?? "GET", config.url, config.data);
   }
@@ -565,6 +572,21 @@ function registerCmsItemInRunIndex(config, item) {
   if (wfSlug) idx.bySlug.set(wfSlug, item);
   const nameKey = normalizeProductNameForIndex(fd.name);
   if (nameKey && idx.byName) idx.byName.set(nameKey, item);
+}
+
+/** Keep warm furniture ecommerce index in sync after creates (avoids duplicate create races). */
+function registerFurnitureEcommerceProductInIndex(product, skus = []) {
+  if (!product?.id || !furnitureProductIndex?.byShopifyId) return;
+  const fd = product.fieldData || {};
+  const entry = { ...product, skus: Array.isArray(skus) ? skus : [] };
+  const wfId = fd["shopify-product-id"] ? String(fd["shopify-product-id"]) : null;
+  const wfSlug = (fd.slug || fd["shopify-slug-2"]) ? String(fd.slug || fd["shopify-slug-2"]).trim() : null;
+  if (wfId) furnitureProductIndex.byShopifyId.set(wfId, entry);
+  if (wfSlug && furnitureProductIndex.bySlug) furnitureProductIndex.bySlug.set(wfSlug, entry);
+  const nameKey = normalizeProductNameForIndex(fd.name ?? product.name);
+  if (nameKey && furnitureProductIndex.byName && !furnitureProductIndex.byName.has(nameKey)) {
+    furnitureProductIndex.byName.set(nameKey, entry);
+  }
 }
 
 async function findExistingFurnitureItem(shopifyProductId, shopifyUrl, slug, config, productNameForFallback = null) {
@@ -1501,12 +1523,20 @@ async function getWebflowEcommerceProductById(siteId, productId, token) {
   }
 }
 
-/** Run-scoped index: Furniture ecommerce products. Populated at sync start for O(1) lookup. */
+/** Warm index: Furniture ecommerce products. Shared across webhooks with TTL. */
 let furnitureProductIndex = null;
+let furnitureProductIndexLoadedAt = 0;
+let furnitureProductIndexInflight = null;
 
-async function findExistingWebflowEcommerceProduct(shopifyProductId, slug, config, productNameForFallback = null) {
+/**
+ * Find furniture ecommerce product by Shopify ID / slug / name.
+ * When the warm index is complete, miss = not found (no full catalog live scan).
+ * Pass { forceLiveScan: true } only for rare recovery paths (e.g. duplicate-slug create).
+ */
+async function findExistingWebflowEcommerceProduct(shopifyProductId, slug, config, productNameForFallback = null, options = {}) {
   if (!config?.siteId || !config?.token) return null;
   const slugNorm = slug ? String(slug).trim() : null;
+  const forceLiveScan = options?.forceLiveScan === true;
   const ensureLive = async (entry, source) => {
     if (!entry?.id) return null;
     const live = await getWebflowEcommerceProductById(config.siteId, entry.id, config.token);
@@ -1529,12 +1559,11 @@ async function findExistingWebflowEcommerceProduct(shopifyProductId, slug, confi
       source,
       shopifyProductId,
       staleWebflowId: entry.id,
-      message: "Indexed furniture entry was missing live; purged stale index mapping and falling back to live scan",
+      message: "Indexed furniture entry was missing live; purged stale index mapping",
     });
     return null;
   };
 
-  // Use pre-loaded index when available; if Shopify ID not there, still scan API (index can be stale vs other workers / new rows).
   if (furnitureProductIndex) {
     const byId = furnitureProductIndex.byShopifyId?.get(String(shopifyProductId));
     if (byId) {
@@ -1559,10 +1588,21 @@ async function findExistingWebflowEcommerceProduct(shopifyProductId, slug, confi
         }
       }
     }
+    if (furnitureProductIndex.complete && !forceLiveScan) {
+      webflowLog("info", {
+        event: "furniture_find.index_miss_confirmed",
+        shopifyProductId,
+        message: "Warm index fully loaded; skipping live products API scan",
+      });
+      return null;
+    }
     webflowLog("info", {
       event: "furniture_find.index_miss_live_scan",
       shopifyProductId,
-      message: "Shopify ID not in run index; paginating Webflow products API",
+      forceLiveScan,
+      message: forceLiveScan
+        ? "Forced live scan (recovery path)"
+        : "Index incomplete/missing; paginating Webflow products API",
     });
   }
 
@@ -1587,8 +1627,16 @@ async function findExistingWebflowEcommerceProduct(shopifyProductId, slug, confi
       const fd = product.fieldData || {};
       const wfId = fd["shopify-product-id"] ? String(fd["shopify-product-id"]) : null;
       const wfSlug = (fd["slug"] || fd["shopify-slug-2"]) ? String(fd.slug || fd["shopify-slug-2"]).trim() : null;
-      if (wfId && String(wfId) === String(shopifyProductId)) return { ...product, skus };
-      if (slugNorm && wfSlug && wfSlug === slugNorm) return { ...product, skus };
+      if (wfId && String(wfId) === String(shopifyProductId)) {
+        const hit = { ...product, skus };
+        registerFurnitureEcommerceProductInIndex(hit, skus);
+        return hit;
+      }
+      if (slugNorm && wfSlug && wfSlug === slugNorm) {
+        const hit = { ...product, skus };
+        registerFurnitureEcommerceProductInIndex(hit, skus);
+        return hit;
+      }
     }
     if (listItems.length < limit) break;
     offset += limit;
@@ -5000,171 +5048,238 @@ async function loadFurnitureCategoryMap() {
   }
 }
 
-/** Pre-load Luxury CMS items once per sync → O(1) lookup instead of N×page scans. */
-async function loadLuxuryItemIndex() {
-  const config = getWebflowConfig("luxury");
-  if (!config?.collectionId || !config?.token) {
-    webflowLog("warn", {
-      event: "luxury_item_index.skip",
-      reason: "missing WEBFLOW_COLLECTION_ID or WEBFLOW_TOKEN",
-    });
-    luxuryItemIndex = null;
-    return;
+/** How long warm Webflow indexes are reused across webhook syncs (default 5 min). */
+const WEBFLOW_INDEX_TTL_MS = Math.max(
+  30_000,
+  parseInt(process.env.WEBFLOW_INDEX_TTL_MS || "300000", 10) || 300_000
+);
+
+let luxuryItemIndexLoadedAt = 0;
+let luxuryItemIndexInflight = null;
+
+/** Pre-load Luxury CMS items once → O(1) lookup. Shared across webhooks with TTL. */
+async function loadLuxuryItemIndex({ force = false } = {}) {
+  const now = Date.now();
+  if (
+    !force &&
+    luxuryItemIndex?.complete &&
+    now - luxuryItemIndexLoadedAt < WEBFLOW_INDEX_TTL_MS
+  ) {
+    return luxuryItemIndex;
   }
-  await loadLuxuryCmsGalleryImageFieldSlugs();
-  const byShopifyId = new Map();
-  const bySlug = new Map();
-  const byUrl = new Map();
-  let offset = 0;
-  const limit = 100;
-  while (true) {
-    const url = `https://api.webflow.com/v2/collections/${config.collectionId}/items?limit=${limit}&offset=${offset}`;
-    let resp;
+  if (luxuryItemIndexInflight) return luxuryItemIndexInflight;
+
+  luxuryItemIndexInflight = (async () => {
     try {
-      resp = await axios.get(url, {
-        headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
-      });
-    } catch (err) {
-      luxuryItemIndex = null;
-      webflowLog("error", {
-        event: "luxury_item_index.load_failed",
-        collectionId: config.collectionId,
-        offset,
-        status: err.response?.status ?? null,
-        message: err.message,
-        responseData: err.response?.data,
-        hint:
-          "WEBFLOW_COLLECTION_ID must be the L+F Handbags CMS collection (e.g. 690f5df0104c97b31cf06b5e), not an old/deleted collection id.",
-      });
-      return;
+      const config = getWebflowConfig("luxury");
+      if (!config?.collectionId || !config?.token) {
+        webflowLog("warn", {
+          event: "luxury_item_index.skip",
+          reason: "missing WEBFLOW_COLLECTION_ID or WEBFLOW_TOKEN",
+        });
+        luxuryItemIndex = null;
+        luxuryItemIndexLoadedAt = 0;
+        return null;
+      }
+      await loadLuxuryCmsGalleryImageFieldSlugs();
+      const byShopifyId = new Map();
+      const bySlug = new Map();
+      const byUrl = new Map();
+      let offset = 0;
+      const limit = 100;
+      while (true) {
+        const url = `https://api.webflow.com/v2/collections/${config.collectionId}/items?limit=${limit}&offset=${offset}`;
+        let resp;
+        try {
+          resp = await axios.get(url, {
+            headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
+          });
+        } catch (err) {
+          luxuryItemIndex = null;
+          luxuryItemIndexLoadedAt = 0;
+          webflowLog("error", {
+            event: "luxury_item_index.load_failed",
+            collectionId: config.collectionId,
+            offset,
+            status: err.response?.status ?? null,
+            message: err.message,
+            responseData: err.response?.data,
+            hint:
+              "WEBFLOW_COLLECTION_ID must be the L+F Handbags CMS collection (e.g. 690f5df0104c97b31cf06b5e), not an old/deleted collection id.",
+          });
+          return null;
+        }
+        const items = resp.data?.items ?? [];
+        for (const item of items) {
+          const fd = item.fieldData || {};
+          const wfId = fd["shopify-product-id"] ? String(fd["shopify-product-id"]) : null;
+          const wfUrl = fd["shopify-url"] ? String(fd["shopify-url"]).trim() : null;
+          const wfSlug = (fd["slug"] || fd["shopify-slug-2"]) ? String(fd["slug"] || fd["shopify-slug-2"]).trim() : null;
+          if (wfId) byShopifyId.set(wfId, item);
+          if (wfUrl) byUrl.set(wfUrl, item);
+          if (wfSlug) bySlug.set(wfSlug, item);
+        }
+        if (items.length < limit) break;
+        offset += limit;
+      }
+      luxuryItemIndex = { byShopifyId, bySlug, byUrl, complete: true };
+      luxuryItemIndexLoadedAt = Date.now();
+      webflowLog("info", { event: "luxury_item_index.loaded", count: byShopifyId.size });
+      return luxuryItemIndex;
+    } finally {
+      luxuryItemIndexInflight = null;
     }
-    const items = resp.data?.items ?? [];
-    for (const item of items) {
-      const fd = item.fieldData || {};
-      const wfId = fd["shopify-product-id"] ? String(fd["shopify-product-id"]) : null;
-      const wfUrl = fd["shopify-url"] ? String(fd["shopify-url"]).trim() : null;
-      const wfSlug = (fd["slug"] || fd["shopify-slug-2"]) ? String(fd["slug"] || fd["shopify-slug-2"]).trim() : null;
-      if (wfId) byShopifyId.set(wfId, item);
-      if (wfUrl) byUrl.set(wfUrl, item);
-      if (wfSlug) bySlug.set(wfSlug, item);
-    }
-    if (items.length < limit) break;
-    offset += limit;
-  }
-  luxuryItemIndex = { byShopifyId, bySlug, byUrl, complete: true };
-  webflowLog("info", { event: "luxury_item_index.loaded", count: byShopifyId.size });
+  })();
+  return luxuryItemIndexInflight;
 }
 
+
+/** Normalize product name for index
 /** Normalize product name for index (so we can find by name and avoid duplicate creates). */
 function normalizeProductNameForIndex(name) {
-  return (name ?? "")
-    .trim()
-    .replace(/\s*\(\s*No Longer Available\s*\)\s*$/i, "")
-    .toLowerCase()
-    .replace(/\s+/g, " ");
+  return stripNoLongerAvailableSuffix(name).toLowerCase().replace(/\s+/g, " ");
 }
 
-/** Pre-load Furniture products once per sync → O(1) lookup (CMS collection by default; ecommerce when opted in). */
-async function loadFurnitureProductIndex() {
-  const config = getWebflowConfig("furniture");
-  if (!config?.token) return;
-  const byShopifyId = new Map();
-  const bySlug = new Map();
-  const byName = new Map();
-  const byUrl = new Map();
-  let offset = 0;
-  const limit = 100;
-
-  if (furnitureUsesEcommerceApi(config)) {
-    while (true) {
-      const url = `https://api.webflow.com/v2/sites/${config.siteId}/products?limit=${limit}&offset=${offset}`;
-      const resp = await axios.get(url, {
-        headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
-      });
-      const raw = resp.data?.products ?? resp.data?.items ?? [];
-      const list = Array.isArray(raw) ? raw : [];
-      for (const listItem of list) {
-        const product = listItem.product ?? listItem;
-        const skus = listItem.skus ?? product.skus ?? [];
-        const fd = product.fieldData || {};
-        const wfId = fd["shopify-product-id"] ? String(fd["shopify-product-id"]) : null;
-        const wfSlug = (fd["slug"] || fd["shopify-slug-2"]) ? String(fd["slug"] || fd["shopify-slug-2"]).trim() : null;
-        const wfName = fd.name ?? product.name;
-        const entry = { ...product, skus };
-        if (wfId) byShopifyId.set(wfId, entry);
-        if (wfSlug) bySlug.set(wfSlug, entry);
-        const nameKey = normalizeProductNameForIndex(wfName);
-        if (nameKey && !byName.has(nameKey)) byName.set(nameKey, entry);
-      }
-      if (list.length < limit) break;
-      offset += limit;
-    }
-    furnitureProductIndex = { byShopifyId, bySlug, byName, complete: true };
-    webflowLog("info", { event: "furniture_product_index.loaded", mode: "ecommerce", count: byShopifyId.size, byName: byName.size });
-    return;
+/** Pre-load Furniture products once → O(1) lookup. Shared across webhooks with TTL. */
+async function loadFurnitureProductIndex({ force = false } = {}) {
+  const now = Date.now();
+  if (
+    !force &&
+    furnitureProductIndex?.complete &&
+    now - furnitureProductIndexLoadedAt < WEBFLOW_INDEX_TTL_MS
+  ) {
+    return furnitureProductIndex;
   }
+  if (furnitureProductIndexInflight) return furnitureProductIndexInflight;
 
-  if (!config.collectionId) return;
-  while (true) {
-    const url = `https://api.webflow.com/v2/collections/${config.collectionId}/items?limit=${limit}&offset=${offset}`;
-    let resp;
+  furnitureProductIndexInflight = (async () => {
     try {
-      resp = await axios.get(url, {
-        headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
-      });
-    } catch (err) {
-      furnitureProductIndex = null;
-      webflowLog("error", {
-        event: "furniture_product_index.load_failed",
-        collectionId: config.collectionId,
-        offset,
-        status: err.response?.status ?? null,
-        message: err.message,
-        responseData: err.response?.data,
-      });
-      return;
+      const config = getWebflowConfig("furniture");
+      if (!config?.token) return null;
+      const byShopifyId = new Map();
+      const bySlug = new Map();
+      const byName = new Map();
+      const byUrl = new Map();
+      let offset = 0;
+      const limit = 100;
+
+      if (furnitureUsesEcommerceApi(config)) {
+        while (true) {
+          const url = `https://api.webflow.com/v2/sites/${config.siteId}/products?limit=${limit}&offset=${offset}`;
+          const resp = await axios.get(url, {
+            headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
+          });
+          const raw = resp.data?.products ?? resp.data?.items ?? [];
+          const list = Array.isArray(raw) ? raw : [];
+          for (const listItem of list) {
+            const product = listItem.product ?? listItem;
+            const skus = listItem.skus ?? product.skus ?? [];
+            const fd = product.fieldData || {};
+            const wfId = fd["shopify-product-id"] ? String(fd["shopify-product-id"]) : null;
+            const wfSlug = (fd["slug"] || fd["shopify-slug-2"]) ? String(fd["slug"] || fd["shopify-slug-2"]).trim() : null;
+            const wfName = fd.name ?? product.name;
+            const entry = { ...product, skus };
+            if (wfId) byShopifyId.set(wfId, entry);
+            if (wfSlug) bySlug.set(wfSlug, entry);
+            const nameKey = normalizeProductNameForIndex(wfName);
+            if (nameKey && !byName.has(nameKey)) byName.set(nameKey, entry);
+          }
+          if (list.length < limit) break;
+          offset += limit;
+        }
+        furnitureProductIndex = { byShopifyId, bySlug, byName, complete: true };
+        furnitureProductIndexLoadedAt = Date.now();
+        webflowLog("info", { event: "furniture_product_index.loaded", mode: "ecommerce", count: byShopifyId.size, byName: byName.size });
+        return furnitureProductIndex;
+      }
+
+      if (!config.collectionId) return null;
+      while (true) {
+        const url = `https://api.webflow.com/v2/collections/${config.collectionId}/items?limit=${limit}&offset=${offset}`;
+        let resp;
+        try {
+          resp = await axios.get(url, {
+            headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
+          });
+        } catch (err) {
+          furnitureProductIndex = null;
+          furnitureProductIndexLoadedAt = 0;
+          webflowLog("error", {
+            event: "furniture_product_index.load_failed",
+            collectionId: config.collectionId,
+            offset,
+            status: err.response?.status ?? null,
+            message: err.message,
+            responseData: err.response?.data,
+          });
+          return null;
+        }
+        const items = resp.data?.items ?? [];
+        for (const item of items) {
+          const fd = item.fieldData || {};
+          const wfId = fd["shopify-product-id"] ? String(fd["shopify-product-id"]) : null;
+          const wfUrl = fd["shopify-url"] ? String(fd["shopify-url"]).trim() : null;
+          const wfSlug = (fd["slug"] || fd["shopify-slug-2"]) ? String(fd["slug"] || fd["shopify-slug-2"]).trim() : null;
+          if (wfId) byShopifyId.set(wfId, item);
+          if (wfUrl) byUrl.set(wfUrl, item);
+          if (wfSlug) bySlug.set(wfSlug, item);
+          const nameKey = normalizeProductNameForIndex(fd.name);
+          if (nameKey && !byName.has(nameKey)) byName.set(nameKey, item);
+        }
+        if (items.length < limit) break;
+        offset += limit;
+      }
+      furnitureProductIndex = { byShopifyId, bySlug, byName, byUrl, complete: true };
+      furnitureProductIndexLoadedAt = Date.now();
+      webflowLog("info", { event: "furniture_product_index.loaded", mode: "cms", count: byShopifyId.size, byName: byName.size });
+      return furnitureProductIndex;
+    } finally {
+      furnitureProductIndexInflight = null;
     }
-    const items = resp.data?.items ?? [];
-    for (const item of items) {
-      const fd = item.fieldData || {};
-      const wfId = fd["shopify-product-id"] ? String(fd["shopify-product-id"]) : null;
-      const wfUrl = fd["shopify-url"] ? String(fd["shopify-url"]).trim() : null;
-      const wfSlug = (fd["slug"] || fd["shopify-slug-2"]) ? String(fd["slug"] || fd["shopify-slug-2"]).trim() : null;
-      if (wfId) byShopifyId.set(wfId, item);
-      if (wfUrl) byUrl.set(wfUrl, item);
-      if (wfSlug) bySlug.set(wfSlug, item);
-      const nameKey = normalizeProductNameForIndex(fd.name);
-      if (nameKey && !byName.has(nameKey)) byName.set(nameKey, item);
-    }
-    if (items.length < limit) break;
-    offset += limit;
-  }
-  furnitureProductIndex = { byShopifyId, bySlug, byName, byUrl, complete: true };
-  webflowLog("info", { event: "furniture_product_index.loaded", mode: "cms", count: byShopifyId.size, byName: byName.size });
+  })();
+  return furnitureProductIndexInflight;
 }
 
-/** Pre-load Furniture SKUs by product ID once per sync → O(1) lookup. */
-async function loadFurnitureSkuIndex() {
-  const config = getWebflowConfig("furniture");
-  if (!config?.skuCollectionId || !config?.token) return;
-  const byProductId = new Map();
-  let offset = 0;
-  const limit = 100;
-  while (true) {
-    const url = `https://api.webflow.com/v2/collections/${config.skuCollectionId}/items?limit=${limit}&offset=${offset}`;
-    const resp = await axios.get(url, {
-      headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
-    });
-    const items = resp.data?.items ?? [];
-    for (const item of items) {
-      const productRef = item.fieldData?.product;
-      if (productRef) byProductId.set(String(productRef), item);
-    }
-    if (items.length < limit) break;
-    offset += limit;
+/** Pre-load Furniture SKUs by product ID once → O(1) lookup. Shared across webhooks with TTL. */
+let furnitureSkuIndexLoadedAt = 0;
+let furnitureSkuIndexInflight = null;
+
+async function loadFurnitureSkuIndex({ force = false } = {}) {
+  const now = Date.now();
+  if (!force && furnitureSkuIndex && now - furnitureSkuIndexLoadedAt < WEBFLOW_INDEX_TTL_MS) {
+    return furnitureSkuIndex;
   }
-  furnitureSkuIndex = byProductId;
-  webflowLog("info", { event: "furniture_sku_index.loaded", count: byProductId.size });
+  if (furnitureSkuIndexInflight) return furnitureSkuIndexInflight;
+
+  furnitureSkuIndexInflight = (async () => {
+    try {
+      const config = getWebflowConfig("furniture");
+      if (!config?.skuCollectionId || !config?.token) return null;
+      const byProductId = new Map();
+      let offset = 0;
+      const limit = 100;
+      while (true) {
+        const url = `https://api.webflow.com/v2/collections/${config.skuCollectionId}/items?limit=${limit}&offset=${offset}`;
+        const resp = await axios.get(url, {
+          headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
+        });
+        const items = resp.data?.items ?? [];
+        for (const item of items) {
+          const productRef = item.fieldData?.product;
+          if (productRef) byProductId.set(String(productRef), item);
+        }
+        if (items.length < limit) break;
+        offset += limit;
+      }
+      furnitureSkuIndex = byProductId;
+      furnitureSkuIndexLoadedAt = Date.now();
+      webflowLog("info", { event: "furniture_sku_index.loaded", count: byProductId.size });
+      return furnitureSkuIndex;
+    } finally {
+      furnitureSkuIndexInflight = null;
+    }
+  })();
+  return furnitureSkuIndexInflight;
 }
 
 /** Ecommerce category must be an ItemRef (Webflow collection item ID). Uses Webflow Categories if loaded; else env vars. */
@@ -5838,6 +5953,14 @@ async function findExistingWebflowItemByShopifyUrl(config, shopifyUrl) {
     });
     return hit;
   }
+  if (itemIndex?.complete) {
+    webflowLog("info", {
+      event: "match_scan.url_index_miss",
+      shopifyUrl: shopifyUrlNorm,
+      message: "Warm index fully loaded; skipping live URL scan",
+    });
+    return null;
+  }
 
   let offset = 0;
   const limit = 100;
@@ -5895,6 +6018,14 @@ async function findExistingWebflowItemBySlug(config, slug) {
       source: "index",
     });
     return hit;
+  }
+  if (itemIndex?.complete) {
+    webflowLog("info", {
+      event: "match_scan.slug_index_miss",
+      slug: slugNorm,
+      message: "Warm index fully loaded; skipping live slug scan",
+    });
+    return null;
   }
 
   let offset = 0;
@@ -9496,7 +9627,8 @@ async function syncSingleProductCore(product, cache, options = {}) {
             shopifyProductId,
             slug,
             createConfig,
-            name
+            name,
+            { forceLiveScan: true }
           );
           if (existingBySlug?.id) {
             newId = existingBySlug.id;
@@ -9558,6 +9690,14 @@ async function syncSingleProductCore(product, cache, options = {}) {
       vertical: detectedVertical,
       ...cacheSyncMeta(product, cacheEntry, qty),
     };
+    if (detectedVertical === "furniture" && furnitureUsesEcommerceApi(createConfig) && newId) {
+      registerFurnitureEcommerceProductInIndex({
+        id: newId,
+        fieldData: productFieldData,
+      });
+    } else if (detectedVertical === "luxury" || (detectedVertical === "furniture" && furnitureUsesCmsProducts(createConfig))) {
+      registerCmsItemInRunIndex(createConfig, { id: newId, fieldData: productFieldData });
+    }
     if (detectedVertical === "furniture") {
       await syncGoogleMerchantFurnitureFromShopifyProduct(product, soldNow ? "out of stock" : "in stock", "furniture_create", cache);
     }
@@ -9608,9 +9748,7 @@ async function runWebhookSingleProductSync(shopifyProductId, triggerPath) {
   syncStartTime = Date.now();
   try {
     await loadFurnitureCategoryMap();
-    luxuryItemIndex = null;
-    furnitureProductIndex = null;
-    furnitureSkuIndex = null;
+    // Reuse warm indexes across webhooks (TTL); coalesce concurrent loads.
     await Promise.all([
       loadLuxuryItemIndex(),
       loadFurnitureProductIndex(),
@@ -9662,9 +9800,6 @@ async function runWebhookSingleProductSync(shopifyProductId, triggerPath) {
     flushGoogleMerchantPriceState();
     syncRequestId = null;
     syncStartTime = null;
-    luxuryItemIndex = null;
-    furnitureProductIndex = null;
-    furnitureSkuIndex = null;
   }
 }
 
@@ -10069,11 +10204,8 @@ function shopifyAdminGraphqlListingUrl() {
 
 /** Loosen punctuation so "Table-79X39X43H" and "Table 79 x 39" score the same for listing match. */
 function normalizeProductTitleForLooseMatch(name) {
-  let s = String(name ?? "")
-    .trim()
+  let s = stripNoLongerAvailableSuffix(name)
     .toLowerCase()
-    // Sold listings append this in Webflow — ignore for freight Find Item matching.
-    .replace(/\s*\(\s*no longer available\s*\)\s*$/i, "")
     .replace(/&/g, " and ")
     .replace(/[–—]/g, "-");
   s = s.replace(/[-_/]+/g, " ");
@@ -11934,7 +12066,7 @@ function mapLuxuryListingSearchHit(hit) {
   const slug = String(
     itemFd.slug || fd.slug || hit.item?.slug || fd["shopify-slug-2"] || ""
   ).trim();
-  const title = String(fd.name || "").trim();
+  const title = stripNoLongerAvailableSuffix(fd.name || "");
   const price = formatLuxuryListingPrice(fd.price);
   const description = stripListingDescriptionHtml(String(fd.description || ""));
   const images = luxuryFieldDataImageUrls(fd);
@@ -11983,7 +12115,7 @@ async function mapFurnitureListingSearchHit(hit, config) {
     }
   }
   const slug = String(fd.slug || fd["shopify-slug-2"] || "").trim();
-  const title = String(fd.name || product.name || "").trim();
+  const title = stripNoLongerAvailableSuffix(fd.name || product.name || "");
   const description = stripListingDescriptionHtml(String(fd["main-description-2"] || fd.description || ""));
   const cents = webflowSkuMoneyFieldToCents(skuFd?.price);
   const price = formatSkuCentsAsListingPrice(cents);
@@ -12313,6 +12445,7 @@ app.get("/api/listing", async (req, res) => {
     if (weight == null) missing_fields.push("weight");
     if (freightClass == null || freightClass === "") missing_fields.push("freight_class");
 
+    const sold = Boolean(listing.sold) || listingLooksSold(listing);
     const freightListing = {
       title: listing.title || "",
       width: width ?? null,
@@ -12330,6 +12463,7 @@ app.get("/api/listing", async (req, res) => {
       dims_are: setCount > 1 ? "per_piece" : "as_listed",
       weight_is: setCount > 1 ? "total_for_set" : "as_listed",
       missing_fields,
+      sold,
     };
 
     return res.json({
@@ -12344,6 +12478,7 @@ app.get("/api/listing", async (req, res) => {
       handle: listing.handle,
       productUrl: listing.productUrl,
       shopifyOnlineUrl: listing.shopifyOnlineUrl,
+      sold,
       vertical: listing.vertical,
       vendor: listing.vendor != null && String(listing.vendor).trim() !== "" ? String(listing.vendor).trim() : null,
       luxuryGoodsCategory:
@@ -13093,7 +13228,7 @@ app.post("/api/listing-blurb", async (req, res) => {
   ]);
   const moverAssistEligible = heavyByWeight || largeByKeywords;
   const moverAssistLine =
-    "The movers we use charge $95/hr and are a great group, and we can help set delivery up for you.";
+    "The movers we use charge ($95/hr) and are a great group, and we can help set delivery up for you.";
   let audienceLane = "general_local";
   if (
     hasAny([
@@ -13482,8 +13617,7 @@ app.post("/google/furniture/full-push", async (req, res) => {
   try {
     const products = await fetchAllShopifyProducts();
     const cache = loadCache();
-    furnitureProductIndex = null;
-    await loadFurnitureProductIndex();
+    await loadFurnitureProductIndex({ force: true });
     const requestedLimit = Number(req.body?.limit);
     const maxItems =
       Number.isFinite(requestedLimit) && requestedLimit > 0
@@ -13552,14 +13686,11 @@ async function executeSyncAll({ reclassifyAll = false, reclassifyIdsSet = null, 
 
     await loadFurnitureCategoryMap();
 
-    // Pre-load Webflow indexes once → O(1) lookups instead of N×page API scans per product
-    luxuryItemIndex = null;
-    furnitureProductIndex = null;
-    furnitureSkuIndex = null;
+    // Fresh indexes for full sync; subsequent webhooks reuse them via TTL.
     await Promise.all([
-      loadLuxuryItemIndex(),
-      loadFurnitureProductIndex(),
-      loadFurnitureSkuIndex(),
+      loadLuxuryItemIndex({ force: true }),
+      loadFurnitureProductIndex({ force: true }),
+      loadFurnitureSkuIndex({ force: true }),
     ]);
 
     let created = 0,
@@ -13747,9 +13878,6 @@ async function executeSyncAll({ reclassifyAll = false, reclassifyIdsSet = null, 
     throw err;
   } finally {
     flushGoogleMerchantPriceState();
-    luxuryItemIndex = null;
-    furnitureProductIndex = null;
-    furnitureSkuIndex = null;
   }
 }
 
@@ -13859,13 +13987,10 @@ app.post("/sync-by-ids", async (req, res) => {
   try {
     await loadFurnitureCategoryMap();
     furnitureEcProductTypeAllowlist = null;
-    luxuryItemIndex = null;
-    furnitureProductIndex = null;
-    furnitureSkuIndex = null;
     await Promise.all([
-      loadLuxuryItemIndex(),
-      loadFurnitureProductIndex(),
-      loadFurnitureSkuIndex(),
+      loadLuxuryItemIndex({ force: true }),
+      loadFurnitureProductIndex({ force: true }),
+      loadFurnitureSkuIndex({ force: true }),
       loadFurnitureEcProductTypeAllowlist(),
     ]);
     const cache = loadCache();
@@ -13946,9 +14071,6 @@ app.post("/sync-by-ids", async (req, res) => {
   } finally {
     flushGoogleMerchantPriceState();
     syncRequestId = null;
-    luxuryItemIndex = null;
-    furnitureProductIndex = null;
-    furnitureSkuIndex = null;
     syncStartTime = null;
   }
 });

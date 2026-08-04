@@ -5,6 +5,18 @@
 
   const API_BASE="https://webflow-sync-server.onrender.com";
   const LOOKUP_URL=API_BASE+"/api/listing";
+  const SHOP_ALL_URL="https://www.lostandfoundresale.com/all-for-sale";
+  const stripNoLongerAvailable=(name)=>String(name??"").replace(/\s*\(\s*No Longer Available\s*\)\s*/gi," ").replace(/\s*\(\s*SOLD\s*\)\s*/gi," ").replace(/\s+/g," ").trim();
+  const listingLooksSold=(item)=>{
+    const flag=item?.sold??item?.is_sold??item?.isSold;
+    if(flag===true||flag===1||String(flag).toLowerCase()==="true")return true;
+    const t=String(item?.title||"");
+    return /\(\s*No Longer Available\s*\)/i.test(t)||/\(\s*SOLD\s*\)/i.test(t);
+  };
+  const customerFacingTitle=(item,fallback="Item")=>{
+    const base=stripNoLongerAvailable(item?.title||fallback)||fallback;
+    return listingLooksSold(item)?base+" (SOLD)":base;
+  };
   const PREVIEW_URL=API_BASE+"/api/freight-quote/preview";
   const SUBMIT_URL=API_BASE+"/api/freight-quote";
   const ZIP_URL=API_BASE+"/api/freight-zip";
@@ -403,6 +415,7 @@
         product_url:$(".lf-url",node)?.value||"",
         image_url:$(".lf-image-url",node)?.value||"",
         source:$(".lf-source",node)?.value||"manual",
+        sold:$(".lf-sold",node)?.value==="1",
         freight_class:$(".lf-class",node)?.value||"",
         non_stackable:!!$(".lf-nonstack",node)?.checked,
         flip_stack_claimed:$(".lf-flip-stack:checked",node)?.value||""
@@ -1181,6 +1194,8 @@
     $(".lf-price-input",node).value=prefill.price||"";
     $(".lf-url",node).value=prefill.product_url||"";
     $(".lf-source",node).value=prefill.source||"manual";
+    if($(".lf-image-url",node))$(".lf-image-url",node).value=prefill.image_url||"";
+    if($(".lf-sold",node))$(".lf-sold",node).value=listingLooksSold(prefill)?"1":"0";
 
     const auto=classify(title.value);
     const initialClass=prefill.freight_class!==undefined&&prefill.freight_class!==null
@@ -1248,7 +1263,7 @@
     const flip=nationwide?($(".lf-flip-stack:checked",node)?.value||""):"";
     const item={
       source:pickup?"manual":($(".lf-source",node).value||"manual"),
-      title:$(".lf-title",node).value.trim(),
+      title:stripNoLongerAvailable($(".lf-title",node).value.trim()),
       width:num($(".lf-width",node).value),
       depth:num($(".lf-depth",node).value),
       height:num($(".lf-height",node).value),
@@ -1257,6 +1272,7 @@
       price:pickup?null:num($(".lf-price-input",node).value),
       product_url:pickup?"":$(".lf-url",node).value.trim(),
       image_url:pickup?"":($(".lf-image-url",node)?.value||"").trim(),
+      sold:pickup?false:($(".lf-sold",node)?.value==="1"),
       freight_class:$(".lf-class",node).value===""?null:num($(".lf-class",node).value),
       non_stackable:nationwide?$(".lf-nonstack",node).checked:false,
       flip_stack_claimed:nationwide&&qty>=2?flip:""
@@ -1329,14 +1345,17 @@
     if((!width||!depth||!height)&&(d.title||d.name)){
       applyPartial(parseThree(d.title||d.name));
     }
+    const rawTitle=d.title||d.name||d.product_name||"";
+    const sold=listingLooksSold({title:rawTitle,sold:d.sold??raw?.sold});
     return {
-      title:d.title||d.name||d.product_name||"",
+      title:stripNoLongerAvailable(rawTitle),
       width:num(width),depth:num(depth),height:num(height),
       weight:num(d.weight||d.estimated_weight||d.weight_lbs),
       price:num(d.price||d.product_price),
       product_url:d.url||d.link||d.product_url||d.webflow_url||raw?.productUrl||"",
       image_url:d.image_url||d.image||d.primary_image||(Array.isArray(raw?.images)&&raw.images[0])||"",
-      freight_class:d.freight_class??d.freightClass??null
+      freight_class:d.freight_class??d.freightClass??null,
+      sold
     };
   }
 
@@ -1351,7 +1370,7 @@
       if(!res.ok)throw new Error(raw.error||raw.message||"Listing not found.");
       const data=extractListing(raw);
       if(!data.width&&!data.depth&&!data.height&&!data.weight)throw new Error("The listing was found, but dimensions or weight were not returned. Please complete them manually.");
-      if(data.title)$(".lf-title",node).value=data.title;
+      if(data.title)$(".lf-title",node).value=stripNoLongerAvailable(data.title);
       if(data.width)$(".lf-width",node).value=data.width;
       if(data.depth)$(".lf-depth",node).value=data.depth;
       if(data.height)$(".lf-height",node).value=data.height;
@@ -1359,6 +1378,7 @@
       if(data.price)$(".lf-price-input",node).value=data.price;
       if(data.product_url)$(".lf-url",node).value=data.product_url;
       if($(".lf-image-url",node))$(".lf-image-url",node).value=data.image_url||"";
+      if($(".lf-sold",node))$(".lf-sold",node).value=data.sold?"1":"0";
       $(".lf-source",node).value="listing";
       const c=classify(data.title||title);
       if(data.freight_class!==undefined&&data.freight_class!==null&&data.freight_class!==""){
@@ -1543,26 +1563,33 @@
       ?'<p class="lf-buy-tax-tip" style="margin:8px 0 0;font-size:13px;line-height:1.45;color:#333;">'+escapeHtml(opts.buyTip)+"</p>"
       :"";
     const cards=(items||[]).map(i=>{
-      const title=escapeHtml(i.title||"View item");
+      const sold=listingLooksSold(i);
+      const cleanTitle=stripNoLongerAvailable(i.title||"View item");
+      const titleBase=escapeHtml(cleanTitle);
       const dims=[i.width,i.depth,i.height].every(v=>v!=null&&v!=="")
         ?escapeHtml(String(i.width)+"X"+String(i.depth)+"X"+String(i.height)+"H")
         :"";
-      const titleLine=dims?title+" · "+dims:title;
+      const titleLine=dims?titleBase+" · "+dims:titleBase;
       const rawUrl=String(i.product_url||"").trim();
-      const url=escapeHtml(rawUrl||shopSearchUrl(i.title||""));
+      const href=sold?SHOP_ALL_URL:(rawUrl||shopSearchUrl(cleanTitle));
+      const url=escapeHtml(href);
+      const cta=sold?"Shop All":(rawUrl?"Buy Now":"Find Item");
       const meta=[
         i.weight!=null?escapeHtml(i.weight)+" lb":null,
         i.price?money(i.price):null
       ].filter(Boolean).join(" · ");
+      // Sold layout: keep item + size, then (SOLD), then Shop All (links to all-for-sale).
+      const soldLine=sold?'<p class="lf-buy-card-sold">(SOLD)</p><a class="lf-buy-card-shop-all" href="'+escapeHtml(SHOP_ALL_URL)+'" target="_blank" rel="noopener">Shop All</a>':"";
       const img=i.image_url
-        ?'<a class="lf-buy-card-img" href="'+url+'" target="_blank" rel="noopener"><img src="'+escapeHtml(i.image_url)+'" alt="'+title+'" loading="lazy"></a>'
+        ?'<a class="lf-buy-card-img" href="'+url+'" target="_blank" rel="noopener"><img src="'+escapeHtml(i.image_url)+'" alt="'+titleBase+'" loading="lazy"></a>'
         :'<div class="lf-buy-card-img lf-buy-card-img-empty" aria-hidden="true"></div>';
       return '<div class="lf-buy-card">'+img+
         '<div class="lf-buy-card-body">'+
         '<p class="lf-buy-card-title">'+titleLine+"</p>"+
         (meta?'<p class="lf-buy-card-meta">'+meta+"</p>":"")+
+        soldLine+
         "</div>"+
-        '<a class="lf-buy-card-cta" href="'+url+'" target="_blank" rel="noopener">'+(rawUrl?"Buy Now":"Find Item")+'</a>'+
+        '<a class="lf-buy-card-cta" href="'+url+'" target="_blank" rel="noopener">'+cta+'</a>'+
         "</div>";
     }).join("");
     if(!cards&&!addrHtml&&!preferredHtml)return"";
@@ -1606,10 +1633,10 @@
         const bits=[];
         if(setCount>1)bits.push("Set of "+setCount);
         if(qty>1)bits.push("Qty "+qty);
-        return '<li><strong>'+escapeHtml(i.title||("Item "+(idx+1)))+'</strong>: '+i.width+'" × '+i.depth+'" × '+i.height+'" · '+i.weight+' lb'+(bits.length?' · '+bits.join(' · '):'')+'</li>';
+        return '<li><strong>'+escapeHtml(customerFacingTitle(i,"Item "+(idx+1)))+'</strong>: '+i.width+'" × '+i.depth+'" × '+i.height+'" · '+i.weight+' lb'+(bits.length?' · '+bits.join(' · '):'')+'</li>';
       }
       const classText=i.pallet.freight_class===null?"Class to be confirmed":"Class "+i.pallet.freight_class;
-      return '<li><strong>'+escapeHtml(i.title||("Item "+(idx+1)))+'</strong>: '+i.width+'" × '+i.depth+'" × '+i.height+'" · '+i.weight+' lb · Freight '+i.pallet.width+'" × '+i.pallet.depth+'" × '+i.pallet.height+'" · '+i.pallet.weight+' lb · '+classText+(i.pallet.non_stackable?" · Non-stackable":"")+'</li>';
+      return '<li><strong>'+escapeHtml(customerFacingTitle(i,"Item "+(idx+1)))+'</strong>: '+i.width+'" × '+i.depth+'" × '+i.height+'" · '+i.weight+' lb · Freight '+i.pallet.width+'" × '+i.pallet.depth+'" × '+i.pallet.height+'" · '+i.pallet.weight+' lb · '+classText+(i.pallet.non_stackable?" · Non-stackable":"")+'</li>';
     }).join("");
 
     const liftgateLine=path==="nationwide"
@@ -1696,7 +1723,7 @@
         preferred:payload.access?.preferred_days_windows||""
       });
       const oversizeHtml=oversize
-        ?'<p class="lf-estimate-banner warn"><strong>Size-based 3-person estimate.</strong> This quote assumes three people may be needed because at least one item is 299+ lb and over 72&quot; high, or 450+ lb — even if you did not select extra crew. Final rates are often lower if the delivery team confirms two people are enough (typically closer to our $95/hour rate). <strong>Please confirm with the delivery team before scheduling. This is an estimate only.</strong></p>'
+        ?'<p class="lf-estimate-banner warn"><strong>Size-based 3-person estimate.</strong> This quote assumes three people may be needed because at least one item is 299+ lb and over 72&quot; high, or 450+ lb — even if you did not select extra crew. Final rates are often lower if the delivery team confirms two people are enough (typically closer to our ($95/hr) rate). <strong>Please confirm with the delivery team before scheduling. This is an estimate only.</strong></p>'
         :"";
       const longHaulHtml=longHaul
         ?'<p class="lf-estimate-banner"><strong>Out of town callout (100+ mile round trip).</strong> Longer Arizona trips (like farther cities) can still work with our local truck, but confirm pricing before scheduling. This is an estimate only.</p>'

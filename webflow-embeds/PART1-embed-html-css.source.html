@@ -137,6 +137,8 @@ to remain visible inside the Webflow Designer.
 .lf-buy-card-body{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:3px;text-align:left}
 .lf-buy-card-title{margin:0;font-size:14px;font-weight:800;color:var(--lf-text);line-height:1.3;text-align:left}
 .lf-buy-card-meta{margin:0;font-size:12px;color:var(--lf-muted);line-height:1.35;text-align:left}
+.lf-buy-card-sold{margin:2px 0 0;font-size:12px;font-weight:800;letter-spacing:.04em;color:var(--lf-red);text-align:left}
+.lf-buy-card-shop-all{margin:2px 0 0;font-size:12px;font-weight:800;color:var(--lf-navy);text-decoration:underline;text-align:left}
 .lf-buy-card-cta{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;align-self:center;margin:0;padding:10px 16px;border-radius:8px;background:var(--lf-navy);color:#fff!important;font-size:13px;font-weight:800;text-decoration:none;letter-spacing:.02em;white-space:nowrap}
 .lf-buy-card-cta:hover{opacity:.92}
 @media screen and (max-width:640px){
@@ -1116,6 +1118,7 @@ legend.lf-heavy-prompt {
       <div class="lf-field"><label>Product link</label><input class="lf-url" type="url" placeholder="https://..."></div>
       <div class="lf-field"><label>Source</label><select class="lf-source"><option value="manual">Manual entry</option><option value="listing">Website lookup</option></select></div>
       <input class="lf-image-url" type="hidden" value="">
+      <input class="lf-sold" type="hidden" value="0">
     </div>
     <div class="lf-stack-ask" hidden>
       <fieldset class="lf-crew-extra" style="margin:10px 0 6px;border:0;padding:0;">
