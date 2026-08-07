@@ -10,8 +10,14 @@ import {
 import { generateConsignmentPdf } from "../lib/consignmentPdf.js";
 import { applyConsignmentCorsHeaders } from "../lib/consignmentCors.js";
 import { resolveConsignmentBrand } from "../lib/consignmentBrand.js";
-import { MAX_CONSIGNMENT_PHOTOS, MAX_UPLOAD_FILES, isHeavyConsignmentSubmission } from "../lib/consignmentLimits.js";
+import {
+  MAX_CONSIGNMENT_PHOTOS,
+  MAX_PRICING_ITEMS,
+  MAX_UPLOAD_FILES,
+  isHeavyConsignmentSubmission,
+} from "../lib/consignmentLimits.js";
 import { preparePhotoGroupsForConsignment } from "../lib/consignmentImageNormalize.js";
+import { expandConfidentMultiPieceItems } from "../lib/consignmentMultiPiece.js";
 import {
   archiveConsignmentIfNeeded,
   archiveConsignmentSubmission,
@@ -253,9 +259,27 @@ async function processConsignmentSubmission({ body, items, photoGroups, submitte
     }
   }
 
+  // When confident a form line is multiple distinct pieces, split for internal analysis only.
+  const expanded = expandConfidentMultiPieceItems(items, preparedPhotoGroups, {
+    maxItems: MAX_PRICING_ITEMS,
+  });
+  const analysisItems = expanded.items;
+  const analysisPhotoGroups = expanded.photoGroups;
+  if (expanded.splitCount > 0) {
+    processingWarnings.push(...expanded.notes);
+    console.log("[consignment] split multi-piece submission lines", {
+      originalItems: items.length,
+      analysisItems: analysisItems.length,
+      splitLines: expanded.splitCount,
+    });
+  }
+
   let pricingResults = null;
   if (!heavySubmission) {
-    const pricing = await runPricingSafe({ items, photoGroups: preparedPhotoGroups });
+    const pricing = await runPricingSafe({
+      items: analysisItems,
+      photoGroups: analysisPhotoGroups,
+    });
     pricingResults = pricing.pricingResults;
     if (pricing.pricingError) {
       processingWarnings.push(`Pricing analysis failed: ${pricing.pricingError}`);
@@ -272,8 +296,8 @@ async function processConsignmentSubmission({ body, items, photoGroups, submitte
   if (!heavySubmission) {
     pdfBuffer = await generateInternalPdfSafe({
       body,
-      items,
-      photoGroups: preparedPhotoGroups,
+      items: analysisItems,
+      photoGroups: analysisPhotoGroups,
       submittedAt,
       pricingResults,
     });
@@ -288,6 +312,7 @@ async function processConsignmentSubmission({ body, items, photoGroups, submitte
   const archiveContext = () => ({
     body,
     items,
+    analysisItems,
     photoGroups,
     submittedAt,
     photoFailures,
@@ -309,9 +334,10 @@ async function processConsignmentSubmission({ body, items, photoGroups, submitte
   const pdfFilename = buildPdfFilename(body.customerName);
   const emailPayload = buildConsignmentEmail({
     body,
-    items,
-    photoGroups: preparedPhotoGroups,
+    items: analysisItems,
+    photoGroups: analysisPhotoGroups,
     originalPhotoGroups: photoGroups,
+    originalItemCount: items.length,
     photoFailures,
     processingWarnings,
     pdfBuffer,
