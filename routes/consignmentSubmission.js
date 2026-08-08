@@ -18,6 +18,7 @@ import {
 } from "../lib/consignmentLimits.js";
 import { preparePhotoGroupsForConsignment } from "../lib/consignmentImageNormalize.js";
 import { expandConfidentMultiPieceItems } from "../lib/consignmentMultiPiece.js";
+import { hostConsignmentPhotosForLens, readHostedConsignmentPhoto } from "../lib/consignmentPhotoHost.js";
 import {
   archiveConsignmentIfNeeded,
   archiveConsignmentSubmission,
@@ -274,6 +275,18 @@ async function processConsignmentSubmission({ body, items, photoGroups, submitte
     });
   }
 
+  // Host photos publicly so Google Lens can reverse-search the actual image.
+  try {
+    const lensHost = hostConsignmentPhotosForLens(analysisPhotoGroups);
+    console.log("[consignment] hosted photos for Google Lens", lensHost);
+    if (lensHost.hosted === 0 && lensHost.failed > 0) {
+      processingWarnings.push("Google Lens photo links could not be created for this submission.");
+    }
+  } catch (lensErr) {
+    processingWarnings.push(`Google Lens photo hosting failed: ${lensErr?.message || lensErr}`);
+    console.warn("[consignment] lens photo host failed", lensErr?.message || lensErr);
+  }
+
   let pricingResults = null;
   if (!heavySubmission) {
     const pricing = await runPricingSafe({
@@ -501,6 +514,22 @@ async function processConsignmentSubmissionWithRetry(args, attempt = 1) {
 router.options("/consignment-submission", (req, res) => {
   applyConsignmentCorsHeaders(req, res);
   res.sendStatus(204);
+});
+
+/**
+ * GET /api/consignment-photo/:token
+ * Public image host for Google Lens reverse-image search (unguessable token).
+ */
+router.get("/consignment-photo/:token", (req, res) => {
+  const photo = readHostedConsignmentPhoto(req.params.token);
+  if (!photo?.buffer?.length) {
+    return res.status(404).type("text").send("Photo not found or expired.");
+  }
+  res.setHeader("Content-Type", photo.mimetype || "image/jpeg");
+  res.setHeader("Cache-Control", "public, max-age=86400");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+  return res.status(200).send(photo.buffer);
 });
 
 /**
