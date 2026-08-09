@@ -18,7 +18,12 @@ import {
 } from "../lib/consignmentLimits.js";
 import { preparePhotoGroupsForConsignment } from "../lib/consignmentImageNormalize.js";
 import { expandConfidentMultiPieceItems } from "../lib/consignmentMultiPiece.js";
-import { hostConsignmentPhotosForLens, readHostedConsignmentPhoto } from "../lib/consignmentPhotoHost.js";
+import {
+  buildGoogleLensUrlForImage,
+  getPublicBaseUrl,
+  hostConsignmentPhotosForLens,
+  readHostedConsignmentPhoto,
+} from "../lib/consignmentPhotoHost.js";
 import {
   archiveConsignmentIfNeeded,
   archiveConsignmentSubmission,
@@ -530,6 +535,25 @@ router.get("/consignment-photo/:token", (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
   return res.status(200).send(photo.buffer);
+});
+
+/**
+ * GET /api/consignment-lens/:token
+ * Short redirect into Google Lens with the hosted image URL (PDF-safe).
+ */
+router.get("/consignment-lens/:token", (req, res) => {
+  const token = String(req.params.token || "").trim();
+  const photo = readHostedConsignmentPhoto(token);
+  if (!photo?.buffer?.length) {
+    return res.status(404).type("text").send("Photo not found or expired.");
+  }
+  const imageUrl = `${getPublicBaseUrl()}/api/consignment-photo/${token}`;
+  const lensUrl = buildGoogleLensUrlForImage(imageUrl);
+  if (!lensUrl) {
+    return res.status(500).type("text").send("Could not build Google Lens link.");
+  }
+  res.setHeader("Cache-Control", "no-store");
+  return res.redirect(302, lensUrl);
 });
 
 /**
