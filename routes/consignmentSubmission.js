@@ -296,8 +296,9 @@ async function processConsignmentSubmission({ body, items, photoGroups, submitte
       });
       console.log("[consignment] Google Lens result screenshots", lensShots);
       if (lensShots.captured === 0 && lensShots.failed > 0) {
+        const detail = lensShots.reason ? ` (${lensShots.reason})` : "";
         processingWarnings.push(
-          "Google Lens result screenshots could not be captured (Chromium/Playwright may be missing on the server)."
+          `Google Lens result screenshots could not be captured${detail}.`
         );
       }
     } catch (shotErr) {
