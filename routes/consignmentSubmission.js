@@ -18,12 +18,8 @@ import {
 } from "../lib/consignmentLimits.js";
 import { preparePhotoGroupsForConsignment } from "../lib/consignmentImageNormalize.js";
 import { expandConfidentMultiPieceItems } from "../lib/consignmentMultiPiece.js";
-import {
-  buildGoogleLensUrlForImage,
-  getPublicBaseUrl,
-  hostConsignmentPhotosForLens,
-  readHostedConsignmentPhoto,
-} from "../lib/consignmentPhotoHost.js";
+import { hostConsignmentPhotosForLens, readHostedConsignmentPhoto, buildGoogleLensUrlForImage, getPublicBaseUrl } from "../lib/consignmentPhotoHost.js";
+import { captureLensScreenshotsForPhotoGroups } from "../lib/consignmentLensScreenshot.js";
 import {
   archiveConsignmentIfNeeded,
   archiveConsignmentSubmission,
@@ -290,6 +286,24 @@ async function processConsignmentSubmission({ body, items, photoGroups, submitte
   } catch (lensErr) {
     processingWarnings.push(`Google Lens photo hosting failed: ${lensErr?.message || lensErr}`);
     console.warn("[consignment] lens photo host failed", lensErr?.message || lensErr);
+  }
+
+  // Snapshot Google Lens visual results for the first photo of each item (for the PDF).
+  if (!heavySubmission) {
+    try {
+      const lensShots = await captureLensScreenshotsForPhotoGroups(analysisPhotoGroups, {
+        maxItems: Math.min(MAX_PRICING_ITEMS, 6),
+      });
+      console.log("[consignment] Google Lens result screenshots", lensShots);
+      if (lensShots.captured === 0 && lensShots.failed > 0) {
+        processingWarnings.push(
+          "Google Lens result screenshots could not be captured (Chromium/Playwright may be missing on the server)."
+        );
+      }
+    } catch (shotErr) {
+      processingWarnings.push(`Google Lens screenshots failed: ${shotErr?.message || shotErr}`);
+      console.warn("[consignment] lens screenshots failed", shotErr?.message || shotErr);
+    }
   }
 
   let pricingResults = null;
