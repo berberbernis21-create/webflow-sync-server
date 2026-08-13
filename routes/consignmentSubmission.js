@@ -19,7 +19,6 @@ import {
 import { preparePhotoGroupsForConsignment } from "../lib/consignmentImageNormalize.js";
 import { expandConfidentMultiPieceItems } from "../lib/consignmentMultiPiece.js";
 import { hostConsignmentPhotosForLens, readHostedConsignmentPhoto, buildGoogleLensUrlForImage, getPublicBaseUrl } from "../lib/consignmentPhotoHost.js";
-import { captureLensScreenshotsForPhotoGroups } from "../lib/consignmentLensScreenshot.js";
 import {
   archiveConsignmentIfNeeded,
   archiveConsignmentSubmission,
@@ -276,7 +275,7 @@ async function processConsignmentSubmission({ body, items, photoGroups, submitte
     });
   }
 
-  // Host photos publicly so Google Lens can reverse-search the actual image.
+  // Host photos publicly so Google Lens buttons can reverse-search the actual image.
   try {
     const lensHost = hostConsignmentPhotosForLens(analysisPhotoGroups);
     console.log("[consignment] hosted photos for Google Lens", lensHost);
@@ -286,32 +285,6 @@ async function processConsignmentSubmission({ body, items, photoGroups, submitte
   } catch (lensErr) {
     processingWarnings.push(`Google Lens photo hosting failed: ${lensErr?.message || lensErr}`);
     console.warn("[consignment] lens photo host failed", lensErr?.message || lensErr);
-  }
-
-  // Snapshot Google Lens visual results for the first photo of each item (for the PDF).
-  if (!heavySubmission) {
-    try {
-      const lensShots = await captureLensScreenshotsForPhotoGroups(analysisPhotoGroups, {
-        maxItems: Math.min(MAX_PRICING_ITEMS, 6),
-      });
-      console.log("[consignment] Google Lens result screenshots", lensShots);
-      if (lensShots.captured === 0 && lensShots.failed > 0) {
-        const reason = String(lensShots.reason || "");
-        if (/captcha|sorry/i.test(reason)) {
-          processingWarnings.push(
-            "Google Lens auto-screenshots were blocked by a CAPTCHA — use the Google Lens buttons on each photo (they still work)."
-          );
-        } else {
-          const detail = reason ? ` (${reason})` : "";
-          processingWarnings.push(
-            `Google Lens result screenshots could not be captured${detail}. Use the Google Lens buttons on each photo.`
-          );
-        }
-      }
-    } catch (shotErr) {
-      processingWarnings.push(`Google Lens screenshots failed: ${shotErr?.message || shotErr}`);
-      console.warn("[consignment] lens screenshots failed", shotErr?.message || shotErr);
-    }
   }
 
   let pricingResults = null;
