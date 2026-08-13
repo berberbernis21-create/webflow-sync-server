@@ -174,6 +174,11 @@ Also paste INSIDE-HEAD-styles.html in Inside <head>.
             </p>
           </div>
 
+          <div id="lf-contact-kept-banner" class="lf-contact-kept-banner">
+            <strong>Your contact info is still saved.</strong>
+            Starting at item details for a new submission. Tap <em>Back</em> anytime to review or edit your info.
+          </div>
+
           <div id="lf-after-save-helper" class="lf-after-save-helper">
             <strong>Item saved. Add more items before you continue.</strong>
             You can keep adding items to this same submission. Add up to 10 items and up to 30 photos total.
@@ -1259,6 +1264,11 @@ Also paste INSIDE-HEAD-styles.html in Inside <head>.
   .lf-confirmation-link {
     text-decoration: none;
     display: inline-block;
+    border: none;
+    cursor: pointer;
+    font: inherit;
+    text-align: center;
+    box-sizing: border-box;
   }
 
   @media (max-width: 920px) {
@@ -1660,6 +1670,28 @@ Also paste INSIDE-HEAD-styles.html in Inside <head>.
     margin-bottom: 6px;
     color: #1f2ca5;
     font-size: 17px;
+  }
+
+  .lf-contact-kept-banner {
+    display: none;
+    margin: 0 0 18px;
+    padding: 14px 16px;
+    border: 1px solid #9cb8af;
+    border-left: 4px solid #1a3c34;
+    background: #e7f0ed;
+    color: #1a3c34;
+    font-size: 15px;
+    line-height: 1.5;
+  }
+
+  .lf-contact-kept-banner.is-visible {
+    display: block;
+  }
+
+  .lf-contact-kept-banner strong {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 16px;
   }
 
   .lf-floating-add-more {

@@ -323,9 +323,9 @@ Requires PART1 embed on the page and INSIDE-HEAD-styles in <head>.
               </p>
             </div>
             <div class="lf-confirmation-actions">
-              <a href="/submit-items" class="lf-primary-btn lf-confirmation-link">
+              <button type="button" id="lf-submit-another" class="lf-primary-btn lf-confirmation-link">
                 Submit Another Item
-              </a>
+              </button>
               <a href="/" class="lf-secondary-btn lf-confirmation-link">
                 Return to Home
               </a>
@@ -333,12 +333,56 @@ Requires PART1 embed on the page and INSIDE-HEAD-styles in <head>.
           </div>
         `;
         shell.appendChild(confirmationPage);
+        const anotherBtn = confirmationPage.querySelector("#lf-submit-another");
+        if (anotherBtn) {
+          anotherBtn.addEventListener("click", function () {
+            startAnotherSubmissionKeepingContact();
+          });
+        }
       }
       confirmationPage.style.display = "block";
       window.scrollTo({
         top: submitPage.offsetTop,
         behavior: "smooth"
       });
+    }
+    function hideSubmissionConfirmationPage() {
+      const confirmationPage = document.getElementById("lf-submission-confirmation");
+      if (confirmationPage) confirmationPage.style.display = "none";
+      const submitPage = document.getElementById("lf-submit-page");
+      const hero = submitPage ? submitPage.querySelector(".lf-submit-hero") : null;
+      const progressWrap = submitPage ? submitPage.querySelector(".lf-progress-wrap") : null;
+      if (hero) hero.style.display = "";
+      if (progressWrap) progressWrap.style.display = "";
+      if (form) form.style.display = "";
+    }
+    function setContactKeptBannerVisible(visible) {
+      const banner = document.getElementById("lf-contact-kept-banner");
+      if (!banner) return;
+      banner.classList.toggle("is-visible", !!visible);
+    }
+    function clearSubmissionItemsOnly() {
+      items = [];
+      editingIndex = null;
+      selectedPhotoFiles = [];
+      clearItemForm();
+      renderSavedItems();
+      buildReviewSummary();
+      updateFinalSubmissionCounts();
+      updateAfterSaveHelper();
+      const termsCheckbox = form.querySelector('input[name="termsAcknowledged"]');
+      if (termsCheckbox) termsCheckbox.checked = false;
+      setStatus("", "");
+    }
+    function startAnotherSubmissionKeepingContact() {
+      hideSubmissionConfirmationPage();
+      clearSubmissionItemsOnly();
+      setContactKeptBannerVisible(true);
+      setStatus(
+        "Your contact details are still saved. Starting at item details — tap Back anytime to review or edit your info.",
+        "success"
+      );
+      goToStep(2, true);
     }
     function setStatus(message, type) {
       if (!statusEl) return;
@@ -1333,21 +1377,9 @@ Requires PART1 embed on the page and INSIDE-HEAD-styles in <head>.
           "success"
         );
         showSubmissionConfirmationPage();
-        form.reset();
-        items = [];
-        editingIndex = null;
-        selectedPhotoFiles = [];
-        clearItemForm();
-        renderSavedItems();
-        buildReviewSummary();
-        updateFinalSubmissionCounts();
-        sameItemLocationInput.value = "";
-        pickupLocationInput.value = "";
-        pickupLocationInput.removeAttribute("required");
-        pickupLocationWrap.classList.add("lf-hidden");
-        if (useAddressBtn) useAddressBtn.classList.remove("is-selected");
-        if (differentAddressBtn) differentAddressBtn.classList.remove("is-selected");
-        updateAfterSaveHelper();
+        // Keep contact / location (411) filled in; only clear items + acknowledgment.
+        clearSubmissionItemsOnly();
+        setContactKeptBannerVisible(false);
       } catch (error) {
         setStatus(error.message || "Something went wrong. Please try again.", "error");
       } finally {
