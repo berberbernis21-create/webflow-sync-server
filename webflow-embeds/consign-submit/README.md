@@ -10,10 +10,12 @@ Backend: `POST https://webflow-sync-server.onrender.com/api/consignment-submissi
 | File | Webflow location |
 |------|------------------|
 | `INSIDE-HEAD-styles.html` | Page Settings → Custom Code → Inside `<head>` tag |
-| `PART1-embed-html-css.html` | Embed element on the page (HTML + CSS) |
+| `PART1-embed-html-css.html` | Embed element on the page (minified HTML + CSS for paste limit) |
 | `PART2-before-body-js.html` | Page Settings → Custom Code → Before `</body>` tag (minified, under Webflow 50k limit) |
 
-Editable unminified JS: `PART2-before-body-js.source.html` — after edits, run `node scripts/minify-consign-part2.mjs` to refresh the paste file.
+Editable sources:
+- PART1: `PART1-embed-html-css.source.html` → run `node scripts/minify-consign-part1.mjs`
+- PART2: `PART2-before-body-js.source.html` → run `node scripts/minify-consign-part2.mjs`
 
 ## Rules enforced (front + back)
 
