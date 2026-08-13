@@ -296,10 +296,17 @@ async function processConsignmentSubmission({ body, items, photoGroups, submitte
       });
       console.log("[consignment] Google Lens result screenshots", lensShots);
       if (lensShots.captured === 0 && lensShots.failed > 0) {
-        const detail = lensShots.reason ? ` (${lensShots.reason})` : "";
-        processingWarnings.push(
-          `Google Lens result screenshots could not be captured${detail}.`
-        );
+        const reason = String(lensShots.reason || "");
+        if (/captcha|sorry/i.test(reason)) {
+          processingWarnings.push(
+            "Google Lens auto-screenshots were blocked by a CAPTCHA — use the Google Lens buttons on each photo (they still work)."
+          );
+        } else {
+          const detail = reason ? ` (${reason})` : "";
+          processingWarnings.push(
+            `Google Lens result screenshots could not be captured${detail}. Use the Google Lens buttons on each photo.`
+          );
+        }
       }
     } catch (shotErr) {
       processingWarnings.push(`Google Lens screenshots failed: ${shotErr?.message || shotErr}`);
