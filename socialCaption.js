@@ -111,7 +111,8 @@ function getFrameBlock(frame) {
   return `FRAME MODE: Let the engine decide (Data-Led voice)
 - Confident, evidence-backed product storytelling from listing facts
 - COMMIT fully to the STYLE FOR THIS POST block below — that's your personality this post
-- Vary hooks, location lines, CTAs, and rhythm from post to post while keeping the mandatory layout sections`;
+- Vary hooks, location lines, CTAs, and rhythm from post to post while keeping the mandatory layout sections
+- Never reuse a house catchphrase (especially "impossible-to-ignore detail") as the default jewelry/Chanel opener`;
 }
 
 function getIntentBlock(intent) {
@@ -313,29 +314,178 @@ function buildItemAccuracyRules(itemType, sourceText) {
       ? "NEVER include a dimensions line or measurements. Sell what it is: brand/maker, material, stones, color, silhouette, construction, and distinctive design."
       : "Include dimensions only when they help a buyer understand this item."
   }
+- NEVER claim "real gold", "solid gold", or karat gold unless the listing itself says 10k/14k/18k/22k/24k or solid gold. If the listing says gold plated, gold tone, vermeil, gold filled, gilt, or plated, name that finish. Never upgrade plated metal to real gold.
+- Rotate the opening hook every post. Do NOT default to "impossible-to-ignore detail" or any other canned Chanel/jewelry line. Root the hook in a fresh fact from THIS listing (motif, finish, era, form, maker).
 - If a style instruction conflicts with these accuracy rules, these rules win.`;
+}
+
+function isPlatedOrGoldToneFinish(text) {
+  const t = String(text || "").toLowerCase();
+  return /\b(?:gold[\s-]*(?:plated|plate|tone|filled|overlay|wash)|plated[\s-]*gold|goldtone|goldfilled|rolled[\s-]*gold|electroplated|vermeil|gilt)\b/.test(
+    t
+  );
+}
+
+function isKaratOrSolidGold(text) {
+  const t = String(text || "").toLowerCase();
+  if (isPlatedOrGoldToneFinish(t)) return false;
+  return /\b(?:10k|14k|18k|22k|24k|\d+\s*k(?:arat)?\s*gold|solid gold|fine gold)\b/.test(t);
+}
+
+let jewelryHookSpin = 0;
+
+function detectLuxuryBrand(text) {
+  const t = String(text || "");
+  const m = t.match(
+    /\b(chanel|gucci|herm[eè]s|louis vuitton|christian dior|dior|prada|fendi|ysl|saint laurent|tiffany|cartier|bulgari|bvlgari|givenchy|c[eé]line|versace|valentino|burberry|coach)\b/i
+  );
+  if (!m) return null;
+  const key = m[1].toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const names = {
+    chanel: "Chanel",
+    gucci: "Gucci",
+    hermes: "Hermes",
+    "louis vuitton": "Louis Vuitton",
+    "christian dior": "Dior",
+    dior: "Dior",
+    prada: "Prada",
+    fendi: "Fendi",
+    ysl: "YSL",
+    "saint laurent": "Saint Laurent",
+    tiffany: "Tiffany",
+    cartier: "Cartier",
+    bulgari: "Bulgari",
+    bvlgari: "Bulgari",
+    givenchy: "Givenchy",
+    celine: "Celine",
+    versace: "Versace",
+    valentino: "Valentino",
+    burberry: "Burberry",
+    coach: "Coach",
+  };
+  const brand = names[key] || m[1];
+  const poss = /s$/i.test(brand) ? `${brand}'` : `${brand}'s`;
+  return { key, brand, poss };
+}
+
+function platedFinishLabel(text) {
+  const t = String(text || "").toLowerCase();
+  if (/\b(?:gold[\s-]*tone|goldtone)\b/.test(t)) return "Gold tone";
+  if (/\bvermeil\b/.test(t)) return "Gold vermeil";
+  if (/\b(?:gold[\s-]*filled|goldfilled)\b/.test(t)) return "Gold filled";
+  return "Gold plated";
+}
+
+function pickRotatedHook(pool, seedText) {
+  const list = (pool || []).filter(Boolean);
+  if (!list.length) return "";
+  jewelryHookSpin += 1;
+  let h = jewelryHookSpin * 2654435761;
+  const s = String(seedText || "");
+  for (let i = 0; i < s.length; i += 1) h ^= s.charCodeAt(i) * (i + 17);
+  return list[Math.abs(h) % list.length];
+}
+
+function jewelryHookPool(sourceText) {
+  const t = String(sourceText || "").toLowerCase();
+  const brand = detectLuxuryBrand(sourceText);
+  const plated = isPlatedOrGoldToneFinish(t);
+  const finish = platedFinishLabel(t);
+  const pool = [];
+
+  if (brand?.key === "chanel") {
+    pool.push(
+      "✨ Vintage Chanel with serious presence.",
+      "✨ Chanel that refuses to whisper.",
+      "✨ Chanel detail that stops the scroll.",
+      "✨ Chanel with collector-level pull."
+    );
+    if (/\b(cc|interlocking|matelasse|matelass)\b/.test(t)) {
+      pool.push("✨ The CC motif still runs the room.", "✨ Interlocking CCs, no apology needed.");
+    }
+    if (/\bquilt/.test(t)) pool.push("✨ Quilted Chanel that still commands the outfit.");
+    if (/\bbrooch\b/.test(t)) pool.push("✨ A Chanel brooch that does the talking.");
+    if (plated) pool.push(`✨ ${finish} Chanel with statement-making power.`);
+  } else if (brand) {
+    pool.push(
+      `✨ Vintage ${brand.brand} with serious presence.`,
+      `✨ ${brand.brand} that refuses to whisper.`,
+      `✨ ${brand.brand} detail that stops the scroll.`,
+      `✨ ${brand.brand} with collector-level pull.`
+    );
+    if (plated) pool.push(`✨ ${finish} ${brand.brand} with statement-making power.`);
+  }
+
+  if (plated) {
+    pool.push(
+      `✨ ${finish} with statement-making power.`,
+      "✨ Warm gold finish that refuses to whisper.",
+      `✨ ${finish} that still commands the outfit.`,
+      "✨ Plated gold with collector-level presence."
+    );
+  }
+  if (isKaratOrSolidGold(t)) {
+    pool.push(
+      "✨ Real gold with serious presence.",
+      "✨ Karat gold that doesn't whisper.",
+      "✨ Real gold, collector-level pull."
+    );
+  }
+  if (/\b(orchid|dogwood|flower|floral|leaf)\b/.test(t)) {
+    pool.push(
+      "🌸 Golden botanicals with statement-making power.",
+      "🌸 Floral jewelry that still runs the room.",
+      "🌸 Botanical detail with collector-level pull."
+    );
+  }
+  if (/\bsigned\b/.test(t)) {
+    pool.push("💎 Signed detail with collector-level presence.", "💎 Signed, and it shows.");
+  }
+  if (/\b(turquoise|aventurine|carnelian|aquamarine|amber|opal|gemstone)\b/.test(t)) {
+    pool.push("💎 Natural color that refuses to whisper.", "💎 Stone color with serious presence.");
+  }
+  if (/\b(earrings?|ear clips?)\b/.test(t)) {
+    pool.push("✨ Face-framing detail with instant impact.", "✨ Ear-level luxury that doesn't hide.");
+  }
+  if (/\bbrooch\b/.test(t)) {
+    pool.push("✨ Brooch energy with instant impact.", "✨ One pin. Whole outfit, handled.");
+  }
+  pool.push(
+    "💎 Jewelry with undeniable point of view.",
+    "✨ The detail that transforms the whole look.",
+    "💎 Face-level luxury that doesn't whisper."
+  );
+
+  const seen = new Set();
+  return pool.filter((h) => {
+    const k = h.toLowerCase();
+    if (seen.has(k) || /impossible-to-ignore/i.test(h)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+function pickJewelryHook(sourceText) {
+  return (
+    pickRotatedHook(jewelryHookPool(sourceText), sourceText) ||
+    "💎 Jewelry with undeniable point of view."
+  );
+}
+
+function rewriteFalseGoldClaims(caption, sourceText) {
+  if (!isPlatedOrGoldToneFinish(sourceText)) return caption;
+  return String(caption || "")
+    .replace(/\breal gold\b/gi, "gold plated")
+    .replace(/\bsolid gold\b/gi, "gold plated");
+}
+
+function isStaleJewelryHook(line) {
+  return /impossible-to-ignore detail/i.test(String(line || ""));
 }
 
 function buildFallbackHook(itemType, sourceText) {
   const t = String(sourceText || "").toLowerCase();
-  if (itemType === "jewelry") {
-    if (/\b(orchid|dogwood|flower|floral|leaf)\b/.test(t)) {
-      return "🌸 Golden botanicals with statement-making power.";
-    }
-    if (/\bsigned\b/.test(t)) {
-      return "💎 Signed detail with collector-level presence.";
-    }
-    if (/\b(14k|18k|gold)\b/.test(t)) {
-      return "✨ Real gold, impossible-to-ignore detail.";
-    }
-    if (/\b(turquoise|aventurine|carnelian|aquamarine|amber|opal|gemstone)\b/.test(t)) {
-      return "💎 Natural color that refuses to whisper.";
-    }
-    if (/\b(earrings?|ear clips?)\b/.test(t)) {
-      return "✨ Face-framing detail with instant impact.";
-    }
-    return "💎 Jewelry with undeniable point of view.";
-  }
+  if (itemType === "jewelry") return pickJewelryHook(sourceText);
   if (/\b(art|artwork|painting|print|canvas)\b/.test(t)) {
     return "🖼️ The wall just found its focal point.";
   }
@@ -371,11 +521,12 @@ function enforceItemAccurateOpening(caption, itemType, sourceText) {
   const genericJewelryHook =
     itemType === "jewelry" &&
     /\b(golden hour|nature'?s elegance|all that'?s needed|changing seasons?|small scale)\b/i.test(first);
+  const staleJewelryHook = itemType === "jewelry" && isStaleJewelryHook(originalFirst || first);
 
-  if (wrongType || inventedSeason || genericJewelryHook) {
+  if (wrongType || inventedSeason || genericJewelryHook || staleJewelryHook) {
     lines[firstIndex] = buildFallbackHook(itemType, sourceText);
   }
-  return lines.join("\n");
+  return rewriteFalseGoldClaims(lines.join("\n"), sourceText);
 }
 
 const LOCATION_EXAMPLES_LUXURY = `LOCATION LINE EXAMPLES (ALWAYS include @lostandfoundresale — vary phrasing):
@@ -472,6 +623,8 @@ HARD BANS:
 - Markdown; em/en/long dashes (— – ―) - use hyphen (-) or comma only
 - "Ships from Scottsdale"
 - Generic influencer fluff
+- "real gold" / "solid gold" on gold plated, gold tone, vermeil, or gold-filled pieces
+- Reusing "impossible-to-ignore detail" as the default jewelry/Chanel hook
 - "Please see … below the description" / Delivery-Pickup-Freight Options pointers
 - Long shipping policy paragraphs`,
 };
