@@ -33,7 +33,7 @@
   };
   const crewHelp=_k=>"This is your opinion only — assume straps, dollies, and normal gear. If yes, choose 1 or 2 extra people and briefly explain why.";
 
-  const LOCAL={baseMinutes:15,basePrice:95,referenceMinutes:8,referencePrice:15,threePersonHourly:130,longHaulRoundTripMiles:100,longHaulFactor:0.8,stairFeePerExtraFlight:7,oversizeWeight:299,oversizeHeight:72,oversizeAlwaysWeight:450};
+  const LOCAL={baseMinutes:15,basePrice:95,referenceMinutes:8,referencePrice:15,threePersonHourly:130,longHaulRoundTripMiles:100,longHaulFactor:0.8,stairFeePerExtraFlight:7,oversizeWeight:299,oversizeHeight:72,oversizeAlwaysWeight:450,truckDrivePadMinutes:3};
   const DRAFT_KEY="lfFreightDraft_v1";
   let step=1,maxStepReached=1,itemCounter=0,lastPreview=null,submitting=false;
   let pathMismatchAcknowledged=false;
@@ -189,6 +189,44 @@
     };
   }
 
+  function isMultiItemSmallFootprint(item){
+    const w=Number(item?.width),d=Number(item?.depth);
+    if(!Number.isFinite(w)||!Number.isFinite(d)||w<=0||d<=0)return false;
+    return w<=24&&d<=24;
+  }
+  function expandMultiItemUnits(items){
+    const units=[];
+    (items||[]).forEach(it=>{
+      const qty=Math.max(1,Math.floor(num(it.quantity)||1));
+      for(let i=0;i<qty;i++)units.push({width:it.width,depth:it.depth,height:it.height,weight:it.weight});
+    });
+    return units;
+  }
+  function isLargeDimensionItem(item){
+    const dims=[item?.width,item?.depth,item?.height].map(v=>Number(v)).filter(v=>Number.isFinite(v)&&v>0);
+    if(!dims.length)return false;
+    return dims.some(v=>v>60);
+  }
+  function largeDimensionAdderFromItems(items){
+    return expandMultiItemUnits(items).filter(isLargeDimensionItem).length*10;
+  }
+  function isHeavyWeightItem(item){
+    const w=Number(item?.weight);
+    return Number.isFinite(w)&&w>300;
+  }
+  function heavyWeightAdderFromItems(items){
+    return expandMultiItemUnits(items).filter(isHeavyWeightItem).length*10;
+  }
+  function multiItemAdderFromItems(items){
+    const units=expandMultiItemUnits(items);
+    if(units.length<=2)return 0;
+    let adder=0;
+    for(let i=2;i<units.length;i++){
+      adder+=isMultiItemSmallFootprint(units[i])?5:10;
+    }
+    return adder;
+  }
+
   function localEstimate(minutes,itemCount,opts){
     if(!Number.isFinite(Number(minutes))||Number(minutes)<=0)return null;
     opts=opts||{};
@@ -227,7 +265,9 @@
     const rawEstimate=basePrice+(extraMinutes*perMinuteRate);
     const routeRounded=Math.ceil(rawEstimate/5)*5;
     const n=Math.max(0,Math.floor(Number(itemCount)||0));
-    const multiItemAdder=n>=3?10+(n-3)*5:0;
+    const multiItemAdder=(items&&items.length)?multiItemAdderFromItems(items):(n<=2?0:(n-2)*10);
+    const largeDimAdder=(items&&items.length)?largeDimensionAdderFromItems(items):0;
+    const heavyWeightAdder=(items&&items.length)?heavyWeightAdderFromItems(items):0;
     const flights=access.stairs?Math.max(0,Math.floor(Number(access.stair_flights)||0)):0;
     const stairFee=flights>1?(flights-1)*LOCAL.stairFeePerExtraFlight:0;
 
@@ -252,8 +292,8 @@
         assemblyMinutes+=mins;
       });
     }
-    const assemblyFee=assemblyMinutes>0?Math.ceil((assemblyMinutes*perMinuteRate)/5)*5:0;
-    const estimated=(routeRounded+multiItemAdder)*trucks+stairFee+assemblyFee;
+    const assemblyFee=assemblyMinutes>0?Math.ceil((assemblyMinutes*(LOCAL.basePrice/60))/5)*5:0;
+    const estimated=(routeRounded+multiItemAdder+largeDimAdder+heavyWeightAdder)*trucks+stairFee+assemblyFee;
 
     return {
       drive_minutes:m,
@@ -263,8 +303,12 @@
       per_minute_rate:perMinuteRate,
       raw_estimate:rawEstimate,
       route_price:routeRounded,
-      item_count:n,
+      item_count:(items&&items.length)?expandMultiItemUnits(items).length:n,
       multi_item_adder:multiItemAdder,
+      large_dim_adder:largeDimAdder,
+      large_dim_count:(items&&items.length)?expandMultiItemUnits(items).filter(isLargeDimensionItem).length:0,
+      heavy_weight_adder:heavyWeightAdder,
+      heavy_weight_count:(items&&items.length)?expandMultiItemUnits(items).filter(isHeavyWeightItem).length:0,
       hourly_rate:hourly,
       truck_multiplier:trucks,
       stair_fee:stairFee,
@@ -1709,17 +1753,33 @@
     return '<div class="lf-buy-block">'+(cards?'<p>Buy your item(s)</p><div class="lf-buy-cards">'+cards+"</div>":"")+buyTip+addrHtml+preferredHtml+"</div>";
   }
 
+  function applyTruckDriveMinutes(carMinutes){
+    const m=Number(carMinutes);
+    if(!Number.isFinite(m)||m<=0)return null;
+    return Math.max(1,Math.ceil(m)+LOCAL.truckDrivePadMinutes);
+  }
+
   function extractDriveMinutes(data){
-    const options=[
+    const truckCandidates=[
       data?.drive_minutes,data?.driveMinutes,
       data?.display?.drive_minutes,data?.display?.driveMinutes,
       data?.route?.drive_minutes,data?.route?.driveMinutes,
-      data?.route?.duration_minutes,data?.route?.durationMinutes,
       data?.local_estimate?.drive_minutes,data?.localEstimate?.driveMinutes,
       data?.estimate?.drive_minutes,data?.estimate?.driveMinutes
     ];
-    const found=options.find(v=>Number.isFinite(Number(v))&&Number(v)>0);
-    return found===undefined?null:Number(found);
+    const truck=truckCandidates.find(v=>Number.isFinite(Number(v))&&Number(v)>0);
+    if(truck!==undefined)return Number(truck);
+    const carCandidates=[
+      data?.car_drive_minutes,data?.carDriveMinutes,
+      data?.route?.car_drive_minutes,data?.route?.carDriveMinutes
+    ];
+    const car=carCandidates.find(v=>Number.isFinite(Number(v))&&Number(v)>0);
+    if(car!==undefined)return applyTruckDriveMinutes(car);
+    const legacy=[
+      data?.route?.duration_minutes,data?.route?.durationMinutes
+    ];
+    const found=legacy.find(v=>Number.isFinite(Number(v))&&Number(v)>0);
+    return found===undefined?null:applyTruckDriveMinutes(found);
   }
 
   function exceedsStandardPallet(item){
@@ -1791,6 +1851,16 @@
       const multiNote=multiAdder>0
         ?'<p class="lf-drive-stats">Includes multi-item handling for '+itemCount+" items.</p>"
         :"";
+      const largeDimAdder=Number(preview?.local_estimate?.large_dim_adder??est?.large_dim_adder)||0;
+      const largeDimCount=Number(preview?.local_estimate?.large_dim_count??est?.large_dim_count)||0;
+      const largeDimNote=largeDimAdder>0
+        ?'<p class="lf-drive-stats">Includes large-item handling (+$10 each) for '+largeDimCount+" piece"+(largeDimCount===1?"":"s")+" over 60&quot; in any dimension.</p>"
+        :"";
+      const heavyWeightAdder=Number(preview?.local_estimate?.heavy_weight_adder??est?.heavy_weight_adder)||0;
+      const heavyWeightCount=Number(preview?.local_estimate?.heavy_weight_count??est?.heavy_weight_count)||0;
+      const heavyWeightNote=heavyWeightAdder>0
+        ?'<p class="lf-drive-stats">Includes heavy-item handling (+$10 each) for '+heavyWeightCount+" piece"+(heavyWeightCount===1?"":"s")+" over 300 lb.</p>"
+        :"";
       const assemblyFee=Number(preview?.local_estimate?.assembly_fee??est?.assembly_fee)||0;
       const assemblyMins=Number(preview?.local_estimate?.assembly_extra_minutes??est?.assembly_extra_minutes)||0;
       const assemblyTotal=assemblyMins>0?15+assemblyMins:0;
@@ -1826,7 +1896,7 @@
       const oneWay=est?est.drive_minutes:(minutes?Math.ceil(minutes):null);
       const driveStats=oneWay
         ?'<p class="lf-drive-stats">Estimated drive time: about '+oneWay+" minutes each way · "+(oneWay*2)+" minutes round trip"+(Number.isFinite(miles)&&miles>0?" · "+miles+" miles each way":"")+"</p>"+
-          '<p class="lf-fine lf-drive-note">Distance and time are based on the mapped route, not live traffic.</p>'
+          '<p class="lf-fine lf-drive-note">Distance is based on the mapped route. Drive time includes local truck travel time and is not live traffic.</p>'
         : (Number.isFinite(miles)&&miles>0
           ?'<p class="lf-drive-stats">Estimated distance: '+miles+" miles each way from our Scottsdale showroom</p>"
           :"");
@@ -1864,6 +1934,8 @@
         rateConfirmHtml(true,isPickup)+
         driveStats+
         multiNote+
+        largeDimNote+
+        heavyWeightNote+
         stairNote+
         mapHtml+
         '<p class="lf-result-labor">'+laborText+'</p>'+

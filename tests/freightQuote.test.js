@@ -22,10 +22,11 @@ test("local pricing: 15 min = $95", () => {
   assert.equal(calculateLocalRouteEstimate(15).estimated_price, 95);
 });
 
-test("drive time uses mapped minutes with no truck pad", () => {
-  assert.equal(applyLocalTruckDriveMinutes(15), 15);
-  assert.equal(applyLocalTruckDriveMinutes(10), 10);
-  assert.equal(applyLocalTruckDriveMinutes(8.2), 9);
+test("drive time adds 3-minute local truck pad", () => {
+  assert.equal(applyLocalTruckDriveMinutes(15), 18);
+  assert.equal(applyLocalTruckDriveMinutes(10), 13);
+  assert.equal(applyLocalTruckDriveMinutes(8.2), 12);
+  assert.equal(applyLocalTruckDriveMinutes(12), 15);
 });
 
 test("local pricing: 17 min = $100", () => {
@@ -49,15 +50,85 @@ test("local pricing: 1-2 items add $0", () => {
   assert.equal(calculateLocalRouteEstimate(15, { itemCount: 2 }).estimated_price, 95);
 });
 
-test("local pricing: 3 items add $10", () => {
+test("local pricing: 3+ items without dims use $10 per item after first 2", () => {
   const est = calculateLocalRouteEstimate(15, { itemCount: 3 });
   assert.equal(est.multi_item_adder, 10);
   assert.equal(est.estimated_price, 105);
+  assert.equal(calculateLocalRouteEstimate(15, { itemCount: 4 }).estimated_price, 115);
+  assert.equal(calculateLocalRouteEstimate(15, { itemCount: 5 }).estimated_price, 125);
 });
 
-test("local pricing: 4 items add $15, 5 add $20", () => {
-  assert.equal(calculateLocalRouteEstimate(15, { itemCount: 4 }).estimated_price, 110);
-  assert.equal(calculateLocalRouteEstimate(15, { itemCount: 5 }).estimated_price, 115);
+test("local pricing: small footprint items add $5 per item after first 2", () => {
+  const small = { width: 20, depth: 20, height: 30, weight: 40, quantity: 1 };
+  assert.equal(
+    calculateLocalRouteEstimate(15, { items: [small, small, small] }).multi_item_adder,
+    5
+  );
+  assert.equal(
+    calculateLocalRouteEstimate(15, { items: [small, small, small] }).estimated_price,
+    100
+  );
+  assert.equal(
+    calculateLocalRouteEstimate(15, { items: [small, small, small, small] }).multi_item_adder,
+    10
+  );
+});
+
+test("local pricing: large footprint items add $10 per item after first 2", () => {
+  const large = { width: 30, depth: 30, height: 30, weight: 80, quantity: 1 };
+  assert.equal(
+    calculateLocalRouteEstimate(15, { items: [large, large, large] }).multi_item_adder,
+    10
+  );
+  assert.equal(
+    calculateLocalRouteEstimate(15, {
+      items: [
+        { width: 20, depth: 20, height: 30, weight: 40, quantity: 1 },
+        { width: 20, depth: 20, height: 30, weight: 40, quantity: 1 },
+        { width: 20, depth: 20, height: 30, weight: 40, quantity: 1 },
+        large,
+      ],
+    }).multi_item_adder,
+    15
+  );
+});
+
+test("local pricing: items over 60 in any dimension add $10 each", () => {
+  const sofa = { width: 84, depth: 36, height: 34, weight: 120, quantity: 1 };
+  const tableAt60 = { width: 60, depth: 40, height: 30, weight: 80, quantity: 1 };
+  const armoire = { width: 40, depth: 24, height: 72, weight: 200, quantity: 1 };
+
+  const soloSofa = calculateLocalRouteEstimate(15, { items: [sofa] });
+  assert.equal(soloSofa.large_dim_adder, 10);
+  assert.equal(soloSofa.large_dim_count, 1);
+  assert.equal(soloSofa.estimated_price, 105);
+
+  const at60 = calculateLocalRouteEstimate(15, { items: [tableAt60] });
+  assert.equal(at60.large_dim_adder, 0);
+  assert.equal(at60.estimated_price, 95);
+
+  const tall = calculateLocalRouteEstimate(15, { items: [armoire] });
+  assert.equal(tall.large_dim_adder, 10);
+  assert.equal(tall.estimated_price, 105);
+
+  const twoLarge = calculateLocalRouteEstimate(15, { items: [sofa, armoire] });
+  assert.equal(twoLarge.large_dim_adder, 20);
+  assert.equal(twoLarge.estimated_price, 115);
+});
+
+test("local pricing: items over 300 lb add $10 each", () => {
+  const at300 = { width: 40, depth: 40, height: 40, weight: 300, quantity: 1 };
+  const at301 = { width: 40, depth: 40, height: 40, weight: 301, quantity: 1 };
+  const heavySafe = { width: 30, depth: 30, height: 40, weight: 450, quantity: 1 };
+
+  assert.equal(calculateLocalRouteEstimate(15, { items: [at300] }).heavy_weight_adder, 0);
+  assert.equal(calculateLocalRouteEstimate(15, { items: [at301] }).heavy_weight_adder, 10);
+  assert.equal(calculateLocalRouteEstimate(15, { items: [at301] }).estimated_price, 105);
+
+  const heavySafeEst = calculateLocalRouteEstimate(15, { items: [heavySafe] });
+  assert.equal(heavySafeEst.heavy_weight_adder, 10);
+  assert.equal(heavySafeEst.oversize_confirm, true);
+  assert.equal(heavySafeEst.estimated_price, 140);
 });
 
 test("Webflow payload: trust client pallet + entered dims (no title invent)", () => {
@@ -416,8 +487,12 @@ test("qty 2 requires flip_stack_claimed on validate", () => {
 });
 
 test("local multi-item adder uses total quantity across lines", () => {
+  const small = { width: 20, depth: 20, height: 30, weight: 40, quantity: 1 };
   assert.equal(calculateLocalRouteEstimate(15, { itemCount: 2 }).estimated_price, 95);
-  assert.equal(calculateLocalRouteEstimate(15, { itemCount: 3 }).estimated_price, 105);
+  assert.equal(
+    calculateLocalRouteEstimate(15, { items: [small, small, small] }).estimated_price,
+    100
+  );
 });
 
 test("local pricing: 1 extra person uses $130/hr", () => {
@@ -450,7 +525,7 @@ test("local pricing: assembly beyond 15 min adds rounded fee", () => {
   assert.equal(within.assembly_required, true);
   assert.equal(within.estimated_price, 95);
 
-  // 20 min beyond 15 @ $15/8 per min = $37.50 → round up to $40
+  // 20 extra min beyond included 15 @ $95/hr = 20 × (95/60) ≈ $31.67 → $35
   const billed = calculateLocalRouteEstimate(15, {
     items: [
       {
@@ -462,8 +537,8 @@ test("local pricing: assembly beyond 15 min adds rounded fee", () => {
     ],
   });
   assert.equal(billed.assembly_extra_minutes, 20);
-  assert.equal(billed.assembly_fee, 40);
-  assert.equal(billed.estimated_price, 135);
+  assert.equal(billed.assembly_fee, 35);
+  assert.equal(billed.estimated_price, 130);
   assert.equal(billed.assembly_confirm_over_60, false);
 
   const idk = calculateLocalRouteEstimate(15, {
@@ -493,8 +568,8 @@ test("local pricing: assembly beyond 15 min adds rounded fee", () => {
       assembly_extra_minutes: 20,
     },
   });
-  assert.equal(fromAccess.assembly_fee, 40);
-  assert.equal(fromAccess.estimated_price, 135);
+  assert.equal(fromAccess.assembly_fee, 35);
+  assert.equal(fromAccess.estimated_price, 130);
 
   const over60 = calculateLocalRouteEstimate(15, {
     items: [
@@ -671,13 +746,16 @@ test("local pricing: oversize needs 299+ lb and over 72 H, or 450+ lb", () => {
   });
   assert.equal(both.oversize_confirm, true);
   assert.equal(both.hourly_rate, 130);
-  assert.equal(both.estimated_price, 130);
+  assert.equal(both.large_dim_adder, 10);
+  assert.equal(both.estimated_price, 140);
 
   const tallOnly = calculateLocalRouteEstimate(15, {
     items: [{ title: "Tall cabinet", width: 56, height: 92, weight: 200 }],
   });
   assert.equal(tallOnly.oversize_confirm, false);
   assert.equal(tallOnly.hourly_rate, 95);
+  assert.equal(tallOnly.large_dim_adder, 10);
+  assert.equal(tallOnly.estimated_price, 105);
 
   const heavyOnly = calculateLocalRouteEstimate(15, {
     items: [{ title: "Heavy chest", width: 40, height: 40, weight: 300 }],
@@ -690,18 +768,24 @@ test("local pricing: oversize needs 299+ lb and over 72 H, or 450+ lb", () => {
   });
   assert.equal(wideCouch.oversize_confirm, false);
   assert.equal(wideCouch.hourly_rate, 95);
+  assert.equal(wideCouch.large_dim_adder, 10);
+  assert.equal(wideCouch.estimated_price, 105);
 
   const at450 = calculateLocalRouteEstimate(15, {
     items: [{ title: "Safe", width: 30, height: 40, weight: 450 }],
   });
   assert.equal(at450.oversize_confirm, true);
   assert.equal(at450.hourly_rate, 130);
+  assert.equal(at450.heavy_weight_adder, 10);
+  assert.equal(at450.estimated_price, 140);
 
   const veryHeavy = calculateLocalRouteEstimate(15, {
     items: [{ title: "Safe", width: 30, height: 40, weight: 551 }],
   });
   assert.equal(veryHeavy.oversize_confirm, true);
   assert.equal(veryHeavy.hourly_rate, 130);
+  assert.equal(veryHeavy.heavy_weight_adder, 10);
+  assert.equal(veryHeavy.estimated_price, 140);
 });
 
 test("local validation requires extra_people when more than two selected", () => {
@@ -867,6 +951,15 @@ test("consignor pickup_az accepted for Arizona address", () => {
   });
   assert.equal(v.ok, true);
   assert.equal(v.submission.delivery_path, "pickup_az");
+});
+
+test("local delivery and pickup share the same surcharge rules", () => {
+  const sofa = { width: 84, depth: 36, height: 34, weight: 320, quantity: 1 };
+  const est = calculateLocalRouteEstimate(15, { items: [sofa] });
+  assert.equal(est.multi_item_adder, 0);
+  assert.equal(est.large_dim_adder, 10);
+  assert.equal(est.heavy_weight_adder, 10);
+  assert.equal(est.estimated_price, 115);
 });
 
 test("consignor pickup_az rejected outside Arizona", () => {
