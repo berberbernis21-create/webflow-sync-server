@@ -46,7 +46,7 @@ function drawPageHeader(doc, first = false) {
       .font("Helvetica")
       .fontSize(10)
       .fillColor("#c9d0ff")
-      .text("Local Delivery & Consignor Pickup — Staff Pricing Cheat Sheet", MARGIN, 44, {
+      .text("How Lost & Found prices local delivery and consignor pickup", MARGIN, 44, {
         width: CONTENT_W,
       });
     doc.y = 88;
@@ -182,7 +182,7 @@ async function buildPdf() {
 
   body(
     doc,
-    "Same pricing rules for Local Arizona Delivery and Consignor Pickup. Customers see truck-adjusted drive time (mapped route + 3 min local truck travel), miles, and preliminary estimate. Raw Google/car minutes are never shown."
+    "This is how Lost & Found Resale prices local Arizona delivery and consignor pickup. The same rules apply to both. Use this guide to understand how we provide quotes."
   );
 
   sectionTitle(doc, "Core formula");

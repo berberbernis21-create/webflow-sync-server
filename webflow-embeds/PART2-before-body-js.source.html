@@ -1889,10 +1889,10 @@
               ?"3-Person Crew Estimate: "
               :"Your Preliminary Estimate: ";
       const rateNote=oversize||extraPeople===1||payload.access.needs_more_than_two_people
-        ?"($130/hr)"
+        ?"Billed at 130/hr"
         :extraPeople>=2
-          ?"($95/hr · two trucks)"
-          :"($95/hr)";
+          ?"Billed at 95/hr · two trucks"
+          :"Billed at 95/hr";
       const oneWay=est?est.drive_minutes:(minutes?Math.ceil(minutes):null);
       const driveStats=oneWay
         ?'<p class="lf-drive-stats">Estimated drive time: about '+oneWay+" minutes each way · "+(oneWay*2)+" minutes round trip"+(Number.isFinite(miles)&&miles>0?" · "+miles+" miles each way":"")+"</p>"+
