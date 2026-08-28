@@ -534,9 +534,9 @@ router.get("/consignment-photo/:token", (req, res) => {
 
 /**
  * GET /api/consignment-lens/:token
- * Short launch URL for email/PDF → Google Lens.
- * Serves a tiny bridge page (better on iPhone Outlook / in-app browsers than a raw 302),
- * then the user taps through to Lens so the search actually runs.
+ * Short redirect into Google Lens with the hosted image URL (PDF-safe).
+ * Desktop: immediate 302 to Lens (same as the working email path).
+ * Mobile / ?bridge=1: small tap-to-open page (Outlook in-app browser workaround).
  */
 router.get("/consignment-lens/:token", (req, res) => {
   const token = String(req.params.token || "").trim();
@@ -550,10 +550,12 @@ router.get("/consignment-lens/:token", (req, res) => {
     return res.status(500).type("text").send("Could not build Google Lens link.");
   }
 
-  const wantsJson = String(req.get("accept") || "").includes("application/json");
-  const forceRedirect = String(req.query.redirect || "") === "1";
-  // Immediate redirect only when explicitly requested (or non-browser clients).
-  if (forceRedirect || wantsJson) {
+  const ua = String(req.get("user-agent") || "");
+  const isMobile = /iPhone|iPad|iPod|Android|Mobile/i.test(ua);
+  const wantBridge = String(req.query.bridge || "") === "1" || isMobile;
+
+  // Default / desktop: go straight to Lens (matches the email link that works on Chrome).
+  if (!wantBridge) {
     res.setHeader("Cache-Control", "no-store");
     return res.redirect(302, lensUrl);
   }
@@ -584,10 +586,10 @@ router.get("/consignment-lens/:token", (req, res) => {
   <div class="wrap">
     <img src="${safeImage}" alt="Consignment photo" />
     <h1>Search this photo</h1>
-    <p>Tap the button below to run Google Lens. On iPhone email, auto-open often shows a blank results page.</p>
+    <p>Tap below to open Google Lens. If results are blank in the email browser, open this page in Safari first.</p>
     <a class="btn primary" href="${safeLens}" rel="noopener noreferrer">Open in Google Lens</a>
     <a class="btn secondary" href="${safeImage}" rel="noopener noreferrer">Open photo only</a>
-    <p class="tip"><strong>If Lens is blank:</strong> tap the Share / ··· menu → <em>Open in Safari</em> (or Chrome), then tap <em>Open in Google Lens</em> again. Desktop email usually works without this step.</p>
+    <p class="tip"><strong>If Lens is blank:</strong> tap Share / ··· → <em>Open in Safari</em>, then tap <em>Open in Google Lens</em> again.</p>
   </div>
 </body>
 </html>`);
