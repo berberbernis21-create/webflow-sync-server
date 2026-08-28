@@ -18,7 +18,7 @@ import {
 } from "../lib/consignmentLimits.js";
 import { preparePhotoGroupsForConsignment } from "../lib/consignmentImageNormalize.js";
 import { expandConfidentMultiPieceItems } from "../lib/consignmentMultiPiece.js";
-import { hostConsignmentPhotosForLens, readHostedConsignmentPhoto, buildGoogleLensUrlForImage, getPublicBaseUrl } from "../lib/consignmentPhotoHost.js";
+import { hostConsignmentPhotosForLens, readHostedConsignmentPhoto, buildGoogleLensUrlForImage, buildBingVisualSearchUrlForImage, buildSafariHttpsUrl, getPublicBaseUrl } from "../lib/consignmentPhotoHost.js";
 import {
   archiveConsignmentIfNeeded,
   archiveConsignmentSubmission,
@@ -534,9 +534,10 @@ router.get("/consignment-photo/:token", (req, res) => {
 
 /**
  * GET /api/consignment-lens/:token
- * Short redirect into Google Lens with the hosted image URL (PDF-safe).
- * Desktop: immediate 302 to Lens (same as the working email path).
- * Mobile / ?bridge=1: small tap-to-open page (Outlook in-app browser workaround).
+ * Short launch URL for email/PDF → visual search.
+ * Desktop: immediate 302 to Google Lens (working path).
+ * Mobile: bridge page — Outlook in-app browser cannot finish Google Lens, so we offer
+ * Bing visual search (works there) + Open Lens in Safari.
  */
 router.get("/consignment-lens/:token", (req, res) => {
   const token = String(req.params.token || "").trim();
@@ -546,15 +547,18 @@ router.get("/consignment-lens/:token", (req, res) => {
   }
   const imageUrl = `${getPublicBaseUrl()}/api/consignment-photo/${token}`;
   const lensUrl = buildGoogleLensUrlForImage(imageUrl);
+  const bingUrl = buildBingVisualSearchUrlForImage(imageUrl);
+  const safariLensUrl = buildSafariHttpsUrl(lensUrl);
   if (!lensUrl) {
     return res.status(500).type("text").send("Could not build Google Lens link.");
   }
 
   const ua = String(req.get("user-agent") || "");
   const isMobile = /iPhone|iPad|iPod|Android|Mobile/i.test(ua);
+  const isOutlook = /Outlook|MSAppHost|Word|Office/i.test(ua);
   const wantBridge = String(req.query.bridge || "") === "1" || isMobile;
 
-  // Default / desktop: go straight to Lens (matches the email link that works on Chrome).
+  // Default / desktop: go straight to Lens (matches the path that works in Chrome).
   if (!wantBridge) {
     res.setHeader("Cache-Control", "no-store");
     return res.redirect(302, lensUrl);
@@ -562,6 +566,13 @@ router.get("/consignment-lens/:token", (req, res) => {
 
   const safeImage = escapeHtmlAttr(imageUrl);
   const safeLens = escapeHtmlAttr(lensUrl);
+  const safeBing = escapeHtmlAttr(bingUrl || "");
+  const safeSafariLens = escapeHtmlAttr(safariLensUrl || lensUrl);
+
+  const outlookNote = isOutlook
+    ? `<p style="background:#fff4ed;border-left:3px solid #e04f16;padding:10px 12px;text-align:left;font-size:14px;"><strong>Outlook on iPhone:</strong> Google Lens usually shows the photo but returns blank results in this browser. Use Bing below (works here), or open Lens in Safari.</p>`
+    : `<p>Google Lens often returns blank results inside email apps. Use Bing below, or open Lens in Safari.</p>`;
+
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   return res.status(200).send(`<!doctype html>
@@ -569,7 +580,7 @@ router.get("/consignment-lens/:token", (req, res) => {
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Open in Google Lens</title>
+  <title>Search this photo</title>
   <style>
     body{margin:0;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Arial,sans-serif;background:#f6f2ea;color:#111;}
     .wrap{max-width:440px;margin:0 auto;padding:28px 18px 40px;text-align:center;}
@@ -577,8 +588,9 @@ router.get("/consignment-lens/:token", (req, res) => {
     h1{font-size:22px;margin:18px 0 8px;}
     p{font-size:15px;line-height:1.5;color:#333;margin:0 0 14px;}
     .btn{display:block;width:100%;box-sizing:border-box;padding:14px 16px;margin:10px 0;border-radius:10px;font-size:16px;font-weight:700;text-decoration:none;}
-    .primary{background:#1a73e8;color:#fff;}
-    .secondary{background:#fff;color:#111;border:1px solid #ccc;}
+    .primary{background:#00809d;color:#fff;}
+    .secondary{background:#1a73e8;color:#fff;}
+    .tertiary{background:#fff;color:#111;border:1px solid #ccc;}
     .tip{font-size:13px;color:#666;margin-top:16px;text-align:left;}
   </style>
 </head>
@@ -586,10 +598,16 @@ router.get("/consignment-lens/:token", (req, res) => {
   <div class="wrap">
     <img src="${safeImage}" alt="Consignment photo" />
     <h1>Search this photo</h1>
-    <p>Tap below to open Google Lens. If results are blank in the email browser, open this page in Safari first.</p>
-    <a class="btn primary" href="${safeLens}" rel="noopener noreferrer">Open in Google Lens</a>
-    <a class="btn secondary" href="${safeImage}" rel="noopener noreferrer">Open photo only</a>
-    <p class="tip"><strong>If Lens is blank:</strong> tap Share / ··· → <em>Open in Safari</em>, then tap <em>Open in Google Lens</em> again.</p>
+    ${outlookNote}
+    ${
+      bingUrl
+        ? `<a class="btn primary" href="${safeBing}" rel="noopener noreferrer">Search similar images (works in Outlook)</a>`
+        : ""
+    }
+    <a class="btn secondary" href="${safeSafariLens}" rel="noopener noreferrer">Open Google Lens in Safari</a>
+    <a class="btn tertiary" href="${safeLens}" rel="noopener noreferrer">Try Google Lens here</a>
+    <a class="btn tertiary" href="${safeImage}" rel="noopener noreferrer">Open photo only</a>
+    <p class="tip"><strong>Why:</strong> Desktop Chrome can finish Google Lens. Outlook’s built-in browser usually cannot — you’ll see the furniture photo with no matches. Bing visual search works in Outlook; Safari works for Google Lens.</p>
   </div>
 </body>
 </html>`);
