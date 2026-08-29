@@ -1508,7 +1508,7 @@
     btn.disabled=true;btn.innerHTML='<span class="lf-spin"></span>Looking Up';
     msg.className="lf-lookup-message";
     try{
-      const res=await fetch(LOOKUP_URL+"?name="+encodeURIComponent(title),{headers:{"Accept":"application/json"}});
+      const res=await fetch(LOOKUP_URL+"?source=shopify&name="+encodeURIComponent(title),{headers:{"Accept":"application/json"}});
       const raw=await res.json().catch(()=>({}));
       if(!res.ok)throw new Error(raw.error||raw.message||"Listing not found.");
       const data=extractListing(raw);

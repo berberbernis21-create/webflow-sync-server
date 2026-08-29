@@ -5085,6 +5085,7 @@ async function loadLuxuryItemIndex({ force = false } = {}) {
       const byShopifyId = new Map();
       const bySlug = new Map();
       const byUrl = new Map();
+      const byName = new Map();
       let offset = 0;
       const limit = 100;
       while (true) {
@@ -5118,13 +5119,15 @@ async function loadLuxuryItemIndex({ force = false } = {}) {
           if (wfId) byShopifyId.set(wfId, item);
           if (wfUrl) byUrl.set(wfUrl, item);
           if (wfSlug) bySlug.set(wfSlug, item);
+          const nameKey = normalizeProductNameForIndex(fd.name);
+          if (nameKey && !byName.has(nameKey)) byName.set(nameKey, item);
         }
         if (items.length < limit) break;
         offset += limit;
       }
-      luxuryItemIndex = { byShopifyId, bySlug, byUrl, complete: true };
+      luxuryItemIndex = { byShopifyId, bySlug, byUrl, byName, complete: true };
       luxuryItemIndexLoadedAt = Date.now();
-      webflowLog("info", { event: "luxury_item_index.loaded", count: byShopifyId.size });
+      webflowLog("info", { event: "luxury_item_index.loaded", count: byShopifyId.size, byName: byName.size });
       return luxuryItemIndex;
     } finally {
       luxuryItemIndexInflight = null;
@@ -10278,127 +10281,64 @@ function shopifyAdminListingSearchVariants(raw) {
   return uniq;
 }
 
-/**
- * @param {string} name Search string for Shopify `products(query: ...)`
- * @returns {Promise<{ title: string, price: string, description: string, images: string[], vendor: string | null, handle: string | null, productUrl: string | null, shopifyOnlineUrl: string | null, vertical: string } | null>}
- */
-async function searchShopifyProducts(name) {
+/** Freight Find Item: one or two Shopify queries, not a long fallback chain. */
+function shopifyAdminListingSearchVariantsFast(raw) {
+  const base = String(raw || "").trim();
+  if (!base) return [];
+  const quoted = `title:"${base.replace(/"/g, "")}"`;
+  return quoted === base ? [base] : [quoted, base];
+}
+
+const SHOPIFY_LISTING_PRODUCT_FIELDS = `
+  id
+  legacyResourceId
+  title
+  handle
+  vendor
+  tags
+  productType
+  onlineStoreUrl
+  descriptionHtml
+  images(first: 5) { edges { node { url } } }
+  metafields(first: 25) { edges { node { namespace key value } } }
+  variants(first: 1) {
+    edges {
+      node {
+        price
+        inventoryItem { measurement { weight { value unit } } }
+      }
+    }
+  }
+`;
+
+async function shopifyAdminGraphql(query, variables = {}) {
   const token = (process.env.SHOPIFY_ACCESS_TOKEN || "").trim();
   const url = shopifyAdminGraphqlListingUrl();
   if (!url || !token) {
     throw new Error("Missing SHOPIFY_STORE or SHOPIFY_ACCESS_TOKEN");
   }
-
-  const query = `
-    query ProductSearch($q: String!) {
-      products(first: 15, query: $q) {
-        edges {
-          node {
-            id
-            legacyResourceId
-            title
-            handle
-            vendor
-            tags
-            productType
-            onlineStoreUrl
-            descriptionHtml
-            images(first: 5) {
-              edges {
-                node {
-                  url
-                }
-              }
-            }
-            metafields(first: 25) {
-              edges {
-                node {
-                  namespace
-                  key
-                  value
-                }
-              }
-            }
-            variants(first: 1) {
-              edges {
-                node {
-                  price
-                  inventoryItem {
-                    measurement {
-                      weight {
-                        value
-                        unit
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  `;
-
-  const rawName = String(name || "").trim();
-  const variants = shopifyAdminListingSearchVariants(rawName);
-  let edges = [];
-  for (const qTry of variants) {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Shopify-Access-Token": token,
-      },
-      body: JSON.stringify({
-        query,
-        variables: { q: qTry },
-      }),
-    });
-
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(`Shopify HTTP ${res.status}: ${text.slice(0, 300)}`);
-    }
-
-    const json = await res.json();
-    if (json.errors?.length) {
-      throw new Error(json.errors.map((e) => e.message).join("; "));
-    }
-
-    const batch = json.data?.products?.edges || [];
-    if (batch.length) {
-      edges = batch;
-      break;
-    }
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Shopify-Access-Token": token,
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Shopify HTTP ${res.status}: ${text.slice(0, 300)}`);
   }
-
-  if (!edges.length) return null;
-
-  let bestNode = null;
-  let bestScore = -1;
-  for (const edge of edges) {
-    const cand = edge?.node;
-    if (!cand) continue;
-    const title = String(cand.title || "").trim();
-    const score = listingTitleSearchScore(rawName, title);
-    if (score <= 0) continue;
-    const prevTitle = bestNode ? String(bestNode.title || "").trim() : "";
-    if (score > bestScore || (score === bestScore && listingSearchTiePrefer(rawName, title, prevTitle))) {
-      bestScore = score;
-      bestNode = cand;
-    }
+  const json = await res.json();
+  if (json.errors?.length) {
+    throw new Error(json.errors.map((e) => e.message).join("; "));
   }
-  if (!bestNode && edges.length === 1) {
-    bestNode = edges[0]?.node || null;
-  }
-  if (!bestNode) return null;
+  return json.data;
+}
 
-  const node = bestNode;
-  const images = (node.images?.edges || [])
-    .map((e) => e?.node?.url)
-    .filter(Boolean);
-
+function mapShopifyListingNode(node) {
+  if (!node) return null;
+  const images = (node.images?.edges || []).map((e) => e?.node?.url).filter(Boolean);
   const priceRaw = node.variants?.edges?.[0]?.node?.price;
   const variantNode = node.variants?.edges?.[0]?.node;
   let price = "";
@@ -10433,6 +10373,39 @@ async function searchShopifyProducts(name) {
   const description = stripListingDescriptionHtml(node.descriptionHtml || "");
   const tags = Array.isArray(node.tags) ? node.tags : [];
   const fromTags = parseDimensionsFromTags({ tags });
+  const metafields = (node.metafields?.edges || [])
+    .map((e) => e?.node)
+    .filter(Boolean)
+    .map((m) => ({
+      namespace: m.namespace,
+      key: m.key,
+      value: m.value,
+    }));
+
+  let width = fromTags.width != null && !Number.isNaN(fromTags.width) ? fromTags.width : null;
+  let height = fromTags.height != null && !Number.isNaN(fromTags.height) ? fromTags.height : null;
+  let depth = fromTags.length != null && !Number.isNaN(fromTags.length) ? fromTags.length : null;
+  for (const mf of metafields) {
+    const key = String(mf.key || "").toLowerCase();
+    const num = parseFloat(String(mf.value || "").replace(/[^\d.]/g, ""));
+    if (!Number.isFinite(num) || num <= 0) continue;
+    if (width == null && key === "width") width = num;
+    else if (height == null && key === "height") height = num;
+    else if (depth == null && (key === "length" || key === "depth")) depth = num;
+  }
+  const descDims = parseDimsFromDescription(description);
+  if (descDims) {
+    width = width ?? descDims.width;
+    depth = depth ?? descDims.depth;
+    height = height ?? descDims.height;
+  }
+  const titleDims = parseDimsFromTitle(node.title || "");
+  if (titleDims) {
+    width = width ?? titleDims.width;
+    depth = depth ?? titleDims.depth;
+    height = height ?? titleDims.height;
+  }
+
   let weight =
     fromTags.weight != null && !Number.isNaN(fromTags.weight) && fromTags.weight > 0
       ? fromTags.weight
@@ -10442,6 +10415,9 @@ async function searchShopifyProducts(name) {
     if (fromDescription?.value != null && Number.isFinite(Number(fromDescription.value))) {
       weight = Number(fromDescription.value);
     }
+  }
+  if (weight == null) {
+    weight = extractWeightLbNumberFromText(description) || extractWeightLbNumberFromText(node.title || "");
   }
   if (weight == null && variantNode?.inventoryItem?.measurement?.weight?.value != null) {
     const w = Number(variantNode.inventoryItem.measurement.weight.value);
@@ -10459,14 +10435,6 @@ async function searchShopifyProducts(name) {
     else if (unit === "GRAMS" || unit === "G") weight = w / 453.592;
     else weight = w;
   }
-  const metafields = (node.metafields?.edges || [])
-    .map((e) => e?.node)
-    .filter(Boolean)
-    .map((m) => ({
-      namespace: m.namespace,
-      key: m.key,
-      value: m.value,
-    }));
   if (weight == null) {
     for (const mf of metafields) {
       const key = String(mf.key || "").toLowerCase();
@@ -10478,6 +10446,7 @@ async function searchShopifyProducts(name) {
       }
     }
   }
+
   return {
     title: node.title || "",
     shopifyProductId,
@@ -10493,8 +10462,80 @@ async function searchShopifyProducts(name) {
     productType: String(node.productType || "").trim() || null,
     tags,
     weight,
+    width,
+    depth,
+    height,
     metafields,
   };
+}
+
+async function searchShopifyProductByHandle(handle) {
+  const key = String(handle || "").trim();
+  if (!key) return null;
+  const data = await shopifyAdminGraphql(
+    `query ProductByHandle($handle: String!) {
+      productByHandle(handle: $handle) {
+        ${SHOPIFY_LISTING_PRODUCT_FIELDS}
+      }
+    }`,
+    { handle: key }
+  );
+  return mapShopifyListingNode(data?.productByHandle || null);
+}
+
+/**
+ * @param {string} name Search string for Shopify `products(query: ...)`
+ * @returns {Promise<{ title: string, price: string, description: string, images: string[], vendor: string | null, handle: string | null, productUrl: string | null, shopifyOnlineUrl: string | null, vertical: string } | null>}
+ */
+async function searchShopifyProducts(name, options = {}) {
+  const rawName = String(name || "").trim();
+  if (!rawName) return null;
+
+  const query = `
+    query ProductSearch($q: String!) {
+      products(first: 15, query: $q) {
+        edges {
+          node {
+            ${SHOPIFY_LISTING_PRODUCT_FIELDS}
+          }
+        }
+      }
+    }
+  `;
+
+  const variants = options.fast
+    ? shopifyAdminListingSearchVariantsFast(rawName)
+    : shopifyAdminListingSearchVariants(rawName);
+  let edges = [];
+  for (const qTry of variants) {
+    const data = await shopifyAdminGraphql(query, { q: qTry });
+    const batch = data?.products?.edges || [];
+    if (batch.length) {
+      edges = batch;
+      break;
+    }
+  }
+
+  if (!edges.length) return null;
+
+  let bestNode = null;
+  let bestScore = -1;
+  for (const edge of edges) {
+    const cand = edge?.node;
+    if (!cand) continue;
+    const title = String(cand.title || "").trim();
+    const score = listingTitleSearchScore(rawName, title);
+    if (score <= 0) continue;
+    const prevTitle = bestNode ? String(bestNode.title || "").trim() : "";
+    if (score > bestScore || (score === bestScore && listingSearchTiePrefer(rawName, title, prevTitle))) {
+      bestScore = score;
+      bestNode = cand;
+    }
+  }
+  if (!bestNode && edges.length === 1) {
+    bestNode = edges[0]?.node || null;
+  }
+  return mapShopifyListingNode(bestNode);
 }
 
 /** Image field from Webflow CMS or ecommerce SKU: `{ url }` or raw URL string. */
@@ -11989,75 +12030,162 @@ function getListingSearchMinScore() {
   return Number.isFinite(n) && n > 0 ? n : 350;
 }
 
-async function scanLuxuryCmsForListingSearch(query) {
-  const config = getWebflowConfig("luxury");
-  if (!config.collectionId || !config.token) return null;
-  let best = null;
-  let offset = 0;
-  const limit = 100;
-  while (true) {
-    const url = `https://api.webflow.com/v2/collections/${config.collectionId}/items?limit=${limit}&offset=${offset}`;
-    const resp = await axios.get(url, {
-      headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
-    });
-    const items = resp.data?.items ?? [];
-    for (const item of items) {
-      if (item.isArchived === true) continue;
-      const fd = item.fieldData || {};
-      // Include sold / Recently Sold — freight + helpers still need listing data after a sale.
-      const name = fd.name ?? "";
-      const score = listingTitleSearchScore(query, name);
-      if (score <= 0) continue;
-      if (
-        !best ||
-        score > best.score ||
-        (score === best.score && listingSearchTiePrefer(query, name, best.name || ""))
-      ) {
-        best = { score, fd, name, item };
-      }
-      if (score >= 1000) return best;
+/**
+ * Freight Find Item + /api/listing: reuse the warm catalog in memory.
+ * If a complete index exists, return it immediately (even if TTL expired) and
+ * refresh in the background. Never live-paginate Webflow on every customer click.
+ */
+async function getLuxuryItemIndexForListingSearch({ fresh = false } = {}) {
+  if (fresh) return loadLuxuryItemIndex({ force: true });
+  if (luxuryItemIndex?.complete) {
+    if (Date.now() - luxuryItemIndexLoadedAt >= WEBFLOW_INDEX_TTL_MS) {
+      void loadLuxuryItemIndex({ force: true }).catch((err) => {
+        webflowLog("warn", {
+          event: "listing_search.luxury_index_refresh_failed",
+          message: err?.message || String(err),
+        });
+      });
     }
-    if (items.length < limit) break;
-    offset += limit;
+    return luxuryItemIndex;
+  }
+  return loadLuxuryItemIndex();
+}
+
+async function getFurnitureProductIndexForListingSearch({ fresh = false } = {}) {
+  if (fresh) return loadFurnitureProductIndex({ force: true });
+  if (furnitureProductIndex?.complete) {
+    if (Date.now() - furnitureProductIndexLoadedAt >= WEBFLOW_INDEX_TTL_MS) {
+      void loadFurnitureProductIndex({ force: true }).catch((err) => {
+        webflowLog("warn", {
+          event: "listing_search.furniture_index_refresh_failed",
+          message: err?.message || String(err),
+        });
+      });
+    }
+    return furnitureProductIndex;
+  }
+  return loadFurnitureProductIndex();
+}
+
+function considerListingSearchHit(query, name, score, best, extra) {
+  if (score <= 0) return best;
+  if (
+    !best ||
+    score > best.score ||
+    (score === best.score && listingSearchTiePrefer(query, name, best.name || ""))
+  ) {
+    return { score, name, ...extra };
   }
   return best;
 }
 
-async function scanFurnitureEcommerceForListingSearch(query) {
-  const config = getWebflowConfig("furniture");
-  if (!config.siteId || !config.token) return null;
-  let best = null;
-  let offset = 0;
-  const limit = 100;
-  while (true) {
-    const url = `https://api.webflow.com/v2/sites/${config.siteId}/products?limit=${limit}&offset=${offset}`;
-    const resp = await axios.get(url, {
-      headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
-    });
-    const raw = resp.data?.products ?? resp.data?.items ?? [];
-    const list = Array.isArray(raw) ? raw : [];
-    for (const listItem of list) {
-      const product = listItem.product ?? listItem;
-      if (product.isArchived === true) continue;
-      const fd = product.fieldData || {};
-      const skus = listItem.skus ?? product.skus ?? [];
-      // Include sold listings — do not skip when Webflow sold / date-sold is set.
-      const name = fd.name ?? product.name ?? "";
+function findBestLuxuryListingInIndex(query, index) {
+  if (!index) return null;
+  const nameKey = normalizeProductNameForIndex(query);
+  if (nameKey && index.byName?.has(nameKey)) {
+    const item = index.byName.get(nameKey);
+    if (item && item.isArchived !== true) {
+      const fd = item.fieldData || {};
+      const name = fd.name ?? "";
       const score = listingTitleSearchScore(query, name);
-      if (score <= 0) continue;
-      if (
-        !best ||
-        score > best.score ||
-        (score === best.score && listingSearchTiePrefer(query, name, best.name || ""))
-      ) {
-        best = { score, product, fd, skus, name };
-      }
-      if (score >= 1000) return best;
+      if (score >= 1000) return { score, fd, name, item };
     }
-    if (list.length < limit) break;
-    offset += limit;
+  }
+  let best = null;
+  const seen = new Set();
+  for (const map of [index.byName, index.byShopifyId, index.bySlug, index.byUrl]) {
+    if (!map) continue;
+    for (const item of map.values()) {
+      if (!item || seen.has(item) || item.isArchived === true) continue;
+      seen.add(item);
+      const fd = item.fieldData || {};
+      const name = fd.name ?? "";
+      const score = listingTitleSearchScore(query, name);
+      best = considerListingSearchHit(query, name, score, best, { fd, item });
+      if (best?.score >= 1000) return best;
+    }
   }
   return best;
+}
+
+function findBestFurnitureListingInIndex(query, index) {
+  if (!index) return null;
+  const nameKey = normalizeProductNameForIndex(query);
+  if (nameKey && index.byName?.has(nameKey)) {
+    const product = index.byName.get(nameKey);
+    if (product && product.isArchived !== true) {
+      const fd = product.fieldData || {};
+      const name = fd.name ?? product.name ?? "";
+      const score = listingTitleSearchScore(query, name);
+      if (score >= 1000) {
+        return { score, product, fd, skus: product.skus || [], name };
+      }
+    }
+  }
+  let best = null;
+  const seen = new Set();
+  for (const map of [index.byName, index.byShopifyId, index.bySlug, index.byUrl]) {
+    if (!map) continue;
+    for (const product of map.values()) {
+      if (!product || seen.has(product) || product.isArchived === true) continue;
+      seen.add(product);
+      const fd = product.fieldData || {};
+      const name = fd.name ?? product.name ?? "";
+      const score = listingTitleSearchScore(query, name);
+      best = considerListingSearchHit(query, name, score, best, {
+        product,
+        fd,
+        skus: product.skus || [],
+      });
+      if (best?.score >= 1000) return best;
+    }
+  }
+  return best;
+}
+
+async function scanLuxuryCmsForListingSearch(query, options = {}) {
+  const config = getWebflowConfig("luxury");
+  if (!config.collectionId || !config.token) return null;
+  const index = await getLuxuryItemIndexForListingSearch({ fresh: options.fresh === true });
+  return findBestLuxuryListingInIndex(query, index);
+}
+
+async function scanFurnitureEcommerceForListingSearch(query, options = {}) {
+  const config = getWebflowConfig("furniture");
+  if (!config.siteId || !config.token) return null;
+  const index = await getFurnitureProductIndexForListingSearch({ fresh: options.fresh === true });
+  return findBestFurnitureListingInIndex(query, index);
+}
+
+function listingDimInches(value) {
+  if (value == null || value === "") return null;
+  if (typeof value === "object") {
+    const n = Number(value.value ?? value.amount ?? value.inches ?? value.in);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }
+  const n = Number(String(value).replace(/[^0-9.]+/g, ""));
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function listingDimsFromFieldData(fd = {}, skuFd = {}) {
+  const width =
+    listingDimInches(skuFd.width) ??
+    listingDimInches(fd.width) ??
+    listingDimInches(fd["item-width"]) ??
+    listingDimInches(fd.item_width);
+  const height =
+    listingDimInches(skuFd.height) ??
+    listingDimInches(fd.height) ??
+    listingDimInches(fd["item-height"]) ??
+    listingDimInches(fd.item_height);
+  const depth =
+    listingDimInches(skuFd.length) ??
+    listingDimInches(skuFd.depth) ??
+    listingDimInches(fd.depth) ??
+    listingDimInches(fd.length) ??
+    listingDimInches(fd["item-depth"]) ??
+    listingDimInches(fd.item_depth);
+  return { width, height, depth };
 }
 
 function mapLuxuryListingSearchHit(hit) {
@@ -12084,6 +12212,7 @@ function mapLuxuryListingSearchHit(hit) {
       fieldData: fd,
     }
   );
+  const dims = listingDimsFromFieldData(fd, itemFd);
   const sold = webflowListingLooksSold({ fieldData: fd }, "luxury");
   return {
     title,
@@ -12097,16 +12226,22 @@ function mapLuxuryListingSearchHit(hit) {
     vendor: vendor || null,
     luxuryGoodsCategory,
     weight,
+    width: dims.width,
+    depth: dims.depth,
+    height: dims.height,
+    freight_class: fd.freight_class ?? fd.freightClass ?? itemFd.freight_class ?? null,
     sold,
   };
 }
 
-async function mapFurnitureListingSearchHit(hit, config) {
+async function mapFurnitureListingSearchHit(hit, config, options = {}) {
   const { product, fd } = hit;
   let skus = hit.skus ?? [];
   let skuFd = skus[0]?.fieldData;
   let images = furnitureSkuFieldDataImageUrls(skuFd);
-  if (images.length === 0 && product?.id) {
+  // Freight Find Item must fill in ~1s from the warm catalog. Extra product-by-id
+  // image fetches wait until includeImages=1 (Chrome / social helpers).
+  if (images.length === 0 && product?.id && options.fetchMissingImages === true && config?.siteId && config?.token) {
     const full = await getWebflowEcommerceProductById(config.siteId, product.id, config.token);
     if (full) {
       skus = full.skus ?? [];
@@ -12130,6 +12265,7 @@ async function mapFurnitureListingSearchHit(hit, config) {
       fieldData: fd,
     }
   );
+  const dims = listingDimsFromFieldData(fd, skuFd || {});
   const sold = webflowListingLooksSold(
     { fieldData: fd, skus },
     "furniture"
@@ -12146,6 +12282,10 @@ async function mapFurnitureListingSearchHit(hit, config) {
     vendor: vendor || null,
     luxuryGoodsCategory: null,
     weight,
+    width: dims.width,
+    depth: dims.depth,
+    height: dims.height,
+    freight_class: fd.freight_class ?? fd.freightClass ?? skuFd?.freight_class ?? null,
     sold,
   };
 }
@@ -12306,11 +12446,12 @@ app.get("/test-resend", async (req, res) => {
 });
 
 app.get("/api/listing", async (req, res) => {
+  const startedAt = Date.now();
   const name = req.query.name ?? req.query.url ?? req.query.slug;
   if (name === undefined || String(name).trim() === "") {
     return res.status(400).json({ error: "Missing required query param: name" });
   }
-  const source = String(req.query.source || "webflow").trim().toLowerCase();
+  const source = String(req.query.source || "shopify").trim().toLowerCase();
   const exactOnly =
     String(req.query.exact || req.query.match || "").trim().toLowerCase() === "1" ||
     String(req.query.exact || req.query.match || "").trim().toLowerCase() === "exact" ||
@@ -12322,26 +12463,20 @@ app.get("/api/listing", async (req, res) => {
     let matchScore = null;
     let matchedBySlug = false;
 
-    if (lookup.kind === "slug" && lookup.value) {
-      try {
-        listing = await searchWebflowListingBySlug(lookup.value);
-        matchedBySlug = Boolean(listing);
-      } catch (slugErr) {
-        webflowLog("warn", {
-          event: "api.listing.slug_lookup_failed",
-          slug: lookup.value.slice(0, 120),
-          message: slugErr?.message || String(slugErr),
-        });
-      }
-    }
-
-    if (!listing) {
-      if (source === "shopify") {
-        listing = await searchShopifyProducts(searchName);
-        if (!listing) {
-          listing = await searchWebflowListing(searchName);
+    if (source === "webflow") {
+      if (lookup.kind === "slug" && lookup.value) {
+        try {
+          listing = await searchWebflowListingBySlug(lookup.value);
+          matchedBySlug = Boolean(listing);
+        } catch (slugErr) {
+          webflowLog("warn", {
+            event: "api.listing.slug_lookup_failed",
+            slug: lookup.value.slice(0, 120),
+            message: slugErr?.message || String(slugErr),
+          });
         }
-      } else {
+      }
+      if (!listing) {
         try {
           listing = await searchWebflowListing(searchName);
         } catch (webflowErr) {
@@ -12353,6 +12488,23 @@ app.get("/api/listing", async (req, res) => {
         if (!listing) {
           listing = await searchShopifyProducts(searchName);
         }
+      }
+    } else {
+      // Freight Find Item: one Shopify Admin call. Dims/weight are in the description.
+      if (lookup.kind === "slug" && lookup.value) {
+        try {
+          listing = await searchShopifyProductByHandle(lookup.value);
+          matchedBySlug = Boolean(listing);
+        } catch (slugErr) {
+          webflowLog("warn", {
+            event: "api.listing.shopify_handle_failed",
+            slug: lookup.value.slice(0, 120),
+            message: slugErr?.message || String(slugErr),
+          });
+        }
+      }
+      if (!listing) {
+        listing = await searchShopifyProducts(searchName, { fast: true });
       }
     }
     if (!listing) {
@@ -12466,6 +12618,13 @@ app.get("/api/listing", async (req, res) => {
       sold,
     };
 
+    webflowLog("info", {
+      event: "api.listing.ok",
+      source,
+      ms: Date.now() - startedAt,
+      matchedBySlug,
+      title: String(listing.title || "").slice(0, 80),
+    });
     return res.json({
       // Freight calculator shape
       listing: freightListing,
@@ -12499,7 +12658,7 @@ app.get("/api/listing", async (req, res) => {
       matchScore,
     });
   } catch (err) {
-    webflowLog("error", { event: "api.listing", message: err?.message, source });
+    webflowLog("error", { event: "api.listing", message: err?.message, source, ms: Date.now() - startedAt });
     return res.status(500).json({
       error: err?.message || (source === "shopify" ? "Shopify request failed" : "Webflow request failed"),
       listing: null,
@@ -14119,8 +14278,8 @@ app.listen(PORT, () => {
   console.log(
     `Shopify product webhooks: ${scheme}://${host}/webhook/products (create), ${scheme}://${host}/webhook/products/update (update), ${scheme}://${host}/webhook/products/delete (delete)`
   );
-  console.log(`Facebook listing helper (Webflow default): ${scheme}://${host}/api/listing?name=...`);
-  console.log(`  Shopify mode: ${scheme}://${host}/api/listing?name=...&source=shopify`);
+  console.log(`Listing lookup (Shopify default): ${scheme}://${host}/api/listing?name=...`);
+  console.log(`  Webflow mode: ${scheme}://${host}/api/listing?name=...&source=webflow`);
   console.log(`  Facebook copy (OpenAI): POST ${scheme}://${host}/api/listing-blurb (needs OPENAI_API_KEY)`);
   console.log(`  Social caption (OpenAI gpt-4o vision): POST ${scheme}://${host}/api/social-caption`);
   console.log(`  Package assign (OpenAI): POST ${scheme}://${host}/api/package-assign (OPENAI_PACKAGE_MODEL, default gpt-5.2)`);
