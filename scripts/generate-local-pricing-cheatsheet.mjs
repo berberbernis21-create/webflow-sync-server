@@ -300,9 +300,9 @@ async function buildPdf() {
   bullet(doc, "Oversize items (299+ lb & over 72 in H, or 450+ lb) auto-use $130/hr even if customer did not select extra crew.");
 
   sectionTitle(doc, "Out-of-town / long haul (still local truck)");
-  bullet(doc, "Round trip over 100 miles → route priced at 80% of $95/hr (~$76/hr effective).");
+  bullet(doc, "Round trip over 100 miles → still billed at full $95/hr (no discount).");
   bullet(doc, "Label may say “Best-Guess Estimate (Out of town — callout)” — confirm before scheduling.");
-  bullet(doc, "If 2 extra people on a long-haul job: two trucks at the reduced 80% rate.");
+  bullet(doc, "If 2 extra people on a long-haul job: two trucks at full $95/hr.");
 
   sectionTitle(doc, "What doubles on two-truck jobs vs what does not");
   drawTable(

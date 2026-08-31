@@ -733,11 +733,11 @@ test("local pricing: stairs first flight free then $7", () => {
   assert.equal(three.estimated_price, 109);
 });
 
-test("local pricing: round trip over 100 miles uses 80% of $95", () => {
+test("local pricing: round trip over 100 miles still bills at full $95/hr", () => {
   const est = calculateLocalRouteEstimate(15, { distanceMiles: 55 });
   assert.equal(est.long_haul, true);
-  assert.equal(est.hourly_rate, 76);
-  assert.equal(est.estimated_price, 80);
+  assert.equal(est.hourly_rate, 95);
+  assert.equal(est.estimated_price, 95);
 });
 
 test("local pricing: oversize needs 299+ lb and over 72 H, or 450+ lb", () => {

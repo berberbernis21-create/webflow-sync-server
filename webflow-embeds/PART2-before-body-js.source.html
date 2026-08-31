@@ -33,7 +33,7 @@
   };
   const crewHelp=_k=>"This is your opinion only — assume straps, dollies, and normal gear. If yes, choose 1 or 2 extra people and briefly explain why.";
 
-  const LOCAL={baseMinutes:15,basePrice:95,referenceMinutes:8,referencePrice:15,threePersonHourly:130,longHaulRoundTripMiles:100,longHaulFactor:0.8,stairFeePerExtraFlight:7,oversizeWeight:299,oversizeHeight:72,oversizeAlwaysWeight:450,truckDrivePadMinutes:3};
+  const LOCAL={baseMinutes:15,basePrice:95,referenceMinutes:8,referencePrice:15,threePersonHourly:130,longHaulRoundTripMiles:100,longHaulFactor:1,stairFeePerExtraFlight:7,oversizeWeight:299,oversizeHeight:72,oversizeAlwaysWeight:450,truckDrivePadMinutes:3};
   const DRAFT_KEY="lfFreightDraft_v1";
   let step=1,maxStepReached=1,itemCounter=0,lastPreview=null,submitting=false;
   let pathMismatchAcknowledged=false;
@@ -250,11 +250,9 @@
     let trucks=1;
     if(extraPeople>=2){
       trucks=2;
-      hourly=longHaul?LOCAL.basePrice*LOCAL.longHaulFactor:LOCAL.basePrice;
+      hourly=LOCAL.basePrice;
     }else if(extraPeople===1||oversize){
       hourly=LOCAL.threePersonHourly;
-    }else if(longHaul){
-      hourly=LOCAL.basePrice*LOCAL.longHaulFactor;
     }
 
     const scale=hourly/LOCAL.basePrice;
