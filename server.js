@@ -12079,12 +12079,13 @@ function considerListingSearchHit(query, name, score, best, extra) {
   return best;
 }
 
-function findBestLuxuryListingInIndex(query, index) {
+function findBestLuxuryListingInIndex(query, index, options = {}) {
   if (!index) return null;
+  const includeArchived = options.includeArchived === true;
   const nameKey = normalizeProductNameForIndex(query);
   if (nameKey && index.byName?.has(nameKey)) {
     const item = index.byName.get(nameKey);
-    if (item && item.isArchived !== true) {
+    if (item && (includeArchived || item.isArchived !== true)) {
       const fd = item.fieldData || {};
       const name = fd.name ?? "";
       const score = listingTitleSearchScore(query, name);
@@ -12096,7 +12097,8 @@ function findBestLuxuryListingInIndex(query, index) {
   for (const map of [index.byName, index.byShopifyId, index.bySlug, index.byUrl]) {
     if (!map) continue;
     for (const item of map.values()) {
-      if (!item || seen.has(item) || item.isArchived === true) continue;
+      if (!item || seen.has(item)) continue;
+      if (!includeArchived && item.isArchived === true) continue;
       seen.add(item);
       const fd = item.fieldData || {};
       const name = fd.name ?? "";
@@ -12108,12 +12110,13 @@ function findBestLuxuryListingInIndex(query, index) {
   return best;
 }
 
-function findBestFurnitureListingInIndex(query, index) {
+function findBestFurnitureListingInIndex(query, index, options = {}) {
   if (!index) return null;
+  const includeArchived = options.includeArchived === true;
   const nameKey = normalizeProductNameForIndex(query);
   if (nameKey && index.byName?.has(nameKey)) {
     const product = index.byName.get(nameKey);
-    if (product && product.isArchived !== true) {
+    if (product && (includeArchived || product.isArchived !== true)) {
       const fd = product.fieldData || {};
       const name = fd.name ?? product.name ?? "";
       const score = listingTitleSearchScore(query, name);
@@ -12127,7 +12130,8 @@ function findBestFurnitureListingInIndex(query, index) {
   for (const map of [index.byName, index.byShopifyId, index.bySlug, index.byUrl]) {
     if (!map) continue;
     for (const product of map.values()) {
-      if (!product || seen.has(product) || product.isArchived === true) continue;
+      if (!product || seen.has(product)) continue;
+      if (!includeArchived && product.isArchived === true) continue;
       seen.add(product);
       const fd = product.fieldData || {};
       const name = fd.name ?? product.name ?? "";
@@ -12147,14 +12151,18 @@ async function scanLuxuryCmsForListingSearch(query, options = {}) {
   const config = getWebflowConfig("luxury");
   if (!config.collectionId || !config.token) return null;
   const index = await getLuxuryItemIndexForListingSearch({ fresh: options.fresh === true });
-  return findBestLuxuryListingInIndex(query, index);
+  return findBestLuxuryListingInIndex(query, index, {
+    includeArchived: options.includeArchived === true,
+  });
 }
 
 async function scanFurnitureEcommerceForListingSearch(query, options = {}) {
   const config = getWebflowConfig("furniture");
   if (!config.siteId || !config.token) return null;
   const index = await getFurnitureProductIndexForListingSearch({ fresh: options.fresh === true });
-  return findBestFurnitureListingInIndex(query, index);
+  return findBestFurnitureListingInIndex(query, index, {
+    includeArchived: options.includeArchived === true,
+  });
 }
 
 function listingDimInches(value) {
@@ -12369,8 +12377,9 @@ async function searchWebflowListingBySlug(slug) {
 /**
  * Best-effort title search across Luxury CMS + Furniture ecommerce (same JSON shape as Shopify listing).
  * @param {string} name
+ * @param {{ includeArchived?: boolean, fresh?: boolean }} [options]
  */
-async function searchWebflowListing(name) {
+async function searchWebflowListing(name, options = {}) {
   const q = String(name || "").trim();
   if (!q) return null;
   const luxCfg = getWebflowConfig("luxury");
@@ -12383,9 +12392,13 @@ async function searchWebflowListing(name) {
     );
   }
   const minScore = getListingSearchMinScore();
+  const scanOpts = {
+    fresh: options.fresh === true,
+    includeArchived: options.includeArchived === true,
+  };
   const [luxRes, furnRes] = await Promise.allSettled([
-    canLux ? scanLuxuryCmsForListingSearch(q) : Promise.resolve(null),
-    canFurn ? scanFurnitureEcommerceForListingSearch(q) : Promise.resolve(null),
+    canLux ? scanLuxuryCmsForListingSearch(q, scanOpts) : Promise.resolve(null),
+    canFurn ? scanFurnitureEcommerceForListingSearch(q, scanOpts) : Promise.resolve(null),
   ]);
   const luxHit = luxRes.status === "fulfilled" ? luxRes.value : null;
   const furnHit = furnRes.status === "fulfilled" ? furnRes.value : null;
@@ -12417,6 +12430,31 @@ async function searchWebflowListing(name) {
   }
   if (luxOk) return mapLuxuryListingSearchHit(luxHit);
   return await mapFurnitureListingSearchHit(furnHit, furnCfg);
+}
+
+/**
+ * Freight Find Item: when Shopify misses (sold / deleted), hit the warm Webflow catalog by name/slug.
+ * Includes archived rows so recently sold pieces still resolve for shipping quotes.
+ */
+async function searchCachedListingFallback(searchName, lookup = {}) {
+  const q = String(searchName || "").trim();
+  if (!q && !(lookup?.kind === "slug" && lookup.value)) return null;
+  try {
+    if (lookup?.kind === "slug" && lookup.value) {
+      const bySlug = await searchWebflowListingBySlug(lookup.value);
+      if (bySlug) return { listing: bySlug, via: "webflow_slug_cache" };
+    }
+    if (!q) return null;
+    const byName = await searchWebflowListing(q, { includeArchived: true });
+    if (byName) return { listing: byName, via: "webflow_name_cache" };
+  } catch (err) {
+    webflowLog("warn", {
+      event: "api.listing.cache_fallback_failed",
+      query: q.slice(0, 120),
+      message: err?.message || String(err),
+    });
+  }
+  return null;
 }
 
 /* ======================================================
@@ -12462,6 +12500,7 @@ app.get("/api/listing", async (req, res) => {
     let listing = null;
     let matchScore = null;
     let matchedBySlug = false;
+    let listingSource = source === "webflow" ? "webflow" : "shopify";
 
     if (source === "webflow") {
       if (lookup.kind === "slug" && lookup.value) {
@@ -12487,10 +12526,11 @@ app.get("/api/listing", async (req, res) => {
         }
         if (!listing) {
           listing = await searchShopifyProducts(searchName);
+          if (listing) listingSource = "shopify";
         }
       }
     } else {
-      // Freight Find Item: one Shopify Admin call. Dims/weight are in the description.
+      // Freight Find Item: Shopify first, then warm Webflow catalog (sold items often 404 on Shopify).
       if (lookup.kind === "slug" && lookup.value) {
         try {
           listing = await searchShopifyProductByHandle(lookup.value);
@@ -12506,6 +12546,22 @@ app.get("/api/listing", async (req, res) => {
       if (!listing) {
         listing = await searchShopifyProducts(searchName, { fast: true });
       }
+      if (!listing) {
+        const cached = await searchCachedListingFallback(searchName, lookup);
+        if (cached?.listing) {
+          listing = cached.listing;
+          listingSource = cached.via;
+          matchedBySlug = matchedBySlug || cached.via === "webflow_slug_cache";
+          webflowLog("info", {
+            event: "api.listing.shopify_miss_cache_hit",
+            via: cached.via,
+            query: String(searchName || "").slice(0, 120),
+            title: String(listing.title || "").slice(0, 80),
+            sold: Boolean(listing.sold),
+            ms: Date.now() - startedAt,
+          });
+        }
+      }
     }
     if (!listing) {
       return res.status(404).json({ error: "No products found", listing: null });
@@ -12519,15 +12575,44 @@ app.get("/api/listing", async (req, res) => {
     matchScore = matchedBySlug
       ? 1000
       : listingTitleSearchScore(String(searchName), String(listing.title || ""));
-    if (!matchedBySlug && exactOnly && !isExact && matchScore < 1000) {
-      return res.status(404).json({
-        error: "No exact listing title match",
-        listing: null,
+
+    const tryCacheAfterWeakMatch = async (reason) => {
+      if (source === "webflow" || String(listingSource).includes("webflow")) return false;
+      const cached = await searchCachedListingFallback(searchName, lookup);
+      if (!cached?.listing) return false;
+      const cScore = listingTitleSearchScore(String(searchName), String(cached.listing.title || ""));
+      const cNorm = normalizeProductNameForIndex(String(cached.listing.title || ""));
+      const exactOk = Boolean(qNorm && cNorm && qNorm === cNorm) || cScore >= 1000;
+      const fuzzyOk = cScore >= getListingSearchMinScore();
+      if (reason === "exact" ? !exactOk : !fuzzyOk) return false;
+      listing = cached.listing;
+      matchScore = exactOk ? 1000 : cScore;
+      matchedBySlug = cached.via === "webflow_slug_cache";
+      listingSource = cached.via;
+      webflowLog("info", {
+        event: "api.listing.weak_shopify_cache_hit",
+        reason,
+        via: cached.via,
+        score: matchScore,
+        query: String(searchName || "").slice(0, 120),
+        title: String(listing.title || "").slice(0, 80),
       });
+      return true;
+    };
+
+    if (!matchedBySlug && exactOnly && !isExact && matchScore < 1000) {
+      if (!(await tryCacheAfterWeakMatch("exact"))) {
+        return res.status(404).json({
+          error: "No exact listing title match",
+          listing: null,
+        });
+      }
     }
     // Freight clients often omit exact=1 but type the full title — still reject weak fuzzy hits.
     if (!matchedBySlug && !exactOnly && matchScore < getListingSearchMinScore()) {
-      return res.status(404).json({ error: "No products found", listing: null });
+      if (!(await tryCacheAfterWeakMatch("fuzzy"))) {
+        return res.status(404).json({ error: "No products found", listing: null });
+      }
     }
 
     // Freight calculator dims: prefer CMS/structured fields, then furniture title parse
@@ -12621,8 +12706,10 @@ app.get("/api/listing", async (req, res) => {
     webflowLog("info", {
       event: "api.listing.ok",
       source,
+      listingSource,
       ms: Date.now() - startedAt,
       matchedBySlug,
+      sold: Boolean(sold),
       title: String(listing.title || "").slice(0, 80),
     });
     return res.json({
