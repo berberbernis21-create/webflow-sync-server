@@ -1321,16 +1321,25 @@
     const qty=Math.max(1,num($(".lf-quantity",node).value)||1);
     const nationwide=$('input[name="delivery_path"]:checked')?.value==="nationwide";
     const flip=nationwide?($(".lf-flip-stack:checked",node)?.value||""):"";
+    let title=stripNoLongerAvailable($(".lf-title",node).value.trim());
+    let productUrl=pickup?"":$(".lf-url",node).value.trim();
+    const titleLooksUrl=/^https?:\/\//i.test(title)||/lostandfoundresale\.com\//i.test(title)||/\/products?\//i.test(title);
+    // Pasted product URL in the name field → keep as listing link, never as the display title.
+    if(!pickup&&titleLooksUrl){
+      if(!productUrl)productUrl=title;
+      const slug=(productUrl.split("/").filter(Boolean).pop()||"").replace(/-\d{4,}$/,"").replace(/[-_+]+/g," ").trim();
+      title=slug?slug.replace(/\b\w/g,c=>c.toUpperCase()):title;
+    }
     const item={
       source:pickup?"manual":($(".lf-source",node).value||"manual"),
-      title:stripNoLongerAvailable($(".lf-title",node).value.trim()),
+      title,
       width:num($(".lf-width",node).value),
       depth:num($(".lf-depth",node).value),
       height:num($(".lf-height",node).value),
       weight:num($(".lf-weight",node).value),
       quantity:qty,
       price:pickup?null:num($(".lf-price-input",node).value),
-      product_url:pickup?"":$(".lf-url",node).value.trim(),
+      product_url:productUrl,
       image_url:pickup?"":($(".lf-image-url",node)?.value||"").trim(),
       sold:pickup?false:($(".lf-sold",node)?.value==="1"),
       freight_class:$(".lf-class",node).value===""?null:num($(".lf-class",node).value),
@@ -1521,13 +1530,20 @@
         return;
       }
 
-      if(data.title)$(".lf-title",node).value=stripNoLongerAvailable(data.title);
+      if(data.title){
+        $(".lf-title",node).value=stripNoLongerAvailable(data.title);
+      }else if(/^https?:\/\//i.test(title)||/lostandfoundresale\.com\//i.test(title)){
+        // Lookup returned dims but empty name — humanize the slug so emails never show the raw URL.
+        const slug=(title.split("/").filter(Boolean).pop()||"").replace(/-\d{4,}$/,"").replace(/[-_+]+/g," ").trim();
+        if(slug)$(".lf-title",node).value=slug.replace(/\b\w/g,c=>c.toUpperCase());
+      }
       if(data.width)$(".lf-width",node).value=data.width;
       if(data.depth)$(".lf-depth",node).value=data.depth;
       if(data.height)$(".lf-height",node).value=data.height;
       if(data.weight)$(".lf-weight",node).value=data.weight;
       if(data.price)$(".lf-price-input",node).value=data.price;
       if(data.product_url)$(".lf-url",node).value=data.product_url;
+      else if(/^https?:\/\//i.test(title)||/lostandfoundresale\.com\//i.test(title))$(".lf-url",node).value=title;
       if($(".lf-image-url",node))$(".lf-image-url",node).value=data.image_url||"";
       if($(".lf-sold",node))$(".lf-sold",node).value=data.sold?"1":"0";
       $(".lf-source",node).value="listing";
