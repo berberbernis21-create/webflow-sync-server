@@ -1282,6 +1282,15 @@
       e.preventDefault();
       lookupItem(node);
     });
+    // Pasting a product URL should pull the listing (title + image + dims) like Find Item.
+    const maybeAutoLookupUrl=()=>{
+      const v=String(title.value||"").trim();
+      if(!v)return;
+      if(!(/^https?:\/\//i.test(v)||/lostandfoundresale\.com\//i.test(v)||/\/products?\//i.test(v)))return;
+      lookupItem(node);
+    };
+    title.addEventListener("paste",()=>setTimeout(maybeAutoLookupUrl,0));
+    title.addEventListener("blur",maybeAutoLookupUrl);
     const qtyInput=$(".lf-quantity",node);
     const syncStackAsk=()=>{
       const ask=$(".lf-stack-ask",node);
