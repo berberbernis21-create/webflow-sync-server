@@ -533,7 +533,7 @@ const LOCATION_EXAMPLES_LUXURY = `LOCATION LINE EXAMPLES (ALWAYS include @lostan
 📍 @lostandfoundresale · Scottsdale, AZ
 📍 Available @lostandfoundresale in Scottsdale
 📍 Scottsdale luxury resale · @lostandfoundresale
-NEVER: Ships from Scottsdale | NEVER use lostandfoundresale.com as the shop URL (handbags site only)`;
+NEVER: Ships from Scottsdale | NEVER any website URL, .com, www, or http (Meta blocks links in captions)`;
 
 const BASE_PROMPTS = {
   resale_interiors: `You are Lost + Found Resale Interiors' best static-post writer. You crush Facebook + Instagram captions the way our brand already sounds: sharp hooks, sparse but punchy emojis, real listing facts, clean layout, zero fluff SEO spam.
@@ -562,7 +562,8 @@ MANDATORY CAPTION LAYOUT (blank line between EVERY section - NO hashtags anywher
 ${LOCATION_EXAMPLES_FURNITURE}
 9) CTA:
    PRIMARY (vary): 👉 Shop the feed · Tap to shop · Shop right here · Shop this post
-   Then: For store details, consigning with us, our policies & more: lostandfoundresale.com
+   SECONDARY (vary, NEVER a link): send people to the website with words only.
+   Examples: "The rest of the shop lives on our website - start from the homepage." / "Visit the website from our homepage for the full store, consigning, and policies." / "Store details, consigning, and policies - start from our homepage."
 
 HASHTAGS:
 - Put the 5 hashtags ONLY in the JSON "hashtags" array
@@ -587,6 +588,8 @@ HARD BANS:
 - "Sitting pretty in Scottsdale" as a default / go-to line
 - "we ship most pieces" / "shipping available on most" - say we ship everywhere
 - Generic hooks that could fit any product
+- ANY website, URL, http, https, www, .com, .net, .org, or pasted product / consign / shop link
+- Writing lostandfoundresale.com or lostandfoundhandbags.com (or any other domain)
 - "Please see … below the description" / Delivery-Pickup-Freight Options pointers
 - Long shipping policy paragraphs
 - Output JSON only`,
@@ -608,7 +611,7 @@ MANDATORY CAPTION LAYOUT (blank line between EVERY section - NO hashtags in capt
 4) FEATURES - ✔ or 🤍/💜 lines (or one ✨ comma line) from description
 5) BODY - sell the lifestyle / why this piece, without repeating the full title
 6) LOCATION 📍 - ALWAYS @lostandfoundresale (${LOCATION_EXAMPLES_LUXURY})
-7) CTA - 👉 Shop the feed (or similar) then lostandfoundhandbags.com (NEVER lostandfoundresale.com for shop link)
+7) CTA - 👉 Shop the feed (or similar), then send people to the handbags shop with words only (NEVER a URL). Example: "The handbags shop lives on our website - start from the homepage."
 
 HASHTAGS: exactly 5 in JSON "hashtags" array ONLY - never inside caption.
 
@@ -625,6 +628,8 @@ HARD BANS:
 - Generic influencer fluff
 - "real gold" / "solid gold" on gold plated, gold tone, vermeil, or gold-filled pieces
 - Reusing "impossible-to-ignore detail" as the default jewelry/Chanel hook
+- ANY website, URL, http, https, www, .com, or pasted product / consign / shop link
+- Writing lostandfoundhandbags.com or lostandfoundresale.com (or any other domain)
 - "Please see … below the description" / Delivery-Pickup-Freight Options pointers
 - Long shipping policy paragraphs`,
 };
@@ -814,11 +819,11 @@ MULTI-PHOTO CTA (INSTAGRAM BUG — HARD BAN):
 - NEVER say: "Shop this post" / "shop this post" / "Tap to shop this post" / "Shop the post"
 - Instead rotate soft CTAs like:
   - 👉 Shop this store right here
-  - 👉 Visit us online at lostandfoundresale.com (or lostandfoundhandbags.com for luxury)
+  - 👉 Visit us from our homepage
   - 👉 Visit us in store in Scottsdale
   - 👉 Come see these pieces on the floor
-- Then one line: For store details, consigning with us, our policies & more: [correct site URL]
-- Furniture/resale → lostandfoundresale.com | Luxury handbags → lostandfoundhandbags.com
+- Then one line with NO URL: store details, consigning, and policies live on our website - start from the homepage
+- NEVER write a website, .com, www, http, product link, or consign link
 
 RULES:
 - Include EVERY item's real name and price from PRODUCT CONTEXT — never invent or skip
@@ -895,7 +900,7 @@ function ensureSetItemRoster(caption, setItems) {
     .filter((b) => String(b || "").trim());
 
   const isTail = (block) =>
-    /^(perfect for|📍|👉|for store details|visit us|shop this store|come see|tap to)/i.test(
+    /^(perfect for|📍|👉|for store details|visit us|shop this store|come see|tap to)|homepage|our website/i.test(
       String(block || "").trim()
     );
 
@@ -910,6 +915,82 @@ function ensureSetItemRoster(caption, setItems) {
   return blocks.join("\n\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
+function pickNoLinkCloser(seed, division = "resale_interiors") {
+  const furniture = [
+    "The rest of the shop lives on our website - start from the homepage.",
+    "Visit the website from our homepage for the full store, consigning, and policies.",
+    "Want more? Our homepage is the front door to the shop.",
+    "Store details, consigning, and policies - start from our homepage.",
+    "Hop over to our homepage for the full collection.",
+  ];
+  const handbags = [
+    "The handbags shop lives on our website - start from the homepage.",
+    "Visit the website from our homepage for the full luxury shop.",
+    "More bags, consigning, and policies - start from our homepage.",
+    "The rest of the collection is on our website - begin at the homepage.",
+  ];
+  const pool = division === "luxury_handbags" ? handbags : furniture;
+  return pool[Math.abs(String(seed || "").length) % pool.length];
+}
+
+/**
+ * Meta blocks links in captions. Strip every URL / .com / www and rewrite
+ * leftover "visit us at …" lines into homepage language.
+ */
+function rewriteCaptionLinks(caption, division = "resale_interiors") {
+  const src = String(caption || "");
+  if (!src.trim()) return src;
+  const closer = pickNoLinkCloser(src, division);
+  const hadLink =
+    /https?:\/\/|\bwww\.|lostandfound(?:resale|handbags)\.com|\.(?:com|net|org|shop|store)\b/i.test(
+      src
+    );
+
+  const stripLinksInLine = (line) => {
+    let s = String(line || "");
+    s = s.replace(/https?:\/\/[^\s)\]>'"]+/gi, "");
+    s = s.replace(/\bwww\.[^\s)\]>'"]+/gi, "");
+    s = s.replace(/\b[\w.+-]+@lostandfound(?:resale|handbags)\.com\b/gi, "");
+    s = s.replace(/\b(?:lostandfound(?:resale|handbags)\.com)(?:\/[^\s)\]>'"]*)?/gi, "");
+    s = s.replace(
+      /\b[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9-]+)*\.(?:com|net|org|shop|store|co|io|biz|info)(?:\/[^\s)\]>'"]*)?/gi,
+      ""
+    );
+    return s
+      .replace(/[ \t]{2,}/g, " ")
+      .replace(/\s+([,;])/g, "$1")
+      .replace(/[:|.\u2013\u2014\-]\s*$/g, "")
+      .trim();
+  };
+
+  const closerCue =
+    /for store details|explore more|visit us online|shop anytime|policies|consign|website|homepage|\.com|https?:\/\/|www\./i;
+  const leftoverCloser =
+    /^(?:👉\s*)?(?:for (?:store details|the full collection|additional info|more details)|explore more|more details)\b/i;
+  const danglingAt =
+    /\b(?:visit us online at|shop anytime at|shop online at|shop at|available at|find it at|see more at|more at|online at)\s*$/i;
+
+  const lines = src.split(/\n/).map((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return "";
+    const cleaned = stripLinksInLine(line);
+    if (!cleaned || /^(?:👉|🔗|🌐|💻)$/u.test(cleaned)) {
+      return closerCue.test(trimmed) ? closer : "";
+    }
+    if (leftoverCloser.test(cleaned) && !/homepage|our website/i.test(cleaned)) return closer;
+    if (danglingAt.test(cleaned)) {
+      return cleaned.replace(danglingAt, "Visit us from our homepage");
+    }
+    return cleaned;
+  });
+
+  let t = lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  if (hadLink && !/homepage|our website/i.test(t)) {
+    t = `${t}\n\n${closer}`;
+  }
+  return t;
+}
+
 /**
  * Multi-photo IG bug: never ship "Shop this post". Soften to store / online / in-store.
  * Also fix obvious wrong group-count words in the opening lines.
@@ -918,10 +999,6 @@ function ensureSetItemRoster(caption, setItems) {
 function enforceSetCaptionHygiene(caption, setSize, division = "resale_interiors", setItems = []) {
   let t = String(caption || "");
   const n = Math.max(0, Number(setSize) || 0);
-  const site =
-    division === "luxury_handbags" ? "lostandfoundhandbags.com" : "lostandfoundresale.com";
-  const brandOnline =
-    division === "luxury_handbags" ? "Lost & Found Handbags" : "Lost & Found Resale";
 
   // Count nouns in the first few non-empty lines only (hook / intro).
   const lines = t.split(/\n/);
@@ -956,7 +1033,7 @@ function enforceSetCaptionHygiene(caption, setSize, division = "resale_interiors
     .replace(/👉\s*Tap to shop this post\.?/gi, "👉 Shop this store right here")
     .replace(/👉\s*Shop this post\.?/gi, "👉 Shop this store right here")
     .replace(/👉\s*Shop the post\.?/gi, "👉 Shop this store right here")
-    .replace(/\bTap to shop this post\b/gi, `Visit us online at ${brandOnline}`)
+    .replace(/\bTap to shop this post\b/gi, "Visit us from our homepage")
     .replace(/\bShop this post\b/gi, "Shop this store right here")
     .replace(/\bshop this post\b/gi, "shop this store right here")
     .replace(/\bShop the post\b/gi, "Visit us in store")
@@ -964,14 +1041,7 @@ function enforceSetCaptionHygiene(caption, setSize, division = "resale_interiors
 
   // Deterministic roster — model often skips this on large sets.
   t = ensureSetItemRoster(t, setItems);
-
-  // If a soft CTA remains but the site URL vanished, append a clean closer line once.
-  if (
-    /shop this store right here|visit us online|visit us in store/i.test(t) &&
-    !new RegExp(site.replace(/\./g, "\\."), "i").test(t)
-  ) {
-    t = `${t.replace(/\s+$/g, "")}\n\nFor store details, consigning with us, our policies & more: ${site}`;
-  }
+  t = rewriteCaptionLinks(t, division);
 
   return t.replace(/\n{3,}/g, "\n\n").trim();
 }
@@ -1064,7 +1134,6 @@ export function registerSocialCaptionRoute(app, { log } = {}) {
               `Item name: ${it.listing.title || it.itemName}`,
               it.listing.price ? `Price: ${it.listing.price}` : "",
               it.listing.dimensions ? `Dimensions: ${it.listing.dimensions}` : "",
-              it.listing.productUrl ? `Product URL: ${it.listing.productUrl}` : "",
               it.listing.vertical ? `Vertical: ${it.listing.vertical}` : "",
               it.listing.description
                 ? `Listing description:\n${it.listing.description.slice(0, 1200)}`
@@ -1081,7 +1150,6 @@ export function registerSocialCaptionRoute(app, { log } = {}) {
           `Item name: ${listing.title || itemName || ""}`,
           listing.price ? `Price: ${listing.price}` : "",
           listing.dimensions ? `Dimensions: ${listing.dimensions}` : "",
-          listing.productUrl ? `Product URL: ${listing.productUrl}` : "",
           listing.vertical ? `Vertical: ${listing.vertical}` : "",
           cleanDescription
             ? `Listing description (PRIMARY SOURCE for the caption — what the item is, look, feel, use):\n${cleanDescription.slice(
@@ -1239,8 +1307,8 @@ ${listingBits}`;
             {
               role: "system",
               content: isSetPost
-                ? `You are Lost & Found Resale's elite social caption writer for multi-item set posts. You receive listing facts AND photos in the same order as the items. Write one cohesive caption for the whole group, then a tight roster of every item with name and price. Match SET SIZE exactly in the hook (never say trio for 4 items). Mixed categories must flow. Never overwhelm. CTA/conversation only at the end. NEVER say "Shop this post" on multi-photo captions (Instagram shop-banner bug) — use visit us online / visit us in store / shop this store right here. Hashtags ONLY in the JSON hashtags array. NEVER use em/en dashes. No markdown. Return valid JSON only.`
-                : "You are Lost & Found Resale's elite social caption writer - the one who makes people stop scrolling and want the piece. You have RANGE: natural, minimal, funky, editorial, storyteller, bold, or curator. Always keep the mandatory layout (tagline, title, PRICE right after title then dims, features, hungry sell body, Perfect for, location, CTA). Commit hard to the assigned style so no two posts sound alike. Say we ship everywhere (never 'most pieces'). Local delivery is $95/hr same rate no matter size or item count. Hashtags ONLY in the JSON hashtags array. NEVER use em/en dashes - only hyphens or commas. Sell hard, stay honest, make it amazing. No markdown. Return valid JSON only.",
+                ? `You are Lost & Found Resale's elite social caption writer for multi-item set posts. You receive listing facts AND photos in the same order as the items. Write one cohesive caption for the whole group, then a tight roster of every item with name and price. Match SET SIZE exactly in the hook (never say trio for 4 items). Mixed categories must flow. Never overwhelm. CTA/conversation only at the end. NEVER say "Shop this post" on multi-photo captions (Instagram shop-banner bug) — use visit us from our homepage / visit us in store / shop this store right here. NEVER include any URL, website, .com, www, or http - Meta blocks links in captions. Hashtags ONLY in the JSON hashtags array. NEVER use em/en dashes. No markdown. Return valid JSON only.`
+                : "You are Lost & Found Resale's elite social caption writer - the one who makes people stop scrolling and want the piece. You have RANGE: natural, minimal, funky, editorial, storyteller, bold, or curator. Always keep the mandatory layout (tagline, title, PRICE right after title then dims, features, hungry sell body, Perfect for, location, CTA). Commit hard to the assigned style so no two posts sound alike. Say we ship everywhere (never 'most pieces'). Local delivery is $95/hr same rate no matter size or item count. NEVER include any URL, website, .com, www, or http - Meta blocks links in captions. Send people to the website with words only (start from the homepage). Hashtags ONLY in the JSON hashtags array. NEVER use em/en dashes - only hyphens or commas. Sell hard, stay honest, make it amazing. No markdown. Return valid JSON only.",
             },
             { role: "user", content: userContent },
           ],
@@ -1282,9 +1350,12 @@ ${listingBits}`;
       const captionRaw = ensurePriceAboveDimensions(
         stripEmDashes(stripHashtagsFromCaption(String(parsed.caption || "").replace(/\s+$/g, "")))
       );
-      const caption = isSetPost
-        ? enforceSetCaptionHygiene(captionRaw, setItems.length, division, setItems)
-        : enforceItemAccurateOpening(captionRaw, detectedItemType, itemSourceText);
+      const caption = rewriteCaptionLinks(
+        isSetPost
+          ? enforceSetCaptionHygiene(captionRaw, setItems.length, division, setItems)
+          : enforceItemAccurateOpening(captionRaw, detectedItemType, itemSourceText),
+        division
+      );
       const hashtags = ensureHashtags(
         parsed.hashtags,
         {
