@@ -12567,6 +12567,51 @@ app.get("/test-resend", async (req, res) => {
   }
 });
 
+function storefrontUrlFromCatalogEntry(entry, kind) {
+  if (!entry) return null;
+  const fd = entry.fieldData || {};
+  const slug = String(fd.slug || fd["shopify-slug-2"] || "").trim();
+  if (!slug) return null;
+  if (kind === "luxury") {
+    const base = String(getLuxuryListingPublicBaseUrl() || "").replace(/\/$/, "");
+    if (!base) return null;
+    return { productUrl: `${base}/${slug}`, handle: slug };
+  }
+  const productUrl = listingFurnitureProductUrlFromSlug(slug);
+  return productUrl ? { productUrl, handle: slug } : null;
+}
+
+/**
+ * Public pages live on Webflow. Shopify handles stay stale after slug edits
+ * (for example adding "-as-is-"), so lostandfoundresale.com links must use the
+ * catalog slug, matched by Shopify product id, then exact title.
+ */
+async function liveStorefrontLinkForShopifyListing(listing) {
+  if (!listing) return null;
+  if (listing.vertical === "furniture" || listing.vertical === "luxury") return null;
+  try {
+    await Promise.all([
+      loadFurnitureProductIndex().catch(() => null),
+      loadLuxuryItemIndex().catch(() => null),
+    ]);
+  } catch {
+    return null;
+  }
+  const id = listing.shopifyProductId != null ? String(listing.shopifyProductId).trim() : "";
+  const nameKey = normalizeProductNameForIndex(listing.title || "");
+  const furn =
+    (id && furnitureProductIndex?.byShopifyId?.get(id)) ||
+    (nameKey && furnitureProductIndex?.byName?.get(nameKey)) ||
+    null;
+  const fromFurn = storefrontUrlFromCatalogEntry(furn, "furniture");
+  if (fromFurn?.productUrl) return fromFurn;
+  const lux =
+    (id && luxuryItemIndex?.byShopifyId?.get(id)) ||
+    (nameKey && luxuryItemIndex?.byName?.get(nameKey)) ||
+    null;
+  return storefrontUrlFromCatalogEntry(lux, "luxury");
+}
+
 app.get("/api/listing", async (req, res) => {
   const startedAt = Date.now();
   const name = req.query.name ?? req.query.url ?? req.query.slug;
@@ -12767,6 +12812,22 @@ app.get("/api/listing", async (req, res) => {
     if (freightClass == null || freightClass === "") missing_fields.push("freight_class");
 
     const sold = Boolean(listing.sold) || listingLooksSold(listing);
+    if (!listing.vertical || listing.vertical === "shopify") {
+      const liveLink = await liveStorefrontLinkForShopifyListing(listing);
+      if (liveLink?.productUrl) {
+        const previous = String(listing.productUrl || "");
+        listing.productUrl = liveLink.productUrl;
+        if (liveLink.handle) listing.handle = liveLink.handle;
+        if (previous && previous !== liveLink.productUrl) {
+          webflowLog("info", {
+            event: "api.listing.storefront_url_override",
+            from: previous.slice(0, 180),
+            to: String(liveLink.productUrl).slice(0, 180),
+            title: String(listing.title || "").slice(0, 80),
+          });
+        }
+      }
+    }
     const freightListing = {
       title: listing.title || "",
       width: width ?? null,
