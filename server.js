@@ -12581,22 +12581,35 @@ function storefrontUrlFromCatalogEntry(entry, kind) {
   return productUrl ? { productUrl, handle: slug } : null;
 }
 
+function refreshStorefrontIndexInBackground(kind) {
+  const isFurniture = kind === "furniture";
+  const index = isFurniture ? furnitureProductIndex : luxuryItemIndex;
+  const loadedAt = isFurniture ? furnitureProductIndexLoadedAt : luxuryItemIndexLoadedAt;
+  const inflight = isFurniture ? furnitureProductIndexInflight : luxuryItemIndexInflight;
+  if (inflight) return;
+  const stale = !index?.complete || Date.now() - loadedAt >= WEBFLOW_INDEX_TTL_MS;
+  if (!stale) return;
+  const loader = isFurniture ? loadFurnitureProductIndex : loadLuxuryItemIndex;
+  void loader({ force: Boolean(index?.complete) }).catch((err) => {
+    webflowLog("warn", {
+      event: "api.listing.storefront_index_refresh_failed",
+      kind,
+      message: err?.message || String(err),
+    });
+  });
+}
+
 /**
  * Public pages live on Webflow. Shopify handles stay stale after slug edits
  * (for example adding "-as-is-"), so lostandfoundresale.com links must use the
- * catalog slug, matched by Shopify product id, then exact title.
+ * catalog slug already in memory. Never wait on a Webflow reload here — that
+ * made Find Item block on every name lookup.
  */
-async function liveStorefrontLinkForShopifyListing(listing) {
+function liveStorefrontLinkForShopifyListing(listing) {
   if (!listing) return null;
   if (listing.vertical === "furniture" || listing.vertical === "luxury") return null;
-  try {
-    await Promise.all([
-      loadFurnitureProductIndex().catch(() => null),
-      loadLuxuryItemIndex().catch(() => null),
-    ]);
-  } catch {
-    return null;
-  }
+  refreshStorefrontIndexInBackground("furniture");
+  refreshStorefrontIndexInBackground("luxury");
   const id = listing.shopifyProductId != null ? String(listing.shopifyProductId).trim() : "";
   const nameKey = normalizeProductNameForIndex(listing.title || "");
   const furn =
@@ -12813,7 +12826,7 @@ app.get("/api/listing", async (req, res) => {
 
     const sold = Boolean(listing.sold) || listingLooksSold(listing);
     if (!listing.vertical || listing.vertical === "shopify") {
-      const liveLink = await liveStorefrontLinkForShopifyListing(listing);
+      const liveLink = liveStorefrontLinkForShopifyListing(listing);
       if (liveLink?.productUrl) {
         const previous = String(listing.productUrl || "");
         listing.productUrl = liveLink.productUrl;
@@ -14521,6 +14534,22 @@ app.listen(PORT, () => {
       message: err?.message ?? String(err),
     });
   });
+  // Warm the catalog in the background so Find Item can swap in the live
+  // Webflow slug from memory. Never block startup or a name lookup on this.
+  void Promise.all([
+    loadFurnitureProductIndex().catch((err) => {
+      webflowLog("warn", {
+        event: "startup.furniture_index_failed",
+        message: err?.message || String(err),
+      });
+    }),
+    loadLuxuryItemIndex().catch((err) => {
+      webflowLog("warn", {
+        event: "startup.luxury_index_failed",
+        message: err?.message || String(err),
+      });
+    }),
+  ]);
 });
 
 
