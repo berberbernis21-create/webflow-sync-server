@@ -43,6 +43,29 @@ test("dimension fragment stays a name lookup", () => {
   assert.equal(q.kind, "name");
 });
 
+test("catalog SKU is six or seven characters", () => {
+  const six = extractListingLookupQuery("KVLUZK");
+  assert.equal(six.kind, "sku");
+  assert.equal(six.value, "KVLUZK");
+  const seven = extractListingLookupQuery("KVLUZK2");
+  assert.equal(seven.kind, "sku");
+  assert.equal(seven.value, "KVLUZK2");
+});
+
+test("product name with dimensions stays a name lookup", () => {
+  const samples = [
+    "Ceramic Jack-O-Lantern 10X10X12",
+    "Round Circles Mirror Art-20X1X36",
+    "Art-20X1X36",
+  ];
+  for (const raw of samples) {
+    const q = extractListingLookupQuery(raw);
+    assert.equal(q.kind, "name", raw);
+    assert.equal(q.value, raw, raw);
+    assert.equal(listingSkuSkipsTitleFallback(q), false, raw);
+  }
+});
+
 test("letter-only token is a SKU attempt that can still fall through to title", () => {
   const q = extractListingLookupQuery("Chandelier");
   assert.equal(q.kind, "sku");
