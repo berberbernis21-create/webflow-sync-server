@@ -4,6 +4,9 @@ import {
   extractListingLookupQuery,
   listingSkuSkipsTitleFallback,
   normalizeListingSkuKey,
+  pickListingSkuMatch,
+  shopifySkuSearchQueries,
+  storedListingSkuMatchRank,
 } from "../lib/listingLookupQuery.js";
 
 test("product URL still resolves to a slug", () => {
@@ -44,6 +47,45 @@ test("letter-only token is a SKU attempt that can still fall through to title", 
   const q = extractListingLookupQuery("Chandelier");
   assert.equal(q.kind, "sku");
   assert.equal(listingSkuSkipsTitleFallback(q), false);
+});
+
+test("plain SKU searches unquoted first, then quoted", () => {
+  assert.deepEqual(shopifySkuSearchQueries("GND4FH"), ['sku:GND4FH', 'sku:"GND4FH"']);
+  assert.deepEqual(shopifySkuSearchQueries(" ny2 a5x "), ['sku:ny2a5x', 'sku:"ny2a5x"']);
+  assert.deepEqual(shopifySkuSearchQueries("LF-1042"), ['sku:LF-1042', 'sku:"LF-1042"']);
+});
+
+test("SKU search quotes codes that contain Shopify search operators", () => {
+  assert.deepEqual(shopifySkuSearchQueries('AB"12'), ['sku:"AB\\"12"']);
+  assert.deepEqual(shopifySkuSearchQueries("AB(12)"), ['sku:"AB(12)"']);
+  assert.deepEqual(shopifySkuSearchQueries(""), []);
+});
+
+test("stored SKU matches the code or the code plus a numeric suffix", () => {
+  assert.equal(storedListingSkuMatchRank("GND4FH", "gnd4fh"), 2);
+  assert.equal(storedListingSkuMatchRank("GND4FH-2877", "GND4FH"), 1);
+  assert.equal(storedListingSkuMatchRank("NY2A5X-99", "ny2 a5x"), 1);
+  assert.equal(storedListingSkuMatchRank("GND4FH-2877", "GND4"), 0);
+  assert.equal(storedListingSkuMatchRank("GND4FH-2877", "GND4FH-28"), 0);
+  assert.equal(storedListingSkuMatchRank("Dracena Planter", "GND4FH"), 0);
+});
+
+test("ambiguous numeric suffixes are not treated as a hit", () => {
+  const one = pickListingSkuMatch(
+    [{ sku: "OTHER-1", title: "nope" }, { sku: "GND4FH-2877", title: "planter" }],
+    "GND4FH"
+  );
+  assert.equal(one.sku, "GND4FH-2877");
+  const exact = pickListingSkuMatch(
+    [{ sku: "GND4FH-2877" }, { sku: "GND4FH" }],
+    "GND4FH"
+  );
+  assert.equal(exact.sku, "GND4FH");
+  const ambiguous = pickListingSkuMatch(
+    [{ sku: "GND4FH-1" }, { sku: "GND4FH-2" }],
+    "GND4FH"
+  );
+  assert.equal(ambiguous, null);
 });
 
 test("NY2A5X with spaces and mixed case is one Shopify SKU lookup", () => {

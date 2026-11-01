@@ -45,6 +45,9 @@ import {
   extractListingLookupQuery,
   listingSkuSkipsTitleFallback,
   normalizeListingSkuKey,
+  pickListingSkuMatch,
+  shopifySkuSearchQueries,
+  storedListingSkuMatchRank,
 } from "./lib/listingLookupQuery.js";
 import consignmentRouter from "./routes/consignmentSubmission.js";
 import freightQuoteRouter from "./routes/freightQuote.js";
@@ -10588,36 +10591,72 @@ function mapShopifyListingNode(node) {
   };
 }
 
-function shopifySkuQueryString(sku) {
-  const safe = String(sku || "")
-    .replace(/[\s\u00a0]+/g, "")
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, '\\"');
-  return `sku:"${safe}"`;
-}
-
 /** Put the variant whose SKU matched first so price and weight come from that variant. */
 function shopifyProductNodeWithMatchedSkuFirst(product, skuKey, variantNode) {
   if (!product) return null;
   const edges = Array.isArray(product.variants?.edges) ? product.variants.edges.slice() : [];
-  let idx = edges.findIndex((e) => normalizeListingSkuKey(e?.node?.sku) === skuKey);
-  if (idx < 0 && variantNode) {
+  let bestIdx = -1;
+  let bestRank = 0;
+  edges.forEach((edge, index) => {
+    const rank = storedListingSkuMatchRank(edge?.node?.sku, skuKey);
+    if (rank > bestRank) {
+      bestRank = rank;
+      bestIdx = index;
+    }
+  });
+  const variantRank = storedListingSkuMatchRank(variantNode?.sku, skuKey);
+  if (variantNode && variantRank > bestRank) {
     edges.unshift({ node: variantNode });
-    idx = 0;
-  } else if (idx > 0) {
-    const [hit] = edges.splice(idx, 1);
+  } else if (bestIdx > 0) {
+    const [hit] = edges.splice(bestIdx, 1);
     edges.unshift(hit);
   }
   return { ...product, variants: { ...(product.variants || {}), edges } };
 }
 
-/** Exact Shopify variant SKU (Admin search). Same listing shape as title / handle lookup. */
+function listingFromVariantSkuEdges(edges, skuKey) {
+  const candidates = [];
+  for (const edge of edges || []) {
+    const node = edge?.node;
+    if (!node?.product || storedListingSkuMatchRank(node.sku, skuKey) <= 0) continue;
+    candidates.push({ sku: node.sku, node });
+  }
+  const picked = pickListingSkuMatch(candidates, skuKey);
+  if (!picked?.node) return null;
+  return mapShopifyListingNode(
+    shopifyProductNodeWithMatchedSkuFirst(picked.node.product, skuKey, picked.node)
+  );
+}
+
+function listingFromProductSkuEdges(edges, skuKey) {
+  const candidates = [];
+  for (const edge of edges || []) {
+    const product = edge?.node;
+    if (!product) continue;
+    for (const variantEdge of product.variants?.edges || []) {
+      const node = variantEdge?.node;
+      if (!node || storedListingSkuMatchRank(node.sku, skuKey) <= 0) continue;
+      candidates.push({ sku: node.sku, node, product });
+    }
+  }
+  const picked = pickListingSkuMatch(candidates, skuKey);
+  if (!picked?.product) return null;
+  return mapShopifyListingNode(
+    shopifyProductNodeWithMatchedSkuFirst(picked.product, skuKey, picked.node)
+  );
+}
+
+/**
+ * Variant SKU lookup. Tries unquoted then quoted productVariants search, then
+ * products(query: sku:CODE). A hit must be the same normalized SKU, or the
+ * store's CODE-digits form (GND4FH-2877). Title matches are ignored.
+ */
 async function searchShopifyProductBySku(sku) {
   const skuKey = normalizeListingSkuKey(sku);
   if (!skuKey) return null;
-  const data = await shopifyAdminGraphql(
-    `query ProductBySku($q: String!) {
-      productVariants(first: 5, query: $q) {
+  const queries = shopifySkuSearchQueries(sku);
+  const variantQuery = `query ProductBySku($q: String!) {
+      productVariants(first: 10, query: $q) {
         edges {
           node {
             sku
@@ -10627,17 +10666,42 @@ async function searchShopifyProductBySku(sku) {
           }
         }
       }
-    }`,
-    { q: shopifySkuQueryString(sku) }
-  );
-  const edges = data?.productVariants?.edges || [];
-  for (const edge of edges) {
-    const node = edge?.node;
-    if (normalizeListingSkuKey(node?.sku) !== skuKey || !node?.product) continue;
-    return mapShopifyListingNode(
-      shopifyProductNodeWithMatchedSkuFirst(node.product, skuKey, node)
-    );
+    }`;
+  const productsQuery = `query ProductsBySku($q: String!) {
+      products(first: 10, query: $q) {
+        edges {
+          node { ${SHOPIFY_LISTING_PRODUCT_FIELDS} }
+        }
+      }
+    }`;
+  let sawSuccess = false;
+  let lastErr = null;
+  const note = async (run) => {
+    try {
+      const listing = await run();
+      sawSuccess = true;
+      return listing;
+    } catch (err) {
+      lastErr = err;
+      return null;
+    }
+  };
+  for (const q of queries) {
+    const listing = await note(async () => {
+      const data = await shopifyAdminGraphql(variantQuery, { q });
+      return listingFromVariantSkuEdges(data?.productVariants?.edges, skuKey);
+    });
+    if (listing) return listing;
   }
+  const productSearch = queries[0];
+  if (productSearch) {
+    const listing = await note(async () => {
+      const data = await shopifyAdminGraphql(productsQuery, { q: productSearch });
+      return listingFromProductSkuEdges(data?.products?.edges, skuKey);
+    });
+    if (listing) return listing;
+  }
+  if (!sawSuccess && lastErr) throw lastErr;
   return null;
 }
 
@@ -12509,6 +12573,18 @@ async function searchWebflowListingBySlug(slug) {
   return null;
 }
 
+/** Exact map hit, or the one catalog row stored as CODE-digits. */
+function catalogEntryForListingSku(bySku, skuKey) {
+  if (!bySku || !skuKey) return null;
+  const exact = bySku.get(skuKey);
+  if (exact) return exact;
+  const candidates = [];
+  for (const [stored, entry] of bySku.entries()) {
+    candidates.push({ sku: stored, entry });
+  }
+  return pickListingSkuMatch(candidates, skuKey)?.entry || null;
+}
+
 /** Resolve a warm-catalog row by the SKU already stored on the product or its Webflow SKU. */
 async function searchWebflowListingBySku(sku) {
   const key = normalizeListingSkuKey(sku);
@@ -12522,7 +12598,7 @@ async function searchWebflowListingBySku(sku) {
         /* continue */
       }
     }
-    const entry = furnitureProductIndex?.bySku?.get(key);
+    const entry = catalogEntryForListingSku(furnitureProductIndex?.bySku, key);
     if (entry) {
       return mapFurnitureListingSearchHit(
         { product: entry, fd: entry.fieldData || {}, skus: entry.skus || [] },
@@ -12539,7 +12615,7 @@ async function searchWebflowListingBySku(sku) {
         /* continue */
       }
     }
-    const luxItem = luxuryItemIndex?.bySku?.get(key);
+    const luxItem = catalogEntryForListingSku(luxuryItemIndex?.bySku, key);
     if (luxItem) {
       const fd = luxItem.fieldData || {};
       return mapLuxuryListingSearchHit({ item: luxItem, fd, score: 1000 });
@@ -12753,12 +12829,24 @@ app.get("/api/listing", async (req, res) => {
         });
       };
       if (skipFuzzyTitle) {
-        // Exact Shopify variant SKU. Do not scan the Webflow catalog by name.
+        // Digit SKU: Shopify variant search, then the warm catalog. No title scan.
         try {
           listing = await searchShopifyProductBySku(lookup.value);
           if (listing) listingSource = "shopify";
         } catch (skuErr) {
           noteSkuError(skuErr);
+        }
+        if (!listing && !skuError) {
+          try {
+            listing = await searchWebflowListingBySku(lookup.value);
+            if (listing) listingSource = "webflow_sku_cache";
+          } catch (webflowErr) {
+            webflowLog("warn", {
+              event: "api.listing.webflow_sku_fallback_failed",
+              sku: String(lookup.value).slice(0, 80),
+              message: webflowErr?.message || String(webflowErr),
+            });
+          }
         }
         matchedBySku = Boolean(listing);
         if (!listing) {
