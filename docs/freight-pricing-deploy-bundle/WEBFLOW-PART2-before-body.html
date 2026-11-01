@@ -1,0 +1,13 @@
+<!-- LF freight calc Part 2 (loads JS from Render to stay under Webflow 50k). Source: PART2-before-body-js.source.html · deploy after push -->
+<script>
+(function(){
+  var s=document.createElement("script");
+  s.src="https://webflow-sync-server.onrender.com/embeds/freight-part2.js?v="+Date.now();
+  s.defer=true;
+  s.onerror=function(){
+    var host=document.getElementById("lfCalcHost")||document.getElementById("lfCalc");
+    if(host)host.innerHTML='<p style="margin:24px auto;max-width:980px;padding:18px;font:14px/1.5 Arial,Helvetica,sans-serif;color:#9c2f2f;text-align:center">Could not load the delivery calculator script. Please refresh the page.</p>';
+  };
+  document.head.appendChild(s);
+})();
+</script>
