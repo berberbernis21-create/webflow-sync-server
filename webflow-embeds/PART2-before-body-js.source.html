@@ -1510,6 +1510,14 @@
     return next;
   }
 
+  function isSkuLookupInput(raw){
+    const compact=String(raw||"").trim().replace(/^sku\s*[:#-]\s*/i,"").replace(/^sku\s+/i,"").replace(/[\s\u00a0]+/g,"");
+    if(!compact||compact.length<2||compact.length>64)return false;
+    if(/^https?:\/\//i.test(compact)||/lostandfoundresale\.com/i.test(compact)||/\/products?\//i.test(compact))return false;
+    if(/^\d+(?:\.\d+)?(?:[x×]\d+(?:\.\d+)?){1,2}h?$/i.test(compact))return false;
+    return /^[A-Za-z0-9][A-Za-z0-9._+\-/]*$/.test(compact)&&/\d/.test(compact);
+  }
+
   async function lookupItem(node){
     const title=$(".lf-title",node).value.trim(),btn=$(".lf-lookup",node),msg=$(".lf-lookup-message",node);
     if(!title){fieldError($(".lf-title",node),"Enter the listing title, product URL, or SKU.");return}
@@ -1524,10 +1532,14 @@
     }
     btn.disabled=true;btn.innerHTML='<span class="lf-spin"></span>Looking Up';
     msg.className="lf-lookup-message";
+    let skuMiss=false;
     try{
       const res=await fetch(LOOKUP_URL+"?source=shopify&name="+encodeURIComponent(title),{headers:{"Accept":"application/json"}});
       const raw=await res.json().catch(()=>({}));
-      if(!res.ok)throw new Error(raw.error||raw.message||"Listing not found.");
+      if(!res.ok){
+        if((res.status===404||raw.skuLookup)&&isSkuLookupInput(title))skuMiss=true;
+        throw new Error(raw.error||raw.message||"Listing not found.");
+      }
       const data=extractListing(raw);
       if(!data.width&&!data.depth&&!data.height&&!data.weight)throw new Error("The listing was found, but dimensions or weight were not returned. Please complete them manually.");
 
@@ -1576,7 +1588,9 @@
       msg.classList.add("show");
       updatePallet(node);
     }catch(err){
-      msg.textContent=(err.message||"We could not find an exact match.")+" You can still enter the item manually.";
+      msg.textContent=skuMiss
+        ?"No item found for that SKU. Try the item name, or enter the item manually."
+        :(err.message||"We could not find an exact match.")+" You can still enter the item manually.";
       msg.classList.add("show","bad");
       $(".lf-source",node).value="manual";
     }finally{btn.disabled=false;btn.textContent="Find Item"}

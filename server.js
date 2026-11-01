@@ -10589,7 +10589,10 @@ function mapShopifyListingNode(node) {
 }
 
 function shopifySkuQueryString(sku) {
-  const safe = String(sku || "").trim().replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  const safe = String(sku || "")
+    .replace(/[\s\u00a0]+/g, "")
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"');
   return `sku:"${safe}"`;
 }
 
@@ -12749,7 +12752,24 @@ app.get("/api/listing", async (req, res) => {
           message: skuErr?.message || String(skuErr),
         });
       };
-      if (source === "webflow") {
+      if (skipFuzzyTitle) {
+        // Exact Shopify variant SKU. Do not scan the Webflow catalog by name.
+        try {
+          listing = await searchShopifyProductBySku(lookup.value);
+          if (listing) listingSource = "shopify";
+        } catch (skuErr) {
+          noteSkuError(skuErr);
+        }
+        matchedBySku = Boolean(listing);
+        if (!listing) {
+          if (skuError) throw skuError;
+          return res.status(404).json({
+            error: "No item found for that SKU. Try the item name, or enter the item manually.",
+            listing: null,
+            skuLookup: true,
+          });
+        }
+      } else if (source === "webflow") {
         try {
           listing = await searchWebflowListingBySku(lookup.value);
           if (listing) listingSource = "webflow_sku_cache";
@@ -12764,6 +12784,7 @@ app.get("/api/listing", async (req, res) => {
             noteSkuError(skuErr);
           }
         }
+        matchedBySku = Boolean(listing);
       } else {
         try {
           listing = await searchShopifyProductBySku(lookup.value);
@@ -12778,9 +12799,8 @@ app.get("/api/listing", async (req, res) => {
             noteSkuError(skuErr);
           }
         }
+        matchedBySku = Boolean(listing);
       }
-      matchedBySku = Boolean(listing);
-      if (!listing && skuError && skipFuzzyTitle) throw skuError;
     }
 
     if (!listing && !skipFuzzyTitle && source === "webflow") {
