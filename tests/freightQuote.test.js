@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import zlib from "node:zlib";
 import {
   palletizeItem,
   palletizeItems,
@@ -11,6 +12,8 @@ import {
   describeStackConfirmNeed,
 } from "../lib/freightPalletize.js";
 import { validateFreightQuoteRequest } from "../lib/freightQuoteValidation.js";
+import { buildFreightQuoteEmails } from "../lib/freightQuoteEmail.js";
+import { generateLocalSignPdf } from "../lib/freightLocalSignPdf.js";
 import { buildManualReviewReasons } from "../lib/freightLocalEstimate.js";
 import { isAllowedConsignmentOrigin } from "../lib/consignmentCors.js";
 import {
@@ -984,4 +987,189 @@ test("consignor pickup_az rejected outside Arizona", () => {
   });
   assert.equal(v.ok, false);
   assert.match(v.error, /Arizona/i);
+});
+
+function localDeliveryBody(extra = {}) {
+  return {
+    customer_name: "Bernis Berber",
+    customer_email: "bernis.berber@icloud.com",
+    customer_phone: "4807727004",
+    street: "7167 E Rancho Vista Dr",
+    unit: "#1005",
+    city: "Scottsdale",
+    state: "AZ",
+    zip: "85251",
+    delivery_path: "local_az",
+    request_mode: "estimate",
+    destination_type: "residential",
+    access: {
+      stairs: false,
+      needs_more_than_two_people: false,
+      assembly_required: "no",
+      preferred_days_windows: "Tuesday or Wednesday, 10am-2pm or 1pm-5pm",
+      ...(extra.access || {}),
+    },
+    items: [{ title: "Chair", width: 20, depth: 20, height: 30, weight: 40, quantity: 1 }],
+    ...extra,
+    access: {
+      stairs: false,
+      needs_more_than_two_people: false,
+      assembly_required: "no",
+      preferred_days_windows: "Tuesday or Wednesday, 10am-2pm or 1pm-5pm",
+      ...(extra.access || {}),
+    },
+  };
+}
+
+test("delivery partner accepts only Cruz Pro Line", () => {
+  const selected = validateFreightQuoteRequest(
+    localDeliveryBody({ access: { delivery_partner: "cruz_pro_line" } })
+  );
+  assert.equal(selected.ok, true);
+  assert.equal(selected.submission.access.delivery_partner, "cruz_pro_line");
+
+  const spaced = validateFreightQuoteRequest(
+    localDeliveryBody({ access: { delivery_partner: "Cruz Pro Line" } })
+  );
+  assert.equal(spaced.submission.access.delivery_partner, "cruz_pro_line");
+
+  const other = validateFreightQuoteRequest(
+    localDeliveryBody({ access: { delivery_partner: "Some Other Movers" } })
+  );
+  assert.equal(other.ok, true);
+  assert.equal(other.submission.access.delivery_partner, "");
+
+  const blank = validateFreightQuoteRequest(localDeliveryBody());
+  assert.equal(blank.submission.access.delivery_partner, "");
+
+  const nationwide = validateFreightQuoteRequest({
+    ...localDeliveryBody({ access: { delivery_partner: "cruz_pro_line" } }),
+    delivery_path: "nationwide",
+    state: "CA",
+    city: "Los Angeles",
+    zip: "90001",
+    access: { delivery_partner: "cruz_pro_line", liftgate_delivery: true },
+    items: [{ title: "Chair", width: 20, depth: 20, height: 30, weight: 40, quantity: 1 }],
+  });
+  assert.equal(nationwide.ok, true);
+  assert.equal(nationwide.submission.access.delivery_partner, "");
+});
+
+test("internal call out shows Cruz Pro Line only when selected", () => {
+  const ctx = {
+    requestId: "test-1",
+    route: { drive_minutes: 23, distance_miles: 8.9 },
+    localEstimate: { estimated_price: 110, drive_minutes: 23, distance_miles: 8.9 },
+  };
+  const off = validateFreightQuoteRequest(localDeliveryBody());
+  const offMail = buildFreightQuoteEmails(off.submission, ctx);
+  assert.match(offMail.internal.html, /Call out items/);
+  assert.match(offMail.internal.html, /Preferred days \/ windows/);
+  assert.doesNotMatch(offMail.internal.html, /480-376-9485/);
+  assert.doesNotMatch(offMail.internal.text, /480-376-9485/);
+
+  const on = validateFreightQuoteRequest(
+    localDeliveryBody({ access: { delivery_partner: "cruz_pro_line" } })
+  );
+  const onMail = buildFreightQuoteEmails(on.submission, ctx);
+  const callOut = onMail.internal.html.split("Call out items")[1] || "";
+  assert.match(callOut, /Cruz Pro Line/);
+  assert.match(callOut, /480-376-9485/);
+  assert.match(onMail.internal.text, /Delivery partner: Cruz Pro Line · 480-376-9485/);
+  const prefAt = callOut.indexOf("Preferred days / windows");
+  const partnerAt = callOut.indexOf("Delivery partner");
+  assert.ok(prefAt >= 0 && partnerAt > prefAt);
+});
+
+function pdfOps(buf) {
+  const raw = buf.toString("latin1");
+  const parts = [];
+  const re = /\/Filter \/FlateDecode\s*>>\s*stream\r?\n([\s\S]*?)\nendstream/g;
+  let match;
+  while ((match = re.exec(raw))) {
+    parts.push(zlib.inflateSync(Buffer.from(match[1], "latin1")).toString("latin1"));
+  }
+  const content = parts.join("\n");
+  const ops = [];
+  const opRe = /1 0 0 1 ([\d.]+) ([\d.]+) Tm\n[\s\S]*?\[([\s\S]*?)\]\s*TJ/g;
+  while ((match = opRe.exec(content))) {
+    let text = "";
+    const hexRe = /<([0-9A-Fa-f]+)>/g;
+    let hex;
+    while ((hex = hexRe.exec(match[3]))) {
+      for (let i = 0; i < hex[1].length; i += 2) {
+        text += String.fromCharCode(parseInt(hex[1].slice(i, i + 2), 16));
+      }
+    }
+    ops.push({ x: Number(match[1]), y: Number(match[2]), text });
+  }
+  return ops;
+}
+
+function pdfFind(ops, needle) {
+  return ops.find((op) => op.text.includes(needle)) || null;
+}
+
+test("sign PDF fills delivery company and keeps preferred days in their own field", async () => {
+  const ctx = {
+    requestId: "test-sign",
+    route: { drive_minutes: 23, distance_miles: 8.9 },
+    localEstimate: { estimated_price: 110, drive_minutes: 23, distance_miles: 8.9 },
+  };
+  const longDays =
+    "Tuesday or Wednesday, 10am-2pm or 1pm-5pm. Thursday morning 9am-1pm also works if the first two days are full.";
+  const blank = validateFreightQuoteRequest(
+    localDeliveryBody({ access: { preferred_days_windows: longDays } })
+  );
+  const blankOps = pdfOps(await generateLocalSignPdf(blank.submission, ctx));
+  assert.equal(blankOps.some((op) => op.text.includes("480-376-9485")), false);
+  assert.ok(pdfFind(blankOps, "DELIVERY COMPANY"));
+  assert.ok(pdfFind(blankOps, "is for delivery only"));
+  assert.ok(pdfFind(blankOps, "Tuesday or Wednesday"));
+  assert.ok(pdfFind(blankOps, "Thursday morning"));
+
+  const selected = validateFreightQuoteRequest(
+    localDeliveryBody({
+      access: { delivery_partner: "cruz_pro_line", preferred_days_windows: longDays },
+    })
+  );
+  const ops = pdfOps(await generateLocalSignPdf(selected.submission, ctx));
+  const company = pdfFind(ops, "Cruz Pro Line");
+  const phone = pdfFind(ops, "480-376-9485");
+  const label = pdfFind(ops, "DELIVERY COMPANY");
+  const rateLabel = pdfFind(ops, "CONFIRMED RATE");
+  const note = pdfFind(ops, "is for delivery only");
+  const banner = pdfFind(ops, "Local Arizona delivery");
+  const days = pdfFind(ops, "Thursday morning");
+  const items = pdfFind(ops, "ITEMS");
+  assert.ok(company && phone && label && rateLabel && note && banner && days && items);
+  assert.match(banner.text, /Estimate \$110/);
+  assert.match(banner.text, /\(\$95\/hr\)/);
+  assert.ok(label.y > company.y, "DELIVERY COMPANY label sits above the company name");
+  assert.ok(company.y > phone.y, "phone sits under the company name");
+  assert.ok(phone.y - note.y > 6, "rate note sits below the phone on the left");
+  assert.ok(
+    company.x < 140 && phone.x < 140 && label.x < 140 && note.x < 140,
+    "company, phone, and the $95/hr note stay in the left column"
+  );
+  assert.ok(rateLabel.x > 250, "CONFIRMED RATE stays in the right column");
+  assert.ok(company.x < rateLabel.x - 80, "company name is not in the rate column");
+  assert.ok(days.y - items.y > 16, "preferred days sit above the ITEMS header");
+  for (const hit of ops.filter((op) => op.text.includes("($95/hr)"))) {
+    assert.ok(hit.x < 200, "($95/hr) stays on the left");
+    assert.ok(Math.abs(hit.y - company.y) > 8, "($95/hr) does not sit on the company name");
+    assert.ok(Math.abs(hit.y - label.y) > 8, "($95/hr) stays off the DELIVERY COMPANY line");
+  }
+
+  const short = validateFreightQuoteRequest(
+    localDeliveryBody({
+      access: { delivery_partner: "cruz_pro_line", preferred_days_windows: "s" },
+    })
+  );
+  const shortOps = pdfOps(await generateLocalSignPdf(short.submission, ctx));
+  const shortDays = pdfFind(shortOps, "CUSTOMER PREFERRED DAYS");
+  const shortValue = shortOps.find((op) => op.text === "s");
+  const shortItems = pdfFind(shortOps, "ITEMS");
+  assert.ok(shortDays && shortValue && shortItems);
+  assert.ok(shortDays.y > shortValue.y && shortValue.y - shortItems.y > 16);
 });

@@ -729,6 +729,93 @@ legend.lf-heavy-prompt {
   border-color: #d5b4b4;
 }
 
+/* Selectable Cruz Pro Line card — same lockup as the delivery-partner rate card */
+#lfDeliveryPartnerWrap {
+  margin: 0 0 14px;
+}
+.lf-partner-choice {
+  position: relative;
+}
+.lf-partner-choice input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+}
+.lf-partner-choice label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #e5e1d8;
+  border-radius: 10px;
+  background: #fff;
+  cursor: pointer;
+  text-align: left;
+}
+.lf-partner-choice label:hover {
+  border-color: #b8b1a4;
+}
+.lf-partner-choice input:focus + label,
+.lf-partner-choice input:focus-visible + label {
+  box-shadow: 0 0 0 3px rgba(7, 18, 124, .12);
+}
+.lf-partner-choice input:checked + label {
+  border: 2px solid var(--lf-navy);
+  background: #f4f6ff;
+  box-shadow: 0 0 0 3px rgba(7, 18, 124, .08);
+}
+.lf-partner-thumb {
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
+  object-fit: cover;
+  display: block;
+  flex: 0 0 auto;
+  border: 1px solid #e5e1d8;
+  background: #0b1f3a;
+}
+.lf-partner-kicker {
+  display: block;
+  margin: 0 0 1px;
+  font-size: 10px;
+  font-weight: 800;
+  font-style: normal;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: #8a6d12;
+  line-height: 1.2;
+}
+.lf-partner-choice strong {
+  display: block;
+  color: var(--lf-navy);
+  font-size: 15px;
+  line-height: 1.25;
+}
+.lf-partner-phone {
+  display: block;
+  margin-top: 2px;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.2;
+  color: #111;
+  text-decoration: underline;
+}
+.lf-partner-choice input:checked + label::after {
+  content: "SELECTED";
+  margin-left: auto;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--lf-navy);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .06em;
+  line-height: 1;
+}
+
 </style>
 
 <div class="lf-calc" id="lfCalc">
@@ -839,6 +926,19 @@ legend.lf-heavy-prompt {
         <label for="lfPreferredSchedule" id="lfPreferredScheduleLabel">Please enter a few delivery days and 4-hour windows that work for you on those days.</label>
         <textarea id="lfPreferredSchedule" placeholder="Example: Tue or Wed, 10am–2pm or 1pm–5pm"></textarea>
         <div class="lf-help" id="lfPreferredScheduleHelp">Optional — helps us schedule faster once the item is purchased.</div>
+      </div>
+
+      <div class="lf-partner-choice lf-local-truck-only" id="lfDeliveryPartnerWrap">
+        <input id="lfCruzProLine" type="checkbox" name="delivery_partner" value="cruz_pro_line">
+        <label for="lfCruzProLine">
+          <img class="lf-partner-thumb" src="https://webflow-sync-server.onrender.com/brand/cruz-pro-line-truck.png" alt="Cruz Pro Line truck">
+          <span>
+            <em class="lf-partner-kicker" id="lfDeliveryPartnerKicker">Delivery partner</em>
+            <strong>Cruz Pro Line</strong>
+            <span class="lf-partner-phone">480-376-9485</span>
+          </span>
+        </label>
+        <div class="lf-help">Optional — select Cruz Pro Line to put this company on the delivery paperwork.</div>
       </div>
 
       <div class="lf-access-grid">

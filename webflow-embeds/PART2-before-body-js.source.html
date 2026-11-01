@@ -429,7 +429,7 @@
   }
 
   function collectDraft(){
-    const fieldIds=["lfName","lfEmail","lfPhone","lfType","lfStreet","lfUnit","lfCity","lfState","lfZip","lfStairs","lfFlights","lfStairNotes","lfTight","lfInside","lfUnpack","lfElevator","lfElevatorNotes","lfGate","lfGateCode","lfCrew","lfCrewWhy","lfDisassembly","lfLongCarry","lfParking","lfFragile","lfPreferredSchedule","lfNotes","lfWhiteGlove","lfWarehousePickup","lfLiftgateDelivery","lfDock","lfRequestMode","lfReviewAgree","lfAssemblyExtraMins"];
+    const fieldIds=["lfName","lfEmail","lfPhone","lfType","lfStreet","lfUnit","lfCity","lfState","lfZip","lfStairs","lfFlights","lfStairNotes","lfTight","lfInside","lfUnpack","lfElevator","lfElevatorNotes","lfGate","lfGateCode","lfCrew","lfCrewWhy","lfDisassembly","lfLongCarry","lfParking","lfFragile","lfPreferredSchedule","lfCruzProLine","lfNotes","lfWhiteGlove","lfWarehousePickup","lfLiftgateDelivery","lfDock","lfRequestMode","lfReviewAgree","lfAssemblyExtraMins"];
     const fields={};
     fieldIds.forEach(id=>{
       const el=$("#"+id);
@@ -1171,6 +1171,7 @@
     }
     if(nationwide){
       if($("#lfInside"))$("#lfInside").checked=false;
+      if($("#lfCruzProLine"))$("#lfCruzProLine").checked=false;
     }else if($("#lfDock")&&!nationwide){
       $("#lfDock").checked=false;
     }
@@ -1645,6 +1646,7 @@
       liftgate_pickup_staff_to_confirm:path==="nationwide",
       notes:value("#lfNotes"),
       preferred_days_windows:path==="nationwide"?"":value("#lfPreferredSchedule"),
+      delivery_partner:path==="nationwide"||!bool("#lfCruzProLine")?"":"cruz_pro_line",
       liftgate_pickup:path==="nationwide"||path==="pickup_az",
       liftgate_delivery:liftgateDelivery
     };
@@ -1670,6 +1672,7 @@
     const flags=[];
     const preferred=String(a.preferred_days_windows||"").trim();
     if(preferred)flags.push("Preferred days / windows: "+preferred);
+    if(a.delivery_partner==="cruz_pro_line")flags.push("Delivery partner: Cruz Pro Line · 480-376-9485");
     if(a.stairs){
       const stairParts=[];
       if(a.stair_flights>0)stairParts.push(a.stair_flights+" flight(s)");
