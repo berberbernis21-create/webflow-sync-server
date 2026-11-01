@@ -51,6 +51,27 @@ let html = htmlAfter
   .replace(/\n{2,}/g, "\n")
   .trim();
 
+// Ship the partner-card rules with the markup so a re-paste looks right
+// before the hosted stylesheet on Render is updated.
+const partnerMarker = "/* Selectable Cruz Pro Line card";
+const partnerAt = css.indexOf(partnerMarker);
+const partnerCss =
+  partnerAt >= 0
+    ? css
+        .slice(partnerAt)
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+    : "";
+const partnerOpen =
+  '<div class="lf-partner-choice lf-local-truck-only" id="lfDeliveryPartnerWrap">';
+if (partnerCss && html.includes(partnerOpen) && !html.includes('id="lfPartnerCardCss"')) {
+  html = html.replace(
+    partnerOpen,
+    `<style id="lfPartnerCardCss">${partnerCss}</style>${partnerOpen}`
+  );
+}
+
 // Hosted assets (CSS always from Render; HTML also hosted as fallback for thin mounts).
 fs.writeFileSync(hostedCssPath, minCss + "\n");
 fs.writeFileSync(hostedHtmlPath, html + "\n");
