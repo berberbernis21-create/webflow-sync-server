@@ -1154,6 +1154,15 @@ test("sign PDF fills delivery company and keeps preferred days in their own fiel
   );
   assert.ok(rateLabel.x > 250, "CONFIRMED RATE stays in the right column");
   assert.ok(company.x < rateLabel.x - 80, "company name is not in the rate column");
+  const confirmedRate = ops.find((op) => op.text.trim() === "$95/hr");
+  assert.ok(confirmedRate, "CONFIRMED RATE value is $95/hr");
+  assert.ok(confirmedRate.x > 250, "$95/hr stays in the right column");
+  assert.ok(confirmedRate.y - rateLabel.y > 8, "$95/hr sits above CONFIRMED RATE");
+  assert.ok(confirmedRate.y > note.y, "$95/hr stays above the left delivery-only note");
+  const customerPhone = pdfFind(ops, "(480) 772-7004");
+  assert.ok(customerPhone, "customer phone stays in the PHONE field");
+  assert.notEqual(customerPhone.text.trim(), "$95/hr", "$95/hr is not printed in the PHONE field");
+  assert.ok(confirmedRate.y > customerPhone.y, "$95/hr stays above the PHONE field");
   assert.ok(days.y - items.y > 16, "preferred days sit above the ITEMS header");
   for (const hit of ops.filter((op) => op.text.includes("($95/hr)"))) {
     assert.ok(hit.x < 200, "($95/hr) stays on the left");
