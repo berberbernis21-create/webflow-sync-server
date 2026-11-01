@@ -41,6 +41,11 @@ import {
 } from "./lib/consignmentCors.js";
 import { parseSetCountFromTitle, parseDimsFromTitle, parseDimsFromDescription } from "./lib/freightPalletize.js";
 import { stripNoLongerAvailableSuffix, listingLooksSold } from "./lib/listingTitleDisplay.js";
+import {
+  extractListingLookupQuery,
+  listingSkuSkipsTitleFallback,
+  normalizeListingSkuKey,
+} from "./lib/listingLookupQuery.js";
 import consignmentRouter from "./routes/consignmentSubmission.js";
 import freightQuoteRouter from "./routes/freightQuote.js";
 import { recoverStaleConsignmentIntakes } from "./lib/consignmentIntakeRecovery.js";
@@ -587,6 +592,8 @@ function registerFurnitureEcommerceProductInIndex(product, skus = []) {
   if (nameKey && furnitureProductIndex.byName && !furnitureProductIndex.byName.has(nameKey)) {
     furnitureProductIndex.byName.set(nameKey, entry);
   }
+  if (!furnitureProductIndex.bySku) furnitureProductIndex.bySku = new Map();
+  rememberCatalogSkus(furnitureProductIndex.bySku, entry);
 }
 
 async function findExistingFurnitureItem(shopifyProductId, shopifyUrl, slug, config, productNameForFallback = null) {
@@ -5097,6 +5104,7 @@ async function loadLuxuryItemIndex({ force = false } = {}) {
       const bySlug = new Map();
       const byUrl = new Map();
       const byName = new Map();
+      const bySku = new Map();
       let offset = 0;
       const limit = 100;
       while (true) {
@@ -5132,11 +5140,12 @@ async function loadLuxuryItemIndex({ force = false } = {}) {
           if (wfSlug) bySlug.set(wfSlug, item);
           const nameKey = normalizeProductNameForIndex(fd.name);
           if (nameKey && !byName.has(nameKey)) byName.set(nameKey, item);
+          rememberCatalogSkus(bySku, item);
         }
         if (items.length < limit) break;
         offset += limit;
       }
-      luxuryItemIndex = { byShopifyId, bySlug, byUrl, byName, complete: true };
+      luxuryItemIndex = { byShopifyId, bySlug, byUrl, byName, bySku, complete: true };
       luxuryItemIndexLoadedAt = Date.now();
       webflowLog("info", { event: "luxury_item_index.loaded", count: byShopifyId.size, byName: byName.size });
       return luxuryItemIndex;
@@ -5152,6 +5161,28 @@ async function loadLuxuryItemIndex({ force = false } = {}) {
 /** Normalize product name for index (so we can find by name and avoid duplicate creates). */
 function normalizeProductNameForIndex(name) {
   return stripNoLongerAvailableSuffix(name).toLowerCase().replace(/\s+/g, " ");
+}
+
+/** Index Shopify / Webflow SKU codes already stored on the catalog row. */
+function rememberIndexedSku(bySku, entry, raw) {
+  if (!bySku || !entry) return;
+  const key = normalizeListingSkuKey(raw);
+  if (!key) return;
+  if (!bySku.has(key)) bySku.set(key, entry);
+}
+
+function rememberCatalogSkus(bySku, entry) {
+  if (!entry) return;
+  const fd = entry.fieldData || {};
+  for (const raw of [fd.sku, fd.SKU, fd["shopify-sku"], fd["item-sku"], fd["product-sku"]]) {
+    rememberIndexedSku(bySku, entry, raw);
+  }
+  for (const sku of entry.skus || []) {
+    const sfd = sku?.fieldData || {};
+    rememberIndexedSku(bySku, entry, sfd.sku);
+    rememberIndexedSku(bySku, entry, sfd.SKU);
+    if (typeof sku?.sku === "string") rememberIndexedSku(bySku, entry, sku.sku);
+  }
 }
 
 /** Pre-load Furniture products once → O(1) lookup. Shared across webhooks with TTL. */
@@ -5174,6 +5205,7 @@ async function loadFurnitureProductIndex({ force = false } = {}) {
       const bySlug = new Map();
       const byName = new Map();
       const byUrl = new Map();
+      const bySku = new Map();
       let offset = 0;
       const limit = 100;
 
@@ -5197,11 +5229,12 @@ async function loadFurnitureProductIndex({ force = false } = {}) {
             if (wfSlug) bySlug.set(wfSlug, entry);
             const nameKey = normalizeProductNameForIndex(wfName);
             if (nameKey && !byName.has(nameKey)) byName.set(nameKey, entry);
+            rememberCatalogSkus(bySku, entry);
           }
           if (list.length < limit) break;
           offset += limit;
         }
-        furnitureProductIndex = { byShopifyId, bySlug, byName, complete: true };
+        furnitureProductIndex = { byShopifyId, bySlug, byName, bySku, complete: true };
         furnitureProductIndexLoadedAt = Date.now();
         webflowLog("info", { event: "furniture_product_index.loaded", mode: "ecommerce", count: byShopifyId.size, byName: byName.size });
         return furnitureProductIndex;
@@ -5239,11 +5272,12 @@ async function loadFurnitureProductIndex({ force = false } = {}) {
           if (wfSlug) bySlug.set(wfSlug, item);
           const nameKey = normalizeProductNameForIndex(fd.name);
           if (nameKey && !byName.has(nameKey)) byName.set(nameKey, item);
+          rememberCatalogSkus(bySku, item);
         }
         if (items.length < limit) break;
         offset += limit;
       }
-      furnitureProductIndex = { byShopifyId, bySlug, byName, byUrl, complete: true };
+      furnitureProductIndex = { byShopifyId, bySlug, byName, byUrl, bySku, complete: true };
       furnitureProductIndexLoadedAt = Date.now();
       webflowLog("info", { event: "furniture_product_index.loaded", mode: "cms", count: byShopifyId.size, byName: byName.size });
       return furnitureProductIndex;
@@ -10385,9 +10419,10 @@ const SHOPIFY_LISTING_PRODUCT_FIELDS = `
   descriptionHtml
   images(first: 5) { edges { node { url } } }
   metafields(first: 25) { edges { node { namespace key value } } }
-  variants(first: 1) {
+  variants(first: 10) {
     edges {
       node {
+        sku
         price
         inventoryItem { measurement { weight { value unit } } }
       }
@@ -10551,6 +10586,56 @@ function mapShopifyListingNode(node) {
     height,
     metafields,
   };
+}
+
+function shopifySkuQueryString(sku) {
+  const safe = String(sku || "").trim().replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return `sku:"${safe}"`;
+}
+
+/** Put the variant whose SKU matched first so price and weight come from that variant. */
+function shopifyProductNodeWithMatchedSkuFirst(product, skuKey, variantNode) {
+  if (!product) return null;
+  const edges = Array.isArray(product.variants?.edges) ? product.variants.edges.slice() : [];
+  let idx = edges.findIndex((e) => normalizeListingSkuKey(e?.node?.sku) === skuKey);
+  if (idx < 0 && variantNode) {
+    edges.unshift({ node: variantNode });
+    idx = 0;
+  } else if (idx > 0) {
+    const [hit] = edges.splice(idx, 1);
+    edges.unshift(hit);
+  }
+  return { ...product, variants: { ...(product.variants || {}), edges } };
+}
+
+/** Exact Shopify variant SKU (Admin search). Same listing shape as title / handle lookup. */
+async function searchShopifyProductBySku(sku) {
+  const skuKey = normalizeListingSkuKey(sku);
+  if (!skuKey) return null;
+  const data = await shopifyAdminGraphql(
+    `query ProductBySku($q: String!) {
+      productVariants(first: 5, query: $q) {
+        edges {
+          node {
+            sku
+            price
+            inventoryItem { measurement { weight { value unit } } }
+            product { ${SHOPIFY_LISTING_PRODUCT_FIELDS} }
+          }
+        }
+      }
+    }`,
+    { q: shopifySkuQueryString(sku) }
+  );
+  const edges = data?.productVariants?.edges || [];
+  for (const edge of edges) {
+    const node = edge?.node;
+    if (normalizeListingSkuKey(node?.sku) !== skuKey || !node?.product) continue;
+    return mapShopifyListingNode(
+      shopifyProductNodeWithMatchedSkuFirst(node.product, skuKey, node)
+    );
+  }
+  return null;
 }
 
 async function searchShopifyProductByHandle(handle) {
@@ -12382,43 +12467,6 @@ async function mapFurnitureListingSearchHit(hit, config, options = {}) {
   };
 }
 
-/**
- * Parse freight "Find Item" input: full product URL /slug or plain title.
- * @returns {{ kind: "slug"|"name", value: string, raw: string }}
- */
-function extractListingLookupQuery(raw) {
-  const s = String(raw || "").trim();
-  if (!s) return { kind: "name", value: "", raw: s };
-  const looksUrl =
-    /^https?:\/\//i.test(s) ||
-    /lostandfoundresale\.com/i.test(s) ||
-    /\/products?\//i.test(s);
-  if (!looksUrl) return { kind: "name", value: s, raw: s };
-  try {
-    const href = /^https?:\/\//i.test(s) ? s : `https://${s.replace(/^\/+/, "")}`;
-    const u = new URL(href);
-    const parts = u.pathname.split("/").filter(Boolean);
-    const pi = parts.findIndex((p) => p === "product" || p === "products");
-    if (pi >= 0 && parts[pi + 1]) {
-      return {
-        kind: "slug",
-        value: decodeURIComponent(parts[pi + 1]).replace(/\/+$/, ""),
-        raw: s,
-      };
-    }
-    if (parts.length) {
-      return {
-        kind: "slug",
-        value: decodeURIComponent(parts[parts.length - 1]).replace(/\/+$/, ""),
-        raw: s,
-      };
-    }
-  } catch {
-    /* fall through */
-  }
-  return { kind: "name", value: s, raw: s };
-}
-
 /** Resolve a CMS/ecommerce listing by public slug/handle. */
 async function searchWebflowListingBySlug(slug) {
   const key = String(slug || "").trim();
@@ -12450,6 +12498,45 @@ async function searchWebflowListingBySlug(slug) {
       }
     }
     const luxItem = luxuryItemIndex?.bySlug?.get(key);
+    if (luxItem) {
+      const fd = luxItem.fieldData || {};
+      return mapLuxuryListingSearchHit({ item: luxItem, fd, score: 1000 });
+    }
+  }
+  return null;
+}
+
+/** Resolve a warm-catalog row by the SKU already stored on the product or its Webflow SKU. */
+async function searchWebflowListingBySku(sku) {
+  const key = normalizeListingSkuKey(sku);
+  if (!key) return null;
+  const furnCfg = getWebflowConfig("furniture");
+  if ((furnCfg.siteId || furnCfg.collectionId) && furnCfg.token) {
+    if (!furnitureProductIndex?.complete) {
+      try {
+        await loadFurnitureProductIndex();
+      } catch {
+        /* continue */
+      }
+    }
+    const entry = furnitureProductIndex?.bySku?.get(key);
+    if (entry) {
+      return mapFurnitureListingSearchHit(
+        { product: entry, fd: entry.fieldData || {}, skus: entry.skus || [] },
+        furnCfg
+      );
+    }
+  }
+  const luxCfg = getWebflowConfig("luxury");
+  if (luxCfg.collectionId && luxCfg.token) {
+    if (!luxuryItemIndex?.complete) {
+      try {
+        await loadLuxuryItemIndex();
+      } catch {
+        /* continue */
+      }
+    }
+    const luxItem = luxuryItemIndex?.bySku?.get(key);
     if (luxItem) {
       const fd = luxItem.fieldData || {};
       return mapLuxuryListingSearchHit({ item: luxItem, fd, score: 1000 });
@@ -12522,8 +12609,14 @@ async function searchWebflowListing(name, options = {}) {
  */
 async function searchCachedListingFallback(searchName, lookup = {}) {
   const q = String(searchName || "").trim();
-  if (!q && !(lookup?.kind === "slug" && lookup.value)) return null;
+  const skuValue = lookup?.kind === "sku" ? lookup.value : "";
+  if (!q && !(lookup?.kind === "slug" && lookup.value) && !skuValue) return null;
   try {
+    if (skuValue && listingSkuSkipsTitleFallback(lookup)) {
+      const bySku = await searchWebflowListingBySku(skuValue);
+      if (bySku) return { listing: bySku, via: "webflow_sku_cache" };
+      return null;
+    }
     if (lookup?.kind === "slug" && lookup.value) {
       const bySlug = await searchWebflowListingBySlug(lookup.value);
       if (bySlug) return { listing: bySlug, via: "webflow_slug_cache" };
@@ -12637,14 +12730,60 @@ app.get("/api/listing", async (req, res) => {
     String(req.query.exact || req.query.match || "").trim().toLowerCase() === "exact" ||
     String(req.query.exact || "").trim().toLowerCase() === "true";
   const lookup = extractListingLookupQuery(String(name));
-  const searchName = lookup.kind === "slug" ? lookup.value : lookup.value;
+  const searchName = lookup.value;
+  const skipFuzzyTitle = listingSkuSkipsTitleFallback(lookup);
   try {
     let listing = null;
     let matchScore = null;
     let matchedBySlug = false;
+    let matchedBySku = false;
     let listingSource = source === "webflow" ? "webflow" : "shopify";
 
-    if (source === "webflow") {
+    if (lookup.kind === "sku" && lookup.value) {
+      let skuError = null;
+      const noteSkuError = (skuErr) => {
+        skuError = skuError || skuErr;
+        webflowLog("warn", {
+          event: "api.listing.sku_lookup_failed",
+          sku: String(lookup.value).slice(0, 80),
+          message: skuErr?.message || String(skuErr),
+        });
+      };
+      if (source === "webflow") {
+        try {
+          listing = await searchWebflowListingBySku(lookup.value);
+          if (listing) listingSource = "webflow_sku_cache";
+        } catch (skuErr) {
+          noteSkuError(skuErr);
+        }
+        if (!listing) {
+          try {
+            listing = await searchShopifyProductBySku(lookup.value);
+            if (listing) listingSource = "shopify";
+          } catch (skuErr) {
+            noteSkuError(skuErr);
+          }
+        }
+      } else {
+        try {
+          listing = await searchShopifyProductBySku(lookup.value);
+        } catch (skuErr) {
+          noteSkuError(skuErr);
+        }
+        if (!listing) {
+          try {
+            listing = await searchWebflowListingBySku(lookup.value);
+            if (listing) listingSource = "webflow_sku_cache";
+          } catch (skuErr) {
+            noteSkuError(skuErr);
+          }
+        }
+      }
+      matchedBySku = Boolean(listing);
+      if (!listing && skuError && skipFuzzyTitle) throw skuError;
+    }
+
+    if (!listing && !skipFuzzyTitle && source === "webflow") {
       if (lookup.kind === "slug" && lookup.value) {
         try {
           listing = await searchWebflowListingBySlug(lookup.value);
@@ -12671,7 +12810,7 @@ app.get("/api/listing", async (req, res) => {
           if (listing) listingSource = "shopify";
         }
       }
-    } else {
+    } else if (!listing && !skipFuzzyTitle) {
       // Freight Find Item: Shopify first, then warm Webflow catalog (sold items often 404 on Shopify).
       if (lookup.kind === "slug" && lookup.value) {
         try {
@@ -12710,11 +12849,12 @@ app.get("/api/listing", async (req, res) => {
     }
 
     // Exact-title gate for freight calculator (and when ?exact=1).
-    // Skip when the customer pasted a product URL / slug — that is an exact listing resolve.
+    // Skip when the customer pasted a product URL or an exact SKU — those resolve one listing.
     const qNorm = normalizeProductNameForIndex(String(searchName));
     const tNorm = normalizeProductNameForIndex(String(listing.title || ""));
     const isExact = Boolean(qNorm && tNorm && qNorm === tNorm);
-    matchScore = matchedBySlug
+    const exactKey = matchedBySlug || matchedBySku;
+    matchScore = exactKey
       ? 1000
       : listingTitleSearchScore(String(searchName), String(listing.title || ""));
 
@@ -12742,7 +12882,7 @@ app.get("/api/listing", async (req, res) => {
       return true;
     };
 
-    if (!matchedBySlug && exactOnly && !isExact && matchScore < 1000) {
+    if (!exactKey && exactOnly && !isExact && matchScore < 1000) {
       if (!(await tryCacheAfterWeakMatch("exact"))) {
         return res.status(404).json({
           error: "No exact listing title match",
@@ -12751,7 +12891,7 @@ app.get("/api/listing", async (req, res) => {
       }
     }
     // Freight clients often omit exact=1 but type the full title — still reject weak fuzzy hits.
-    if (!matchedBySlug && !exactOnly && matchScore < getListingSearchMinScore()) {
+    if (!exactKey && !exactOnly && matchScore < getListingSearchMinScore()) {
       if (!(await tryCacheAfterWeakMatch("fuzzy"))) {
         return res.status(404).json({ error: "No products found", listing: null });
       }
@@ -12867,6 +13007,7 @@ app.get("/api/listing", async (req, res) => {
       listingSource,
       ms: Date.now() - startedAt,
       matchedBySlug,
+      matchedBySku,
       sold: Boolean(sold),
       title: String(listing.title || "").slice(0, 80),
     });
@@ -12899,7 +13040,7 @@ app.get("/api/listing", async (req, res) => {
       depth,
       height,
       metafields: Array.isArray(listing.metafields) ? listing.metafields : [],
-      exactMatch: isExact,
+      exactMatch: isExact || matchedBySku,
       matchScore,
     });
   } catch (err) {
