@@ -52,6 +52,16 @@ test("catalog SKU is six or seven characters", () => {
   assert.equal(seven.value, "KVLUZK2");
 });
 
+test("a space and more words stays a name lookup", () => {
+  const samples = ["Lamp 12", "Sofa 36", "NY2 A5X", "NY 2A5X", "Red Chair"];
+  for (const raw of samples) {
+    const q = extractListingLookupQuery(raw);
+    assert.equal(q.kind, "name", raw);
+    assert.equal(q.value, raw, raw);
+    assert.equal(listingSkuSkipsTitleFallback(q), false, raw);
+  }
+});
+
 test("product name with dimensions stays a name lookup", () => {
   const samples = [
     "Ceramic Jack-O-Lantern 10X10X12",
@@ -111,8 +121,8 @@ test("ambiguous numeric suffixes are not treated as a hit", () => {
   assert.equal(ambiguous, null);
 });
 
-test("NY2A5X with spaces and mixed case is one Shopify SKU lookup", () => {
-  const samples = ["NY2A5X", "NY2A5X ", " NY2A5X", "NY2 A5X", "NY 2A5X", "SKU: NY2A5X", "ny2a5x"];
+test("a single 6-character code is one Shopify SKU lookup", () => {
+  const samples = ["NY2A5X", "NY2A5X ", " NY2A5X", "SKU: NY2A5X", "ny2a5x"];
   for (const raw of samples) {
     const q = extractListingLookupQuery(raw);
     assert.equal(q.kind, "sku", raw);
