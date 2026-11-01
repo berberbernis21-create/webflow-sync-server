@@ -226,7 +226,11 @@ Requires PART1 embed on the page and INSIDE-HEAD-styles in <head>.
         }
       };
       modal.classList.add("is-visible");
-      primaryBtn.focus();
+      try {
+        primaryBtn.focus({ preventScroll: true });
+      } catch (err) {
+        primaryBtn.focus();
+      }
     }
     function showItemLimitMessage() {
       showLfModal({
@@ -289,10 +293,13 @@ Requires PART1 embed on the page and INSIDE-HEAD-styles in <head>.
       const shell = submitPage ? submitPage.querySelector(".lf-submit-shell") : null;
       const hero = submitPage ? submitPage.querySelector(".lf-submit-hero") : null;
       const progressWrap = submitPage ? submitPage.querySelector(".lf-progress-wrap") : null;
+      const proofStrip = submitPage ? submitPage.querySelector(".lf-proof-strip") : null;
+      const floatingBtn = document.getElementById("lf-floating-add-more");
       if (!submitPage || !shell || !form) return;
       if (hero) hero.style.display = "none";
       if (progressWrap) progressWrap.style.display = "none";
       form.style.display = "none";
+      if (floatingBtn) floatingBtn.classList.remove("is-visible");
       let confirmationPage = document.getElementById("lf-submission-confirmation");
       if (!confirmationPage) {
         confirmationPage = document.createElement("section");
@@ -332,7 +339,6 @@ Requires PART1 embed on the page and INSIDE-HEAD-styles in <head>.
             </div>
           </div>
         `;
-        shell.appendChild(confirmationPage);
         const anotherBtn = confirmationPage.querySelector("#lf-submit-another");
         if (anotherBtn) {
           anotherBtn.addEventListener("click", function () {
@@ -340,9 +346,22 @@ Requires PART1 embed on the page and INSIDE-HEAD-styles in <head>.
           });
         }
       }
+      // Thank-you first, then "Where Accepted Items May Be Featured" directly below.
+      if (proofStrip && proofStrip.parentNode === shell) {
+        shell.insertBefore(confirmationPage, proofStrip);
+      } else {
+        const topActions = shell.querySelector(".lf-top-actions");
+        if (topActions && topActions.nextSibling) {
+          shell.insertBefore(confirmationPage, topActions.nextSibling);
+        } else {
+          shell.insertBefore(confirmationPage, shell.firstChild);
+        }
+      }
       confirmationPage.style.display = "block";
+      if (proofStrip) proofStrip.style.display = "";
+      const scrollTarget = confirmationPage.getBoundingClientRect().top + window.pageYOffset - 24;
       window.scrollTo({
-        top: submitPage.offsetTop,
+        top: Math.max(0, scrollTarget),
         behavior: "smooth"
       });
     }
@@ -533,16 +552,33 @@ Requires PART1 embed on the page and INSIDE-HEAD-styles in <head>.
       return [street, city, state, zip].filter(Boolean).join(", ");
     }
     function validateStepOne() {
-      const requiredFields = form.querySelectorAll(
-        '.lf-step[data-step="1"] input[required], .lf-step[data-step="1"] select[required], .lf-step[data-step="1"] textarea[required]'
+      const requiredFields = Array.from(
+        form.querySelectorAll(
+          '.lf-step[data-step="1"] input[required], .lf-step[data-step="1"] select[required], .lf-step[data-step="1"] textarea[required]'
+        )
       );
-      for (const field of requiredFields) {
-        if (!field.checkValidity()) {
-          field.reportValidity();
-          return false;
+      requiredFields.forEach(function (field) {
+        field.classList.remove("lf-field-invalid");
+        field.removeAttribute("aria-invalid");
+      });
+      const missing = requiredFields.filter(function (field) {
+        return fieldIsMissing(field);
+      });
+      if (!missing.length) return true;
+      missing.forEach(function (field) {
+        markFieldInvalid(field);
+      });
+      scrollFieldIntoView(missing[0]);
+      showLfModal({
+        icon: "!",
+        title: "Contact Info Needed",
+        message: "Please complete the highlighted required contact fields, then continue.",
+        buttonText: "Got It",
+        onPrimary: function () {
+          scrollFieldIntoView(missing[0]);
         }
-      }
-      return true;
+      });
+      return false;
     }
     function isRealFile(file) {
       return !!(file && typeof file.size === "number" && file.size > 0);
@@ -807,37 +843,111 @@ Requires PART1 embed on the page and INSIDE-HEAD-styles in <head>.
         attachedCount: selectedPhotoFiles.length
       };
     }
-    async function validateItemForm() {
-      const required = [
+    function clearItemFieldErrors() {
+      [
         itemFields.itemName,
         itemFields.category,
         itemFields.brand,
         itemFields.condition
-      ];
-      for (const field of required) {
-        if (!field || !field.checkValidity()) {
-          if (field) field.reportValidity();
-          if (field === itemFields.brand) {
-            showLfModal({
-              icon: "!",
-              title: "Brand / Maker Required",
-              message:
-                "Please enter the brand or maker. If you are not sure, enter Unknown. This helps prioritize your item for review.",
-              buttonText: "Got It"
-            });
-          }
-          return false;
+      ].forEach(function (field) {
+        if (!field) return;
+        field.classList.remove("lf-field-invalid");
+        field.removeAttribute("aria-invalid");
+      });
+    }
+    function markFieldInvalid(field) {
+      if (!field) return;
+      field.classList.add("lf-field-invalid");
+      field.setAttribute("aria-invalid", "true");
+    }
+    function scrollFieldIntoView(field) {
+      if (!field) return;
+      const doScroll = function () {
+        const rect = field.getBoundingClientRect();
+        const offset = Math.max(100, Math.min(160, window.innerHeight * 0.22));
+        const top = rect.top + window.pageYOffset - offset;
+        try {
+          window.scrollTo({ top: Math.max(0, top), behavior: "smooth" });
+        } catch (err) {
+          window.scrollTo(0, Math.max(0, top));
         }
+        try {
+          field.scrollIntoView({ behavior: "smooth", block: "center" });
+        } catch (err2) {}
+      };
+      doScroll();
+      setTimeout(doScroll, 80);
+      setTimeout(function () {
+        try {
+          field.focus({ preventScroll: true });
+        } catch (err3) {
+          try {
+            field.focus();
+          } catch (err4) {}
+        }
+      }, 320);
+    }
+    function fieldIsMissing(field) {
+      if (!field) return true;
+      const value = String(field.value || "").trim();
+      if (!value) return true;
+      try {
+        return !field.checkValidity();
+      } catch (err) {
+        return false;
       }
-      if (!itemFields.brand.value.trim()) {
-        showLfModal({
-          icon: "!",
+    }
+    async function validateItemForm() {
+      clearItemFieldErrors();
+      const checks = [
+        {
+          field: itemFields.itemName,
+          title: "Item Name Required",
+          message: "Please enter an item name or short description."
+        },
+        {
+          field: itemFields.category,
+          title: "Category Required",
+          message: "Please select a category for this item."
+        },
+        {
+          field: itemFields.brand,
           title: "Brand / Maker Required",
           message:
-            "Please enter the brand or maker. If you are not sure, enter Unknown. This helps prioritize your item for review.",
-          buttonText: "Got It"
+            "Please enter the brand or maker. If you are not sure, enter Unknown. This helps prioritize your item for review."
+        },
+        {
+          field: itemFields.condition,
+          title: "Condition Required",
+          message: "Please select the condition of this item."
+        }
+      ];
+      const missing = checks.filter(function (row) {
+        return fieldIsMissing(row.field);
+      });
+      if (missing.length) {
+        missing.forEach(function (row) {
+          markFieldInvalid(row.field);
         });
-        itemFields.brand.focus();
+        const first = missing[0];
+        const labels = missing.map(function (row) {
+          return row.title.replace(" Required", "");
+        });
+        scrollFieldIntoView(first.field);
+        showLfModal({
+          icon: "!",
+          title: missing.length === 1 ? first.title : "Required Fields Missing",
+          message:
+            missing.length === 1
+              ? first.message
+              : "Please complete the highlighted fields: " +
+                labels.join(", ") +
+                ". Then tap Save / Next again.",
+          buttonText: "Got It",
+          onPrimary: function () {
+            scrollFieldIntoView(first.field);
+          }
+        });
         return false;
       }
       await syncFilesFromInput();
@@ -851,6 +961,12 @@ Requires PART1 embed on the page and INSIDE-HEAD-styles in <head>.
         return false;
       }
       if (!selectedPhotoFiles.length) {
+        const photoBox = document.querySelector(".lf-photo-box") || photoPreview;
+        if (photoBox) {
+          try {
+            photoBox.scrollIntoView({ behavior: "smooth", block: "center" });
+          } catch (err) {}
+        }
         showLfModal({
           icon: "!",
           title: "Photos Required",
@@ -1270,6 +1386,18 @@ Requires PART1 embed on the page and INSIDE-HEAD-styles in <head>.
       if (!itemFields[key]) return;
       itemFields[key].addEventListener("change", showCurrentItemWarnings);
       itemFields[key].addEventListener("input", showCurrentItemWarnings);
+      itemFields[key].addEventListener("change", function () {
+        if (!fieldIsMissing(itemFields[key])) {
+          itemFields[key].classList.remove("lf-field-invalid");
+          itemFields[key].removeAttribute("aria-invalid");
+        }
+      });
+      itemFields[key].addEventListener("input", function () {
+        if (!fieldIsMissing(itemFields[key])) {
+          itemFields[key].classList.remove("lf-field-invalid");
+          itemFields[key].removeAttribute("aria-invalid");
+        }
+      });
     });
     saveItemBtn.addEventListener("click", function () {
       saveItem();

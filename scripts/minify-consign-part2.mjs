@@ -8,11 +8,7 @@ const sourcePath = path.join(dir, "PART2-before-body-js.source.html");
 const rawJsPath = path.join(dir, "_part2-raw.js");
 const minJsPath = path.join(dir, "_part2-min.js");
 
-const paste = fs.readFileSync(pastePath, "utf8");
-if (paste.includes("function createLfModal")) {
-  fs.writeFileSync(sourcePath, paste);
-}
-
+// Source file is the editable truth. Never overwrite it from a minified paste.
 const source = fs.readFileSync(sourcePath, "utf8");
 const startTag = "<script>";
 const endTag = "</script>";

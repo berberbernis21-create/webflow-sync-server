@@ -1231,11 +1231,15 @@ Also paste INSIDE-HEAD-styles.html in Inside <head>.
 
   .lf-confirmation-page {
     display: none;
-    margin-top: 26px;
+    margin: 8px 0 28px;
   }
 
   .lf-confirmation-card {
     text-align: center;
+  }
+
+  .lf-confirmation-page + .lf-proof-strip {
+    margin-top: 0;
   }
 
   .lf-confirmation-icon {
@@ -1259,6 +1263,14 @@ Also paste INSIDE-HEAD-styles.html in Inside <head>.
     justify-content: center;
     margin-top: 22px;
     flex-wrap: wrap;
+  }
+
+  #lf-submit-form input.lf-field-invalid,
+  #lf-submit-form select.lf-field-invalid,
+  #lf-submit-form textarea.lf-field-invalid {
+    border-color: #b00020 !important;
+    background: #fff5f5 !important;
+    box-shadow: 0 0 0 3px rgba(176, 0, 32, 0.14) !important;
   }
 
   .lf-confirmation-link {
