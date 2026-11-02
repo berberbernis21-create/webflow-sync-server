@@ -5239,6 +5239,64 @@ function listingFromStoredSku(rawSku) {
   return stored ? listingFromStoredSkuRecord(stored) : null;
 }
 
+/** Write every Shopify variant SKU the sync sees. The row stays after the product sells. */
+function rememberShopifyProductVariants(product, extra = {}) {
+  const variants = Array.isArray(product?.variants) ? product.variants : [];
+  if (!variants.length || !product) return 0;
+  const dims = getDimensionsFromProduct(product);
+  const titleDims = parseDimsFromTitle(product.title || "");
+  const handle = String(product.handle || "").trim();
+  const prefix = (process.env.LISTING_PRODUCT_URL_PREFIX || "https://www.lostandfoundresale.com/product")
+    .trim()
+    .replace(/\/$/, "");
+  const images = (product.images || []).map((img) => img?.src || img?.url).filter(Boolean);
+  const tags = getProductTagsArray(product);
+  const qty = getPrimaryVariantInventoryQuantity(product);
+  const sold =
+    extra.sold === true ||
+    shopifyQtySaysSold(qty) ||
+    String(product.status || "").toLowerCase() === "archived" ||
+    listingLooksSold(product.title || "");
+  const metafields = Array.isArray(product.metafields)
+    ? product.metafields.map((m) => ({
+        namespace: m.namespace,
+        key: m.key,
+        value: m.value,
+      }))
+    : [];
+  let saved = 0;
+  for (const variant of variants) {
+    const sku = String(variant?.sku || "").trim();
+    if (!sku) continue;
+    rememberListingSku(
+      {
+        sku,
+        variantId: variant.id,
+        productId: product.id,
+        title: product.title || "",
+        price: variant.price != null ? String(variant.price) : "",
+        productUrl: handle ? `${prefix}/${handle}` : "",
+        handle,
+        description: stripListingDescriptionHtml(product.body_html || ""),
+        images,
+        vendor: product.vendor || null,
+        productType: product.product_type || null,
+        tags,
+        metafields,
+        vertical: extra.vertical || "shopify",
+        width: dims.width ?? titleDims?.width ?? null,
+        depth: dims.length ?? titleDims?.depth ?? null,
+        height: dims.height ?? titleDims?.height ?? null,
+        weight: variantWeightToLb(variant) || dims.weight,
+        sold,
+      },
+      extra.source || "shopify_sync"
+    );
+    saved += 1;
+  }
+  return saved;
+}
+
 function rememberCatalogSkus(bySku, entry) {
   if (!entry) return;
   const fd = entry.fieldData || {};
@@ -7419,6 +7477,7 @@ function runSerializedByShopifyProductId(shopifyProductId, fn) {
 }
 
 async function syncSingleProductCore(product, cache, options = {}) {
+  rememberShopifyProductVariants(product, { source: "shopify_sync" });
   const shopifyProductId = String(product.id);
   const cacheEntry = getCacheEntry(cache, shopifyProductId);
   const ecommerceClassification = getEcommerceClassification(product);
