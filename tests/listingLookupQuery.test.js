@@ -52,8 +52,17 @@ test("catalog SKU is six or seven characters", () => {
   assert.equal(seven.value, "KVLUZK2");
 });
 
+test("a spaced catalog code is still that SKU", () => {
+  for (const raw of ["NY2 A5X", "NY 2A5X", "ny2 a5x"]) {
+    const q = extractListingLookupQuery(raw);
+    assert.equal(q.kind, "sku", raw);
+    assert.equal(normalizeListingSkuKey(q.value), "ny2a5x", raw);
+    assert.equal(listingSkuSkipsTitleFallback(q), true, raw);
+  }
+});
+
 test("a space and more words stays a name lookup", () => {
-  const samples = ["Lamp 12", "Sofa 36", "NY2 A5X", "NY 2A5X", "Red Chair"];
+  const samples = ["Lamp 12", "Sofa 36", "Red Chair"];
   for (const raw of samples) {
     const q = extractListingLookupQuery(raw);
     assert.equal(q.kind, "name", raw);

@@ -49,6 +49,11 @@ import {
   shopifySkuSearchQueries,
   storedListingSkuMatchRank,
 } from "./lib/listingLookupQuery.js";
+import {
+  LISTING_SKU_STORE_FILENAME,
+  createListingSkuStore,
+  listingFromStoredSkuRecord,
+} from "./lib/listingSkuStore.js";
 import consignmentRouter from "./routes/consignmentSubmission.js";
 import freightQuoteRouter from "./routes/freightQuote.js";
 import { recoverStaleConsignmentIntakes } from "./lib/consignmentIntakeRecovery.js";
@@ -869,6 +874,12 @@ app.post("/webhook/products/update", verifyShopifyHmac, scheduleProductWebhookSy
 ====================================================== */
 // Persist across deploys (e.g. mount a volume at DATA_DIR) so we don't re-call the LLM for every product after a new build.
 const DATA_DIR = process.env.DATA_DIR || "./data";
+const listingSkuStore = createListingSkuStore({
+  filePath: path.join(DATA_DIR, LISTING_SKU_STORE_FILENAME),
+  onError: (err, event) => {
+    webflowLog("warn", { event, message: err?.message || String(err) });
+  },
+});
 const CACHE_FILE = `${DATA_DIR}/lastSync.json`;
 const DUPLICATE_EMAIL_SENT_FILE = `${DATA_DIR}/duplicate_placement_emails_sent.json`;
 const WEIGHT_MISSING_EMAIL_SENT_FILE = `${DATA_DIR}/weight_missing_emails_sent.json`;
@@ -5172,6 +5183,60 @@ function rememberIndexedSku(bySku, entry, raw) {
   const key = normalizeListingSkuKey(raw);
   if (!key) return;
   if (!bySku.has(key)) bySku.set(key, entry);
+  const fd = entry.fieldData || {};
+  listingSkuStore.upsert(
+    {
+      sku: String(raw).trim(),
+      productId: fd["shopify-product-id"] ? String(fd["shopify-product-id"]) : "",
+      title: fd.name || fd.title || "",
+      price: fd.price != null ? String(fd.price) : "",
+      productUrl: fd["shopify-url"] ? String(fd["shopify-url"]).trim() : "",
+      handle: fd.slug || fd["shopify-slug-2"] || "",
+      width: fd.width,
+      depth: fd.depth || fd.length,
+      height: fd.height,
+      weight: fd.weight,
+      sold: listingLooksSold(fd.name || fd.title || ""),
+    },
+    { source: "webflow_index" }
+  );
+}
+
+function rememberListingSku(listing, source) {
+  const sku = String(listing?.sku || "").trim();
+  if (!sku) return;
+  listingSkuStore.upsert(
+    {
+      sku,
+      variantId: listing.variantId,
+      productId: listing.productId || listing.shopifyProductId,
+      title: listing.title,
+      price: listing.price,
+      productUrl: listing.productUrl,
+      shopifyOnlineUrl: listing.shopifyOnlineUrl,
+      handle: listing.handle,
+      description: listing.description,
+      images: listing.images,
+      vendor: listing.vendor,
+      productType: listing.productType,
+      luxuryGoodsCategory: listing.luxuryGoodsCategory,
+      tags: listing.tags,
+      metafields: listing.metafields,
+      freightClass: listing.freight_class,
+      vertical: listing.vertical,
+      width: listing.width,
+      depth: listing.depth,
+      height: listing.height,
+      weight: listing.weight,
+      sold: listing.sold === true,
+    },
+    { source: source || "lookup" }
+  );
+}
+
+function listingFromStoredSku(rawSku) {
+  const stored = listingSkuStore.findBySku(rawSku);
+  return stored ? listingFromStoredSkuRecord(stored) : null;
 }
 
 function rememberCatalogSkus(bySku, entry) {
@@ -10571,6 +10636,14 @@ function mapShopifyListingNode(node) {
 
   return {
     title: node.title || "",
+    sku: variantNode?.sku ? String(variantNode.sku).trim() : "",
+    variantId:
+      variantNode?.legacyResourceId != null && String(variantNode.legacyResourceId).trim() !== ""
+        ? String(variantNode.legacyResourceId).trim()
+        : typeof variantNode?.id === "string"
+          ? variantNode.id.split("/").pop()
+          : "",
+    productId: shopifyProductId || "",
     shopifyProductId,
     price,
     description,
@@ -10691,7 +10764,10 @@ async function searchShopifyProductBySku(sku) {
       const data = await shopifyAdminGraphql(variantQuery, { q });
       return listingFromVariantSkuEdges(data?.productVariants?.edges, skuKey);
     });
-    if (listing) return listing;
+    if (listing) {
+      rememberListingSku(listing, "shopify_lookup");
+      return listing;
+    }
   }
   const productSearch = queries[0];
   if (productSearch) {
@@ -10699,7 +10775,10 @@ async function searchShopifyProductBySku(sku) {
       const data = await shopifyAdminGraphql(productsQuery, { q: productSearch });
       return listingFromProductSkuEdges(data?.products?.edges, skuKey);
     });
-    if (listing) return listing;
+    if (listing) {
+      rememberListingSku(listing, "shopify_lookup");
+      return listing;
+    }
   }
   if (!sawSuccess && lastErr) throw lastErr;
   return null;
@@ -12850,6 +12929,10 @@ app.get("/api/listing", async (req, res) => {
         }
         matchedBySku = Boolean(listing);
         if (!listing) {
+          listing = listingFromStoredSku(lookup.value);
+          if (listing) listingSource = "stored_sku";
+        }
+        if (!listing) {
           if (skuError) throw skuError;
           return res.status(404).json({
             error: "No item found for that SKU. Try the item name, or enter the item manually.",
@@ -12889,6 +12972,11 @@ app.get("/api/listing", async (req, res) => {
         }
         matchedBySku = Boolean(listing);
       }
+      if (!listing) {
+        listing = listingFromStoredSku(lookup.value);
+        if (listing) listingSource = "stored_sku";
+      }
+      matchedBySku = Boolean(listing);
     }
 
     if (!listing && !skipFuzzyTitle && source === "webflow") {
