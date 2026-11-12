@@ -20,6 +20,7 @@
   const PREVIEW_URL=API_BASE+"/api/freight-quote/preview";
   const SUBMIT_URL=API_BASE+"/api/freight-quote";
   const ZIP_URL=API_BASE+"/api/freight-zip";
+  const STAFF_CHECK_URL=API_BASE+"/api/freight-staff-check";
   const MARKUP_URL=API_BASE+"/embeds/freight-part1.html";
   const ORIGIN_ADDRESS="15530 N Greenway Hayden Loop Ste 100, Scottsdale, AZ 85260";
   const JSON_HDR={"Content-Type":"application/json","Accept":"application/json"};
@@ -42,6 +43,7 @@
   let zipLookupSeq=0;
   let draftTimer=null;
   let restoringDraft=false;
+  let staffVerified=false;
 
   const $=(s,r=document)=>r.querySelector(s);
   const $$=(s,r=document)=>Array.from(r.querySelectorAll(s));
@@ -405,6 +407,8 @@
       if(el)el.hidden=true;
     });
     $$('input[name="lf_extra_people"]').forEach(r=>{r.checked=false});
+    staffVerified=false;
+    syncStaffCodeField();
     itemsWrap.innerHTML="";
     itemCounter=0;
     addItem();
@@ -441,6 +445,8 @@
       step:Math.min(step,4),
       maxStepReached:Math.min(Math.max(maxStepReached,step),4),
       pathMismatchAcknowledged:!!pathMismatchAcknowledged,
+      storeEmployee:storeEmployeeAnswer(),
+      staffCode:value("#lfStaffCode"),
       path:$('input[name="delivery_path"]:checked')?.value||"local_az",
       fields,
       extraPeople:$('input[name="lf_extra_people"]:checked')?.value||"",
@@ -474,6 +480,13 @@
     if(!draft||typeof draft!=="object")return false;
     restoringDraft=true;
     try{
+      if(draft.storeEmployee){
+        const staffRadio=$('input[name="store_employee"][value="'+draft.storeEmployee+'"]');
+        if(staffRadio)staffRadio.checked=true;
+      }
+      if($("#lfStaffCode"))$("#lfStaffCode").value=draft.staffCode||"";
+      staffVerified=false;
+      syncStaffCodeField();
       if(draft.path){
         const radio=$('input[name="delivery_path"][value="'+draft.path+'"]');
         if(radio)radio.checked=true;
@@ -549,6 +562,70 @@
       const el=$(sel);
       if(el)el.classList.toggle("lf-heavy-prompt",heavy);
     });
+  }
+
+  function storeEmployeeAnswer(){
+    return $('input[name="store_employee"]:checked')?.value||"";
+  }
+
+  // In-store sale: staff verified with the employee code, so the customer is buying it now.
+  function isStoreSale(){
+    return storeEmployeeAnswer()==="yes";
+  }
+
+  function syncStaffCodeField(){
+    const wrap=$("#lfStaffCodeWrap");
+    const yes=storeEmployeeAnswer()==="yes";
+    if(wrap)wrap.hidden=!yes;
+    const code=$("#lfStaffCode");
+    if(!yes&&code){
+      code.value="";
+      fieldError(code,"");
+    }
+    const choiceErr=$("#lfStaffChoiceError");
+    if(choiceErr&&storeEmployeeAnswer())choiceErr.textContent="";
+  }
+
+  async function tryAdvanceFromStaff(){
+    // Older Part 1 markup has no staff question — keep the customer flow moving.
+    if(!$('input[name="store_employee"]')){
+      if(validateStep(1)){updatePathDefaults();setStep(2)}
+      return;
+    }
+    const answer=storeEmployeeAnswer();
+    const choiceErr=$("#lfStaffChoiceError");
+    if(!answer){
+      if(choiceErr)choiceErr.textContent="Please choose Yes or No.";
+      return;
+    }
+    if(choiceErr)choiceErr.textContent="";
+    if(answer==="yes"){
+      const code=$("#lfStaffCode");
+      const entered=String(code?.value||"").trim();
+      if(!/^\d{4}$/.test(entered)){
+        fieldError(code,"Enter the 4-digit employee code.");
+        return;
+      }
+      if(!staffVerified){
+        const btn=$('.lf-step[data-step="1"] [data-next]');
+        if(btn)btn.disabled=true;
+        try{
+          const res=await fetch(STAFF_CHECK_URL,{method:"POST",headers:JSON_HDR,body:JSON.stringify({code:entered})});
+          const data=await res.json().catch(()=>({}));
+          staffVerified=Boolean(res.ok&&data.ok);
+        }catch(_e){
+          staffVerified=false;
+        }finally{
+          if(btn)btn.disabled=false;
+        }
+        if(!staffVerified){
+          fieldError(code,"That employee code is not correct.");
+          return;
+        }
+      }
+      fieldError(code,"");
+    }
+    if(validateStep(1)){updatePathDefaults();setStep(2)}
   }
 
   function fieldError(input,msg){
@@ -1186,7 +1263,7 @@
       setTextSafe("#lfLongCarryLabel","Long carry from entrance to the truck");
       setTextSafe("#lfLongCarryHelp","Long carry = about 75+ feet from entrance/elevator/pickup area to where the truck can park.");
       setTextSafe("#lfParkingLabel","Limited truck parking, low clearance, or restricted pickup hours");
-      setTextSafe("#lfPreferredScheduleLabel","Please enter a few pickup days and 4-hour windows that work for you on those days.");
+      setTextSafe("#lfPreferredScheduleLabel","Please enter a few pickup days and 2-hour windows that work for you on those days.");
       const preferred=$("#lfPreferredSchedule");
       if(preferred)preferred.placeholder="Example: Tue or Wed, 10am–2pm or 1pm–5pm";
       setTextSafe("#lfSmartDefaults","<strong>What happens next:</strong> You confirm and we get you an estimate. We email you and the team the receipt, which we use to confirm final pricing.",true);
@@ -1220,7 +1297,7 @@
       setTextSafe("#lfLongCarryLabel","Long carry from truck to entrance");
       setTextSafe("#lfLongCarryHelp","Long carry = about 75+ feet from truck parking to entrance/elevator/delivery area.");
       setTextSafe("#lfParkingLabel","Limited truck parking, low clearance, or restricted delivery hours");
-      setTextSafe("#lfPreferredScheduleLabel","Please enter a few delivery days and 4-hour windows that work for you on those days.");
+      setTextSafe("#lfPreferredScheduleLabel","Please enter a few delivery days and 2-hour windows that work for you on those days.");
       const preferred=$("#lfPreferredSchedule");
       if(preferred)preferred.placeholder="Example: Tue or Wed, 10am–2pm or 1pm–5pm";
       setTextSafe("#lfSmartDefaults","<strong>What happens next:</strong> You confirm and we get you an estimate. We email you and the team the receipt, which we use to confirm final pricing.",true);
@@ -1667,6 +1744,8 @@
 
     return {
       request_mode:mode,
+      store_employee:storeEmployeeAnswer()==="yes",
+      staff_code:storeEmployeeAnswer()==="yes"?value("#lfStaffCode"):"",
       delivery_path:path,
       customer_name:value("#lfName"),
       customer_email:value("#lfEmail"),
@@ -1755,8 +1834,9 @@
     const buyTip=opts.buyTip
       ?'<p class="lf-buy-tax-tip" style="margin:8px 0 0;font-size:13px;line-height:1.45;color:#333;">'+escapeHtml(opts.buyTip)+"</p>"
       :"";
+    const storeSale=!!opts.storeSale;
     const cards=(items||[]).map(i=>{
-      const sold=listingLooksSold(i);
+      const sold=!storeSale&&listingLooksSold(i);
       const cleanTitle=stripNoLongerAvailable(i.title||"View item");
       const dims=[i.width,i.depth,i.height].every(v=>v!=null&&v!=="")
         ?escapeHtml(String(i.width)+"X"+String(i.depth)+"X"+String(i.height)+"H")
@@ -1778,7 +1858,9 @@
       // Sold layout: keep item + size, then (SOLD), then Shop All (links to all-for-sale).
       const soldLine=sold?'<p class="lf-buy-card-sold">(SOLD)</p><a class="lf-buy-card-shop-all" href="'+escapeHtml(SHOP_ALL_URL)+'" target="_blank" rel="noopener">Shop All</a>':"";
       const img=i.image_url
-        ?'<a class="lf-buy-card-img" href="'+url+'" target="_blank" rel="noopener"><img src="'+escapeHtml(i.image_url)+'" alt="'+titleBase+'" loading="lazy"></a>'
+        ?(storeSale
+          ?'<span class="lf-buy-card-img"><img src="'+escapeHtml(i.image_url)+'" alt="'+titleBase+'" loading="lazy"></span>'
+          :'<a class="lf-buy-card-img" href="'+url+'" target="_blank" rel="noopener"><img src="'+escapeHtml(i.image_url)+'" alt="'+titleBase+'" loading="lazy"></a>')
         :'<div class="lf-buy-card-img lf-buy-card-img-empty" aria-hidden="true"></div>';
       return '<div class="lf-buy-card">'+img+
         '<div class="lf-buy-card-body">'+
@@ -1786,11 +1868,12 @@
         (meta?'<p class="lf-buy-card-meta">'+meta+"</p>":"")+
         soldLine+
         "</div>"+
-        '<a class="lf-buy-card-cta" href="'+url+'" target="_blank" rel="noopener">'+cta+'</a>'+
+        (storeSale?"":'<a class="lf-buy-card-cta" href="'+url+'" target="_blank" rel="noopener">'+cta+'</a>')+
         "</div>";
     }).join("");
     if(!cards&&!addrHtml&&!preferredHtml)return"";
-    return '<div class="lf-buy-block">'+(cards?'<p>Buy your item(s)</p><div class="lf-buy-cards">'+cards+"</div>":"")+buyTip+addrHtml+preferredHtml+"</div>";
+    const heading=storeSale?"Your item(s)":"Buy your item(s)";
+    return '<div class="lf-buy-block">'+(cards?'<p>'+heading+'</p><div class="lf-buy-cards">'+cards+"</div>":"")+(storeSale?"":buyTip)+addrHtml+preferredHtml+"</div>";
   }
 
   function applyTruckDriveMinutes(carMinutes){
@@ -1948,7 +2031,8 @@
         :"Your estimated time is round-trip and includes wrapping and preparation, loading and securing, delivery, unloading, and placement.";
       const buyHtml=buyItemsHtml(payload.items,isPickup,{
         address:payload.delivery_address?.full||"",
-        preferred:payload.access?.preferred_days_windows||""
+        preferred:payload.access?.preferred_days_windows||"",
+        storeSale:!!payload.store_employee
       });
       const oversizeHtml=oversize
         ?'<p class="lf-estimate-banner warn"><strong>Size-based 3-person estimate.</strong> This quote assumes three people may be needed because at least one item is 299+ lb and over 72&quot; high, or 450+ lb — even if you did not select extra crew. Final rates are often lower if the delivery team confirms two people are enough (typically closer to our ($95/hr) rate). <strong>Please confirm with the delivery team before scheduling. This is an estimate only.</strong></p>'
@@ -1999,13 +2083,14 @@
       const mapHtml=routeMapHtml(mapUrl,dirUrl);
       const rangeText=hasRange?money(low)+" – "+money(high):"Freight-Ready";
       const outOfAz=!isArizonaStateOrZip(payload.delivery_address?.state||payload.state,payload.delivery_address?.zip||payload.zip);
-      const taxHtml=outOfAz
+      const taxHtml=outOfAz&&!payload.store_employee
         ? '<p style="margin:0 0 4px;font-size:14px;line-height:1.5;color:#333;"><strong>Out-of-state purchase savings:</strong> When you purchase the item online and it is shipped outside Arizona, no Arizona sales tax is charged on the item purchase at checkout. That is approximately an 8% savings compared with an Arizona purchase.</p>'+
           '<p style="margin:0 0 12px;font-size:12px;line-height:1.45;color:#666;">This applies to the merchandise purchase. Freight and other service charges are separate.</p>'
         : "";
-      const buyHtml=buyItemsHtml(payload.items,false,outOfAz?{
-        buyTip:"Buy online to secure the item and receive the out-of-state no-sales-tax benefit on the merchandise purchase."
-      }:null);
+      const buyHtml=buyItemsHtml(payload.items,false,{
+        buyTip:outOfAz?"Buy online to secure the item and receive the out-of-state no-sales-tax benefit on the merchandise purchase.":"",
+        storeSale:!!payload.store_employee
+      });
       const oversizeHtml=oversizedPalletNoteHtml(payload.items);
       const liftgateYes=!!payload.access.liftgate_delivery;
       const whiteGloveHtml=payload.access.white_glove
@@ -2176,6 +2261,10 @@
   }
 
   $$("[data-next]").forEach(btn=>btn.addEventListener("click",()=>{
+    if(step===1){
+      tryAdvanceFromStaff();
+      return;
+    }
     if(step===2){
       tryAdvanceFromAddress();
       return;
@@ -2270,6 +2359,24 @@
     }
   });
   if($("#lfWhiteGlove"))$("#lfWhiteGlove").addEventListener("change",()=>updateWhiteGloveAccess());
+  $$('input[name="store_employee"]').forEach(r=>r.addEventListener("change",()=>{
+    staffVerified=false;
+    syncStaffCodeField();
+  }));
+  if($("#lfStaffCode")){
+    $("#lfStaffCode").addEventListener("input",()=>{
+      const el=$("#lfStaffCode");
+      const cleaned=String(el.value||"").replace(/\D/g,"").slice(0,4);
+      if(el.value!==cleaned)el.value=cleaned;
+      staffVerified=false;
+      fieldError(el,"");
+    });
+    $("#lfStaffCode").addEventListener("keydown",e=>{
+      if(e.key!=="Enter")return;
+      e.preventDefault();
+      tryAdvanceFromStaff();
+    });
+  }
   $$('input[name="delivery_path"]').forEach(el=>el.addEventListener("change",()=>{
     const path=$('input[name="delivery_path"]:checked').value;
     pathMismatchAcknowledged=false;

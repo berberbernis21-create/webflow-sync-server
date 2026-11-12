@@ -16,6 +16,7 @@ import {
 import { verifyMapRequest, fetchStaticMapBytes } from "../lib/freightRouteMap.js";
 import { lookupUsZipCityState } from "../lib/freightZipLookup.js";
 import { describeStackConfirmNeed } from "../lib/freightPalletize.js";
+import { isValidStaffCode } from "../lib/freightStaffCode.js";
 
 const router = express.Router();
 const jsonParser = express.json({ limit: "1mb" });
@@ -268,6 +269,17 @@ async function buildQuoteContext(submission) {
     },
   };
 }
+
+router.options("/freight-staff-check", (req, res) => {
+  applyConsignmentCorsHeaders(req, res);
+  res.sendStatus(204);
+});
+
+/** POST /api/freight-staff-check — store-employee code gate (code stays server-side). */
+router.post("/freight-staff-check", freightRateLimit, jsonParser, (req, res) => {
+  const ok = isValidStaffCode(req.body?.code);
+  return res.status(ok ? 200 : 403).json({ ok });
+});
 
 router.options("/freight-quote", (req, res) => {
   applyConsignmentCorsHeaders(req, res);

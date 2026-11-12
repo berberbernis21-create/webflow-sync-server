@@ -80,6 +80,9 @@ to remain visible inside the Webflow Designer.
 .lf-btn.olive{border-color:var(--lf-olive);background:var(--lf-olive)}
 .lf-actions{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:18px}
 .lf-step[data-step="1"] .lf-actions{margin-top:16px;padding-top:4px}
+.lf-staff-grid{margin-top:4px}
+.lf-staff-code{max-width:220px;margin-top:6px}
+.lf-path-head{margin-top:22px}
 .lf-actions-right{display:flex;gap:8px;margin-left:auto}
 .lf-fieldset{margin:0;padding:0;border:0}
 .lf-access-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
@@ -914,6 +917,33 @@ legend.lf-heavy-prompt {
 
     <section class="lf-step" data-step="1">
       <div class="lf-head">
+        <h2>Are you a Lost &amp; Found store employee?</h2>
+        <p>Staff entering a delivery for an in-store sale should choose Yes. Customers choose No.</p>
+      </div>
+      <div class="lf-choice-grid lf-staff-grid">
+        <div class="lf-choice">
+          <input id="lfStaffNo" type="radio" name="store_employee" value="no">
+          <label for="lfStaffNo">
+            <em class="lf-choice-kicker">Customer</em>
+            <strong>No, I'm not a store employee</strong>
+          </label>
+        </div>
+        <div class="lf-choice">
+          <input id="lfStaffYes" type="radio" name="store_employee" value="yes">
+          <label for="lfStaffYes">
+            <em class="lf-choice-kicker">Staff</em>
+            <strong>Yes, I'm a store employee</strong>
+          </label>
+        </div>
+      </div>
+      <div class="lf-error" id="lfStaffChoiceError"></div>
+      <div class="lf-field lf-staff-code" id="lfStaffCodeWrap" hidden>
+        <label for="lfStaffCode">Employee code <span class="lf-required">*</span></label>
+        <input id="lfStaffCode" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="4" autocomplete="off" placeholder="4-digit code">
+        <div class="lf-error"></div>
+      </div>
+
+      <div class="lf-head lf-path-head">
         <h2>Choose your path</h2>
         <p>Choose local delivery, consignor pickup, or nationwide freight to get started.</p>
       </div>
@@ -997,7 +1027,7 @@ legend.lf-heavy-prompt {
       <div class="lf-head"><span class="lf-path-badge" data-path-badge>Local Delivery</span><h2>Access &amp; Handling</h2><p id="lfAccessHeadHelp">Tell us about stairs, interior access, building access, and handling needs so the estimate is as accurate as possible.</p></div>
 
       <div class="lf-field lf-local-truck-only" id="lfPreferredScheduleWrap">
-        <label for="lfPreferredSchedule" id="lfPreferredScheduleLabel">Please enter a few delivery days and 4-hour windows that work for you on those days.</label>
+        <label for="lfPreferredSchedule" id="lfPreferredScheduleLabel">Please enter a few delivery days and 2-hour windows that work for you on those days.</label>
         <textarea id="lfPreferredSchedule" placeholder="Example: Tue or Wed, 10am–2pm or 1pm–5pm"></textarea>
         <div class="lf-help" id="lfPreferredScheduleHelp">Optional — helps us schedule faster once the item is purchased.</div>
       </div>

@@ -1182,3 +1182,49 @@ test("sign PDF fills delivery company and keeps preferred days in their own fiel
   assert.ok(shortDays && shortValue && shortItems);
   assert.ok(shortDays.y > shortValue.y && shortValue.y - shortItems.y > 16);
 });
+
+test("store employee: wrong code is rejected", () => {
+  const v = validateFreightQuoteRequest(
+    localDeliveryBody({ store_employee: true, staff_code: "1111" })
+  );
+  assert.equal(v.ok, false);
+  assert.equal(v.status, 403);
+});
+
+test("store employee: in-store sale lists items with no Buy Now or SOLD", () => {
+  const ctx = {
+    requestId: "test-store",
+    route: { drive_minutes: 23, distance_miles: 8.9 },
+    localEstimate: { estimated_price: 110, drive_minutes: 23, distance_miles: 8.9 },
+  };
+  const item = {
+    title: "Walnut Cabinet (No Longer Available)",
+    width: 39,
+    depth: 19,
+    height: 42,
+    weight: 150,
+    quantity: 1,
+    product_url: "https://www.lostandfoundresale.com/product/walnut-cabinet-1234",
+    sold: true,
+  };
+  const staff = validateFreightQuoteRequest(
+    localDeliveryBody({ store_employee: true, staff_code: "2012", items: [item] })
+  );
+  assert.equal(staff.ok, true);
+  assert.equal(staff.submission.store_sale, true);
+  assert.equal(staff.submission.items[0].sold, false);
+  const mail = buildFreightQuoteEmails(staff.submission, ctx);
+  assert.doesNotMatch(mail.customer.html, /Buy Now|Shop All|\(SOLD\)/);
+  assert.doesNotMatch(mail.customer.text, /Buy Now|\(SOLD\)/);
+  assert.match(mail.customer.html, /Your item\(s\)/);
+  assert.match(mail.internal.subject, /^In-Store Sale \|/);
+  assert.match(mail.internal.html, /In-store sale/);
+
+  const customer = validateFreightQuoteRequest(
+    localDeliveryBody({ store_employee: false, items: [{ ...item, sold: false, title: "Walnut Cabinet" }] })
+  );
+  assert.equal(customer.submission.store_sale, false);
+  const customerMail = buildFreightQuoteEmails(customer.submission, ctx);
+  assert.match(customerMail.customer.html, /Buy your item\(s\)/);
+  assert.match(customerMail.customer.html, /Buy Now/);
+});
