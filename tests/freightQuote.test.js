@@ -1183,6 +1183,14 @@ test("sign PDF fills delivery company and keeps preferred days in their own fiel
   assert.ok(shortDays.y > shortValue.y && shortValue.y - shortItems.y > 16);
 });
 
+test("store employee: only applies to local delivery", () => {
+  const pickup = validateFreightQuoteRequest(
+    localDeliveryBody({ delivery_path: "pickup_az", store_employee: true, staff_code: "" })
+  );
+  assert.equal(pickup.ok, true);
+  assert.equal(pickup.submission.store_sale, false);
+});
+
 test("store employee: wrong code is rejected", () => {
   const v = validateFreightQuoteRequest(
     localDeliveryBody({ store_employee: true, staff_code: "1111" })

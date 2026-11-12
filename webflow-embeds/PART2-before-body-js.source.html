@@ -480,6 +480,10 @@
     if(!draft||typeof draft!=="object")return false;
     restoringDraft=true;
     try{
+      if(draft.path){
+        const radio=$('input[name="delivery_path"][value="'+draft.path+'"]');
+        if(radio)radio.checked=true;
+      }
       if(draft.storeEmployee){
         const staffRadio=$('input[name="store_employee"][value="'+draft.storeEmployee+'"]');
         if(staffRadio)staffRadio.checked=true;
@@ -487,10 +491,6 @@
       if($("#lfStaffCode"))$("#lfStaffCode").value=draft.staffCode||"";
       staffVerified=false;
       syncStaffCodeField();
-      if(draft.path){
-        const radio=$('input[name="delivery_path"][value="'+draft.path+'"]');
-        if(radio)radio.checked=true;
-      }
       const fields=draft.fields||{};
       Object.keys(fields).forEach(id=>{
         const el=$("#"+id);
@@ -564,16 +564,27 @@
     });
   }
 
+  // Store-employee question only matters for local delivery (in-store sale going out on our truck).
+  function staffQuestionApplies(){
+    return !!$('input[name="store_employee"]')&&
+      ($('input[name="delivery_path"]:checked')?.value||"local_az")==="local_az";
+  }
+
   function storeEmployeeAnswer(){
+    if(!staffQuestionApplies())return "";
     return $('input[name="store_employee"]:checked')?.value||"";
   }
 
-  // In-store sale: staff verified with the employee code, so the customer is buying it now.
-  function isStoreSale(){
-    return storeEmployeeAnswer()==="yes";
-  }
-
   function syncStaffCodeField(){
+    const block=$("#lfStaffBlock");
+    const applies=staffQuestionApplies();
+    if(block)block.hidden=!applies;
+    if(!applies){
+      $$('input[name="store_employee"]').forEach(r=>{r.checked=false});
+      staffVerified=false;
+      const choiceErr=$("#lfStaffChoiceError");
+      if(choiceErr)choiceErr.textContent="";
+    }
     const wrap=$("#lfStaffCodeWrap");
     const yes=storeEmployeeAnswer()==="yes";
     if(wrap)wrap.hidden=!yes;
@@ -587,8 +598,8 @@
   }
 
   async function tryAdvanceFromStaff(){
-    // Older Part 1 markup has no staff question — keep the customer flow moving.
-    if(!$('input[name="store_employee"]')){
+    // Pickup / nationwide, or older Part 1 markup without the staff question.
+    if(!staffQuestionApplies()){
       if(validateStep(1)){updatePathDefaults();setStep(2)}
       return;
     }
@@ -2380,6 +2391,7 @@
   $$('input[name="delivery_path"]').forEach(el=>el.addEventListener("change",()=>{
     const path=$('input[name="delivery_path"]:checked').value;
     pathMismatchAcknowledged=false;
+    syncStaffCodeField();
     if(path==="local_az"||path==="pickup_az"){
       const st=value("#lfState").toUpperCase();
       if(!st||st==="AZ"||isArizonaStateOrZip(st,value("#lfZip")))$("#lfState").value="AZ";
@@ -2466,6 +2478,7 @@
   syncAccessAssemblyAsk();
   updateWhatNext();
   updateHeroNotice();
+  syncStaffCodeField();
   form.addEventListener("input",scheduleSaveDraft);
   form.addEventListener("change",scheduleSaveDraft);
   let restored=false;
