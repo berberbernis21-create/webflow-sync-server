@@ -407,8 +407,8 @@
       if(el)el.hidden=true;
     });
     $$('input[name="lf_extra_people"]').forEach(r=>{r.checked=false});
-    staffVerified=false;
-    syncStaffCodeField();
+    closeStaffModal();
+    resetStaffAnswer();
     itemsWrap.innerHTML="";
     itemCounter=0;
     addItem();
@@ -575,15 +575,54 @@
     return $('input[name="store_employee"]:checked')?.value||"";
   }
 
+  function resetStaffAnswer(){
+    $$('input[name="store_employee"]').forEach(r=>{r.checked=false});
+    staffVerified=false;
+    const code=$("#lfStaffCode");
+    if(code){code.value="";fieldError(code,"")}
+    const choiceErr=$("#lfStaffChoiceError");
+    if(choiceErr)choiceErr.textContent="";
+    syncStaffCodeField();
+  }
+
+  function onStaffModalKeydown(e){
+    if(e.key==="Escape")closeStaffModal();
+  }
+
+  function openStaffModal(){
+    const modal=$("#lfStaffModal");
+    if(!modal)return;
+    syncStaffCodeField();
+    modal.hidden=false;
+    document.addEventListener("keydown",onStaffModalKeydown);
+    const first=$('input[name="store_employee"]:checked')||$("#lfStaffNo");
+    if(first)first.focus({preventScroll:true});
+  }
+
+  function closeStaffModal(){
+    const modal=$("#lfStaffModal");
+    if(modal)modal.hidden=true;
+    document.removeEventListener("keydown",onStaffModalKeydown);
+  }
+
+  function advanceFromPath(){
+    if(validateStep(1)){updatePathDefaults();setStep(2)}
+  }
+
+  // Step 1 Continue: local delivery asks the store-employee popup first.
+  function continueFromPath(){
+    if(!validateStep(1))return;
+    if(staffQuestionApplies()&&$("#lfStaffModal")){
+      openStaffModal();
+      return;
+    }
+    advanceFromPath();
+  }
+
   function syncStaffCodeField(){
-    const block=$("#lfStaffBlock");
-    const applies=staffQuestionApplies();
-    if(block)block.hidden=!applies;
-    if(!applies){
+    if(!staffQuestionApplies()&&$('input[name="store_employee"]:checked')){
       $$('input[name="store_employee"]').forEach(r=>{r.checked=false});
       staffVerified=false;
-      const choiceErr=$("#lfStaffChoiceError");
-      if(choiceErr)choiceErr.textContent="";
     }
     const wrap=$("#lfStaffCodeWrap");
     const yes=storeEmployeeAnswer()==="yes";
@@ -600,7 +639,8 @@
   async function tryAdvanceFromStaff(){
     // Pickup / nationwide, or older Part 1 markup without the staff question.
     if(!staffQuestionApplies()){
-      if(validateStep(1)){updatePathDefaults();setStep(2)}
+      closeStaffModal();
+      advanceFromPath();
       return;
     }
     const answer=storeEmployeeAnswer();
@@ -618,7 +658,7 @@
         return;
       }
       if(!staffVerified){
-        const btn=$('.lf-step[data-step="1"] [data-next]');
+        const btn=$("#lfStaffModalContinue")||$('.lf-step[data-step="1"] [data-next]');
         if(btn)btn.disabled=true;
         try{
           const res=await fetch(STAFF_CHECK_URL,{method:"POST",headers:JSON_HDR,body:JSON.stringify({code:entered})});
@@ -636,7 +676,8 @@
       }
       fieldError(code,"");
     }
-    if(validateStep(1)){updatePathDefaults();setStep(2)}
+    closeStaffModal();
+    advanceFromPath();
   }
 
   function fieldError(input,msg){
@@ -2273,7 +2314,7 @@
 
   $$("[data-next]").forEach(btn=>btn.addEventListener("click",()=>{
     if(step===1){
-      tryAdvanceFromStaff();
+      continueFromPath();
       return;
     }
     if(step===2){
@@ -2373,6 +2414,12 @@
   $$('input[name="store_employee"]').forEach(r=>r.addEventListener("change",()=>{
     staffVerified=false;
     syncStaffCodeField();
+    const modal=$("#lfStaffModal");
+    if(r.checked&&r.value==="no"&&modal&&!modal.hidden){
+      tryAdvanceFromStaff();
+      return;
+    }
+    if(r.checked&&r.value==="yes")setTimeout(()=>$("#lfStaffCode")?.focus({preventScroll:true}),0);
   }));
   if($("#lfStaffCode")){
     $("#lfStaffCode").addEventListener("input",()=>{
@@ -2388,10 +2435,18 @@
       tryAdvanceFromStaff();
     });
   }
+  if($("#lfStaffModalContinue"))$("#lfStaffModalContinue").addEventListener("click",()=>tryAdvanceFromStaff());
+  ["#lfStaffModalCancel","#lfStaffModalClose"].forEach(sel=>{
+    const btn=$(sel);
+    if(btn)btn.addEventListener("click",closeStaffModal);
+  });
+  if($("#lfStaffModal"))$("#lfStaffModal").addEventListener("click",e=>{
+    if(e.target===e.currentTarget)closeStaffModal();
+  });
   $$('input[name="delivery_path"]').forEach(el=>el.addEventListener("change",()=>{
     const path=$('input[name="delivery_path"]:checked').value;
     pathMismatchAcknowledged=false;
-    syncStaffCodeField();
+    resetStaffAnswer();
     if(path==="local_az"||path==="pickup_az"){
       const st=value("#lfState").toUpperCase();
       if(!st||st==="AZ"||isArizonaStateOrZip(st,value("#lfZip")))$("#lfState").value="AZ";
