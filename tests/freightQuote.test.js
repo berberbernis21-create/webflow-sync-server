@@ -1187,6 +1187,74 @@ test("sign PDF fills delivery company and keeps preferred days in their own fiel
   assert.ok(shortDays.y > shortValue.y && shortValue.y - shortItems.y > 16);
 });
 
+test("sign PDF wraps long disassembly access text above preferred days", async () => {
+  const ctx = {
+    requestId: "test-sign-assembly-wrap",
+    route: { drive_minutes: 26, distance_miles: 12 },
+    localEstimate: {
+      estimated_price: 165,
+      drive_minutes: 26,
+      distance_miles: 12,
+      assembly_extra_minutes: 13,
+    },
+  };
+  const v = validateFreightQuoteRequest(
+    localDeliveryBody({
+      access: {
+        delivery_partner: "cruz_pro_line",
+        assembly_required: "yes",
+        assembly_over_15: "yes",
+        assembly_extra_minutes: 13,
+        preferred_days_windows: "Monday 3-6",
+        stairs: true,
+        stair_flights: 1,
+      },
+    })
+  );
+  assert.equal(v.ok, true);
+  const buf = await generateLocalSignPdf(v.submission, ctx);
+  assert.ok(buf && buf.length > 500);
+  const pageCount = (buf.toString("latin1").match(/\/Type\s*\/Page\b/g) || []).length;
+  assert.equal(pageCount, 1, "sign PDF stays one page");
+
+  const ops = pdfOps(buf);
+  const disassemblyLabel = pdfFind(ops, "Disassembly & reassembly");
+  const additional = pdfFind(ops, "Additional Disassembly");
+  const totalLine = pdfFind(ops, "Total Disassembly");
+  const preferred = pdfFind(ops, "CUSTOMER PREFERRED DAYS");
+  const preferredVal = pdfFind(ops, "Monday 3-6");
+  const items = pdfFind(ops, "ITEMS");
+  assert.ok(disassemblyLabel, "disassembly label present");
+  assert.ok(additional, "additional disassembly timing present");
+  assert.ok(preferred && preferredVal && items);
+
+  // PDF y grows upward: access timing must sit above preferred days / items.
+  assert.ok(
+    additional.y > preferred.y + 8,
+    "long disassembly value stays above CUSTOMER PREFERRED DAYS (no stamp-over)"
+  );
+  if (totalLine) {
+    assert.ok(
+      totalLine.y > preferred.y + 4,
+      "total disassembly line also stays above preferred days"
+    );
+  }
+  assert.ok(preferred.y > preferredVal.y, "preferred label above its value");
+  assert.ok(preferredVal.y - items.y > 12, "preferred value stays above ITEMS");
+
+  // Wrapped access value must not share the preferred-days baseline.
+  for (const hit of ops.filter(
+    (op) =>
+      op.text.includes("Additional Disassembly") ||
+      op.text.includes("Total Disassembly & Reassembly Time")
+  )) {
+    assert.ok(
+      Math.abs(hit.y - preferred.y) > 6,
+      `assembly text must not overlap preferred days (y=${hit.y} vs ${preferred.y})`
+    );
+  }
+});
+
 test("store employee: only applies to local delivery", () => {
   const pickup = validateFreightQuoteRequest(
     localDeliveryBody({ delivery_path: "pickup_az", store_employee: true, staff_code: "" })
