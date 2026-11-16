@@ -1414,7 +1414,8 @@ test("store sale internal email: off-site listing uses Shop All + staff note + h
     mail.internal.text,
     /This item may disappear from that listing link; you will be redirected to Shop All/
   );
-  // Customer store-sale email also carries the Shop All redirect wording (no Buy Now CTA).
+  // Customer store-sale email: real Shop All <a href> on the item (+ image), plus redirect note.
+  const shopAllEsc = SHOP_ALL_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   assert.match(
     mail.customer.html,
     /This item may disappear from that listing link; you will be redirected to Shop All/
@@ -1423,6 +1424,9 @@ test("store sale internal email: off-site listing uses Shop All + staff note + h
     mail.customer.text,
     /This item may disappear from that listing link; you will be redirected to Shop All/
   );
+  assert.match(mail.customer.html, new RegExp(`href="${shopAllEsc}"[^>]*>Shop All</`));
+  assert.match(mail.customer.html, new RegExp(`<a href="${shopAllEsc}"[^>]*>\\s*<img `));
+  assert.match(mail.customer.text, new RegExp(`Shop All: ${shopAllEsc}`));
   assert.doesNotMatch(mail.customer.html, /Buy Now|View listing|\(SOLD\)/);
   // Customer email still gets the real https thumbnail (no Buy Now for store sale).
   assert.match(mail.customer.html, new RegExp(`src="${img.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`));
