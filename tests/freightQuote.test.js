@@ -1215,7 +1215,8 @@ test("sign PDF wraps long disassembly access text above preferred days", async (
   const buf = await generateLocalSignPdf(v.submission, ctx);
   assert.ok(buf && buf.length > 500);
   const pageCount = (buf.toString("latin1").match(/\/Type\s*\/Page\b/g) || []).length;
-  assert.equal(pageCount, 1, "sign PDF stays one page");
+  // Prefer one page; allow page 2 rather than crowding contact / preferred / signatures.
+  assert.ok(pageCount >= 1 && pageCount <= 2, "sign PDF uses at most two pages");
 
   const ops = pdfOps(buf);
   const disassemblyLabel = pdfFind(ops, "Disassembly & reassembly");
@@ -1253,6 +1254,82 @@ test("sign PDF wraps long disassembly access text above preferred days", async (
       `assembly text must not overlap preferred days (y=${hit.y} vs ${preferred.y})`
     );
   }
+});
+
+test("sign PDF + email keep multi preferred windows and non-overlapping contact labels", async () => {
+  const multiPreferred =
+    "Mon 3-6\nTue 10-12\nWed Idk IDk IDK IDKL\nThu morning backup if needed";
+  const ctx = {
+    requestId: "test-multi-preferred-contact",
+    route: { drive_minutes: 20, distance_miles: 12.3 },
+    localEstimate: {
+      estimated_price: 145,
+      drive_minutes: 20,
+      distance_miles: 12.3,
+      assembly_extra_minutes: 15,
+    },
+  };
+  const v = validateFreightQuoteRequest(
+    localDeliveryBody({
+      customer_name: "Joanne Royer",
+      customer_email: "bernis.berber@icloud.com",
+      customer_phone: "4802098133",
+      street: "7607 E Bonita Drive",
+      unit: "",
+      city: "Scottsdale",
+      state: "AZ",
+      zip: "85250",
+      access: {
+        delivery_partner: "cruz_pro_line",
+        assembly_required: "yes",
+        assembly_over_15: "yes",
+        assembly_extra_minutes: 15,
+        preferred_days_windows: multiPreferred,
+        stairs: true,
+        stair_flights: 1,
+        freight_elevator: true,
+        fragile_or_special_handling: true,
+      },
+    })
+  );
+  assert.equal(v.ok, true);
+  assert.equal(v.submission.access.preferred_days_windows, multiPreferred);
+
+  const buf = await generateLocalSignPdf(v.submission, ctx);
+  assert.ok(buf && buf.length > 500);
+  const ops = pdfOps(buf);
+  const nameVal = pdfFind(ops, "Joanne Royer");
+  const nameLabel = pdfFind(ops, "NAME");
+  const emailVal = pdfFind(ops, "bernis.berber@icloud.com");
+  const emailLabel = pdfFind(ops, "EMAIL");
+  const phoneVal = pdfFind(ops, "(480) 209-8133");
+  const phoneLabel = pdfFind(ops, "PHONE");
+  const addrVal = pdfFind(ops, "7607 E Bonita Drive");
+  const addrLabel = pdfFind(ops, "DELIVERY ADDRESS");
+  assert.ok(nameVal && nameLabel && emailVal && emailLabel && phoneVal && phoneLabel);
+  assert.ok(addrVal && addrLabel);
+  // PDF y grows upward: value above its label, and each label above the next value.
+  assert.ok(nameVal.y > nameLabel.y + 2, "NAME value above NAME label");
+  assert.ok(nameLabel.y > emailVal.y + 2, "NAME label above EMAIL value (no stamp-over)");
+  assert.ok(emailVal.y > emailLabel.y + 2, "EMAIL value above EMAIL label");
+  assert.ok(emailLabel.y > addrVal.y + 2, "EMAIL label above ADDRESS value (no stamp-over)");
+  assert.ok(addrVal.y > addrLabel.y + 2, "ADDRESS value above ADDRESS label");
+  assert.ok(phoneVal.y > phoneLabel.y + 2, "PHONE value above PHONE label");
+
+  for (const needle of ["Mon 3-6", "Tue 10-12", "Wed Idk IDk IDK IDKL", "Thu morning backup"]) {
+    assert.ok(pdfFind(ops, needle), `sign PDF keeps preferred window: ${needle}`);
+  }
+
+  const mail = buildFreightQuoteEmails(v.submission, ctx);
+  assert.match(mail.customer.html, /Mon 3-6/);
+  assert.match(mail.customer.html, /Tue 10-12/);
+  assert.match(mail.customer.html, /Wed Idk IDk IDK IDKL/);
+  assert.match(mail.customer.html, /Thu morning backup if needed/);
+  assert.match(mail.customer.html, /Preferred days \/ windows/);
+  assert.match(mail.internal.html, /Mon 3-6/);
+  assert.match(mail.internal.html, /Wed Idk IDk IDK IDKL/);
+  assert.match(mail.internal.text, /Mon 3-6/);
+  assert.match(mail.internal.text, /Thu morning backup if needed/);
 });
 
 test("store employee: only applies to local delivery", () => {
