@@ -12,7 +12,11 @@ import {
   describeStackConfirmNeed,
 } from "../lib/freightPalletize.js";
 import { validateFreightQuoteRequest } from "../lib/freightQuoteValidation.js";
-import { buildFreightQuoteEmails } from "../lib/freightQuoteEmail.js";
+import {
+  buildFreightQuoteEmails,
+  enrichSubmissionItemMedia,
+} from "../lib/freightQuoteEmail.js";
+import { absoluteHttpsImageUrl, SHOP_ALL_URL } from "../lib/listingTitleDisplay.js";
 import { generateLocalSignPdf } from "../lib/freightLocalSignPdf.js";
 import { buildManualReviewReasons } from "../lib/freightLocalEstimate.js";
 import { isAllowedConsignmentOrigin } from "../lib/consignmentCors.js";
@@ -1235,4 +1239,170 @@ test("store employee: in-store sale lists items with no Buy Now or SOLD", () => 
   const customerMail = buildFreightQuoteEmails(customer.submission, ctx);
   assert.match(customerMail.customer.html, /Buy your item\(s\)/);
   assert.match(customerMail.customer.html, /Buy Now/);
+});
+
+test("absoluteHttpsImageUrl normalizes listing image candidates", () => {
+  assert.equal(
+    absoluteHttpsImageUrl("//cdn.shopify.com/s/files/1/x/product.jpg"),
+    "https://cdn.shopify.com/s/files/1/x/product.jpg"
+  );
+  assert.equal(
+    absoluteHttpsImageUrl({ url: "http://cdn.shopify.com/a.jpg" }),
+    "https://cdn.shopify.com/a.jpg"
+  );
+  assert.equal(absoluteHttpsImageUrl("[object Object]", "/relative.jpg"), "");
+  assert.equal(
+    absoluteHttpsImageUrl("[object Object]", {
+      src: "https://cdn.prod.website-files.com/abc/photo.jpg",
+    }),
+    "https://cdn.prod.website-files.com/abc/photo.jpg"
+  );
+  assert.equal(
+    absoluteHttpsImageUrl(
+      "https://cdn.shopify.com/s/files/1/x/a.jpg",
+      "https://cdn.prod.website-files.com/abc/photo.jpg"
+    ),
+    "https://cdn.prod.website-files.com/abc/photo.jpg"
+  );
+});
+
+test("validation keeps absolute https image_url and drops junk", () => {
+  const ok = validateFreightQuoteRequest(
+    localDeliveryBody({
+      items: [
+        {
+          title: "Chair",
+          width: 20,
+          depth: 20,
+          height: 30,
+          weight: 40,
+          quantity: 1,
+          image_url: "//cdn.shopify.com/s/files/1/x/chair.jpg?v=1",
+        },
+      ],
+    })
+  );
+  assert.equal(ok.ok, true);
+  assert.equal(ok.submission.items[0].image_url, "https://cdn.shopify.com/s/files/1/x/chair.jpg?v=1");
+
+  const junk = validateFreightQuoteRequest(
+    localDeliveryBody({
+      items: [
+        {
+          title: "Chair",
+          width: 20,
+          depth: 20,
+          height: 30,
+          weight: 40,
+          quantity: 1,
+          image_url: "[object Object]",
+        },
+      ],
+    })
+  );
+  assert.equal(junk.submission.items[0].image_url, "");
+});
+
+test("store sale internal email: off-site listing uses Shop All + staff note + https image", () => {
+  const ctx = {
+    requestId: "test-store-offsite",
+    route: { drive_minutes: 23, distance_miles: 8.9 },
+    localEstimate: { estimated_price: 110, drive_minutes: 23, distance_miles: 8.9 },
+  };
+  const img = "https://cdn.shopify.com/s/files/1/0123/4567/products/walnut.jpg?v=9";
+  const staff = validateFreightQuoteRequest(
+    localDeliveryBody({
+      store_employee: true,
+      staff_code: "2012",
+      items: [
+        {
+          title: "Walnut Cabinet",
+          width: 39,
+          depth: 19,
+          height: 42,
+          weight: 150,
+          quantity: 1,
+          product_url: "https://www.lostandfoundresale.com/product/walnut-cabinet-1234",
+          image_url: img,
+          listing_off_site: true,
+        },
+      ],
+    })
+  );
+  assert.equal(staff.ok, true);
+  // listing_off_site is enrichment-only; set it on the submission items for render.
+  staff.submission.items[0].listing_off_site = true;
+  const mail = buildFreightQuoteEmails(staff.submission, ctx);
+  assert.match(mail.internal.html, new RegExp(`src="${img.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`));
+  assert.match(mail.internal.html, new RegExp(`href="${SHOP_ALL_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`));
+  assert.match(mail.internal.html, />Shop All</);
+  assert.doesNotMatch(mail.internal.html, />View listing</);
+  assert.match(
+    mail.internal.html,
+    /This item may no longer be visible on the website after a few days/
+  );
+  assert.match(mail.internal.text, new RegExp(SHOP_ALL_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.doesNotMatch(mail.customer.html, /Shop All|View listing/);
+});
+
+test("enrichSubmissionItemMedia prefers listing https image over junk client image", async () => {
+  const listingImg = "https://cdn.shopify.com/s/files/1/ok/live.jpg";
+  const prevFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({
+    ok: true,
+    json: async () => ({
+      listing: {
+        title: "Walnut Cabinet",
+        product_url: "https://www.lostandfoundresale.com/product/walnut-cabinet-1234",
+        image_url: listingImg,
+        sold: true,
+      },
+      images: [listingImg],
+    }),
+  });
+  try {
+    const enriched = await enrichSubmissionItemMedia({
+      delivery_path: "local_az",
+      store_sale: true,
+      items: [
+        {
+          index: 1,
+          source: "listing",
+          title: "Walnut Cabinet",
+          product_url: "https://www.lostandfoundresale.com/product/walnut-cabinet-1234",
+          image_url: "[object Object]",
+          sold: false,
+        },
+      ],
+    });
+    assert.equal(enriched.items[0].image_url, listingImg);
+    assert.equal(enriched.items[0].sold, false);
+    assert.equal(enriched.items[0].listing_off_site, true);
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
+});
+
+test("enrichSubmissionItemMedia marks listing_off_site on 404 for store_sale", async () => {
+  const prevFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: false, status: 404, json: async () => ({}) });
+  try {
+    const enriched = await enrichSubmissionItemMedia({
+      delivery_path: "local_az",
+      store_sale: true,
+      items: [
+        {
+          index: 1,
+          source: "listing",
+          title: "Gone Piece",
+          product_url: "https://www.lostandfoundresale.com/product/gone-piece-1",
+          image_url: "https://cdn.shopify.com/s/files/1/ok/cached.jpg",
+        },
+      ],
+    });
+    assert.equal(enriched.items[0].listing_off_site, true);
+    assert.equal(enriched.items[0].image_url, "https://cdn.shopify.com/s/files/1/ok/cached.jpg");
+  } finally {
+    globalThis.fetch = prevFetch;
+  }
 });

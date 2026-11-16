@@ -40,7 +40,11 @@ import {
   isAllowedConsignmentOrigin,
 } from "./lib/consignmentCors.js";
 import { parseSetCountFromTitle, parseDimsFromTitle, parseDimsFromDescription } from "./lib/freightPalletize.js";
-import { stripNoLongerAvailableSuffix, listingLooksSold } from "./lib/listingTitleDisplay.js";
+import {
+  stripNoLongerAvailableSuffix,
+  listingLooksSold,
+  absoluteHttpsImageUrl,
+} from "./lib/listingTitleDisplay.js";
 import {
   extractListingLookupQuery,
   listingSkuSkipsTitleFallback,
@@ -13244,7 +13248,9 @@ app.get("/api/listing", async (req, res) => {
       weight: weight ?? null,
       price: priceNum ?? null,
       product_url: listing.productUrl || listing.shopifyOnlineUrl || "",
-      image_url: Array.isArray(listing.images) && listing.images[0] ? String(listing.images[0]) : null,
+      image_url: absoluteHttpsImageUrl(
+        ...(Array.isArray(listing.images) ? listing.images : [])
+      ) || null,
       estimated_weight: weight ?? null,
       weight_lbs: weight ?? null,
       freight_class: freightClass,
