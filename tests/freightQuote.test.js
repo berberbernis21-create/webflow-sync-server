@@ -1294,7 +1294,7 @@ test("store employee: in-store sale lists items with no Buy Now or SOLD", () => 
   assert.equal(staff.submission.store_sale, true);
   assert.equal(staff.submission.items[0].sold, false);
   const mail = buildFreightQuoteEmails(staff.submission, ctx);
-  assert.doesNotMatch(mail.customer.html, /Buy Now|Shop All|\(SOLD\)/);
+  assert.doesNotMatch(mail.customer.html, /Buy Now|\(SOLD\)/);
   assert.doesNotMatch(mail.customer.text, /Buy Now|\(SOLD\)/);
   assert.match(mail.customer.html, /Your item\(s\)/);
   assert.match(mail.internal.subject, /^In-Store Sale \|/);
@@ -1414,9 +1414,125 @@ test("store sale internal email: off-site listing uses Shop All + staff note + h
     mail.internal.text,
     /This item may disappear from that listing link; you will be redirected to Shop All/
   );
-  assert.doesNotMatch(mail.customer.html, /Shop All|View listing/);
+  // Customer store-sale email also carries the Shop All redirect wording (no Buy Now CTA).
+  assert.match(
+    mail.customer.html,
+    /This item may disappear from that listing link; you will be redirected to Shop All/
+  );
+  assert.match(
+    mail.customer.text,
+    /This item may disappear from that listing link; you will be redirected to Shop All/
+  );
+  assert.doesNotMatch(mail.customer.html, /Buy Now|View listing|\(SOLD\)/);
   // Customer email still gets the real https thumbnail (no Buy Now for store sale).
   assert.match(mail.customer.html, new RegExp(`src="${img.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`));
+});
+
+test("sign PDF: IMPORTANT stays below items; missing dims show Unknown + weight", async () => {
+  const ctx = {
+    requestId: "test-sign-overlap-unknown",
+    route: { drive_minutes: 28, distance_miles: 14.2 },
+    localEstimate: {
+      estimated_price: 147,
+      drive_minutes: 28,
+      distance_miles: 14.2,
+      assembly_extra_minutes: 15,
+    },
+  };
+  const preferred =
+    "Bernis Berber\nskfddf Tuesday or Wednesday morning preferred, also open Thursday after 1pm if needed\ndfdfdd weekend backup window Saturday 10-2";
+  const v = validateFreightQuoteRequest(
+    localDeliveryBody({
+      customer_name: "Joanne Royer",
+      customer_email: "bernis.berber@icloud.com",
+      street: "7607 E Bonita Drive",
+      unit: "",
+      city: "Scottsdale",
+      state: "AZ",
+      zip: "85250",
+      access: {
+        delivery_partner: "cruz_pro_line",
+        assembly_required: "yes",
+        assembly_over_15: "yes",
+        assembly_extra_minutes: 15,
+        preferred_days_windows: preferred,
+        stairs: true,
+        stair_flights: 2,
+        freight_elevator: true,
+      },
+      items: [
+        {
+          title: "Kincaid Emory Side Chair - Set of 4 - 26X20.5X39H",
+          width: 26,
+          depth: 20.5,
+          height: 39,
+          weight: 150,
+          quantity: 1,
+        },
+        {
+          title: "Unpholstered Slipcovered Bench - 60X26X27H",
+          width: 60,
+          depth: 25.5,
+          height: 27,
+          weight: 130,
+          quantity: 1,
+        },
+        {
+          title: "Canadel Collection Boat Shape Dining Table",
+          width: null,
+          depth: null,
+          height: null,
+          weight: 100,
+          quantity: 1,
+        },
+      ],
+    })
+  );
+  assert.equal(v.ok, true);
+  assert.equal(v.submission.items[2].width, null);
+  assert.equal(v.submission.items[2].weight, 100);
+
+  const buf = await generateLocalSignPdf(v.submission, ctx);
+  assert.ok(buf && buf.length > 500);
+  const pageCount = (buf.toString("latin1").match(/\/Type\s*\/Page\b/g) || []).length;
+  assert.equal(pageCount, 1, "sign PDF stays one page");
+
+  const ops = pdfOps(buf);
+  // Em dash may round-trip as WinAnsi 0x97 — match on stable words only.
+  const important = pdfFind(ops, "PLEASE READ BEFORE SIGNING") || pdfFind(ops, "IMPORTANT");
+  const itemsHeader = pdfFind(ops, "ITEMS");
+  const unknown = pdfFind(ops, "Unknown");
+  const weight100 = ops.find((op) => /100\s*lb/.test(op.text));
+  const kincaid = ops.find((op) => /Kincaid/i.test(op.text));
+  const canadel = ops.find((op) => /Canadel/i.test(op.text));
+  const slipcovered = ops.find((op) => /Slipcovered/i.test(op.text));
+  assert.ok(important, "IMPORTANT header present");
+  assert.ok(itemsHeader, "ITEMS header present");
+  assert.ok(unknown, "missing dims print as Unknown");
+  assert.ok(weight100, "entered weight 100 lb still shown");
+  assert.ok(kincaid && canadel && slipcovered, "item titles present");
+  assert.doesNotMatch(unknown.text, /48["″]?[x×]40/i);
+  assert.doesNotMatch(
+    ops.filter((op) => /Canadel|Unknown|100\s*lb/.test(op.text)).map((o) => o.text).join(" "),
+    /48["″]?[x×]40/i
+  );
+
+  // PDF y grows upward: every item line must sit above IMPORTANT (no stamp-over).
+  const itemHits = ops.filter(
+    (op) =>
+      /Kincaid|Slipcovered|Canadel|Unknown/i.test(op.text) &&
+      !/IMPORTANT|PLEASE READ/i.test(op.text)
+  );
+  assert.ok(itemHits.length >= 3, "expected all three item lines");
+  for (const hit of itemHits) {
+    assert.ok(
+      hit.y > important.y + 8,
+      `item text must sit above IMPORTANT (y=${hit.y} vs important=${important.y}: ${hit.text.slice(0, 60)})`
+    );
+  }
+  const lowestItemY = Math.min(...itemHits.map((h) => h.y));
+  assert.ok(lowestItemY - important.y >= 12, "clear gap between last item and IMPORTANT");
+  assert.ok(itemsHeader.y > important.y + 20, "ITEMS header above IMPORTANT");
 });
 
 test("enrichSubmissionItemMedia prefers listing https image over junk client image", async () => {
