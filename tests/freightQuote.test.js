@@ -1499,7 +1499,8 @@ test("sign PDF: IMPORTANT stays below items; missing dims show Unknown + weight"
   const buf = await generateLocalSignPdf(v.submission, ctx);
   assert.ok(buf && buf.length > 500);
   const pageCount = (buf.toString("latin1").match(/\/Type\s*\/Page\b/g) || []).length;
-  assert.equal(pageCount, 1, "sign PDF stays one page");
+  // Prefer one page via compression; allow page 2 rather than overlapping signatures.
+  assert.ok(pageCount >= 1 && pageCount <= 2, "sign PDF uses at most two pages");
 
   const ops = pdfOps(buf);
   // Em dash may round-trip as WinAnsi 0x97 — match on stable words only.
@@ -1510,33 +1511,55 @@ test("sign PDF: IMPORTANT stays below items; missing dims show Unknown + weight"
   const kincaid = ops.find((op) => /Kincaid/i.test(op.text));
   const canadel = ops.find((op) => /Canadel/i.test(op.text));
   const slipcovered = ops.find((op) => /Slipcovered/i.test(op.text));
+  const agree = pdfFind(ops, "Customer agrees to pay all fees");
+  const printName = pdfFind(ops, "PRINT NAME");
+  const joannes = ops.filter((op) => op.text.includes("Joanne Royer"));
+  const sigJoanne =
+    (printName && joannes.find((j) => Math.abs(j.x - printName.x) < 3)) || joannes[joannes.length - 1];
+  const emp = pdfFind(ops, "L+F EMPLOYEE");
   assert.ok(important, "IMPORTANT header present");
   assert.ok(itemsHeader, "ITEMS header present");
   assert.ok(unknown, "missing dims print as Unknown");
   assert.ok(weight100, "entered weight 100 lb still shown");
   assert.ok(kincaid && canadel && slipcovered, "item titles present");
+  assert.ok(agree && printName && sigJoanne && emp, "signature block labels present");
   assert.doesNotMatch(unknown.text, /48["″]?[x×]40/i);
   assert.doesNotMatch(
     ops.filter((op) => /Canadel|Unknown|100\s*lb/.test(op.text)).map((o) => o.text).join(" "),
     /48["″]?[x×]40/i
   );
 
-  // PDF y grows upward: every item line must sit above IMPORTANT (no stamp-over).
+  // PDF y grows upward. Same-page: items must sit above IMPORTANT. Page-2 legal block is OK.
   const itemHits = ops.filter(
     (op) =>
       /Kincaid|Slipcovered|Canadel|Unknown/i.test(op.text) &&
       !/IMPORTANT|PLEASE READ/i.test(op.text)
   );
   assert.ok(itemHits.length >= 3, "expected all three item lines");
-  for (const hit of itemHits) {
+  if (pageCount === 1) {
+    for (const hit of itemHits) {
+      assert.ok(
+        hit.y > important.y + 8,
+        `item text must sit above IMPORTANT (y=${hit.y} vs important=${important.y}: ${hit.text.slice(0, 60)})`
+      );
+    }
+    const lowestItemY = Math.min(...itemHits.map((h) => h.y));
+    assert.ok(lowestItemY - important.y >= 12, "clear gap between last item and IMPORTANT");
+    assert.ok(itemsHeader.y > important.y + 20, "ITEMS header above IMPORTANT");
+  } else {
+    // Legal block on page 2: IMPORTANT near top of that page, items stay on page 1 (higher raw y band).
+    assert.ok(important.y > 600, "IMPORTANT on page 2 starts near top");
     assert.ok(
-      hit.y > important.y + 8,
-      `item text must sit above IMPORTANT (y=${hit.y} vs important=${important.y}: ${hit.text.slice(0, 60)})`
+      Math.min(...itemHits.map((h) => h.y)) < 400,
+      "item lines remain on page 1 (not stamped into legal block)"
     );
   }
-  const lowestItemY = Math.min(...itemHits.map((h) => h.y));
-  assert.ok(lowestItemY - important.y >= 12, "clear gap between last item and IMPORTANT");
-  assert.ok(itemsHeader.y > important.y + 20, "ITEMS header above IMPORTANT");
+
+  // Signature stack: agreement above fields; prefilled name above PRINT NAME label; emp below.
+  assert.ok(important.y - agree.y >= 20, "IMPORTANT clear of agreement line");
+  assert.ok(agree.y - printName.y >= 12, "agreement clear of PRINT NAME");
+  assert.ok(sigJoanne.y - printName.y >= 12, "prefilled name sits above PRINT NAME (no stamp-over)");
+  assert.ok(printName.y - emp.y >= 14, "customer sig row clear of L+F EMPLOYEE row");
 });
 
 test("enrichSubmissionItemMedia prefers listing https image over junk client image", async () => {
