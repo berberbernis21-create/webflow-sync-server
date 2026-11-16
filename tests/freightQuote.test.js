@@ -1339,10 +1339,16 @@ test("store sale internal email: off-site listing uses Shop All + staff note + h
   assert.doesNotMatch(mail.internal.html, />View listing</);
   assert.match(
     mail.internal.html,
-    /This item may no longer be visible on the website after a few days/
+    /This item may disappear from that listing link; you will be redirected to Shop All/
   );
   assert.match(mail.internal.text, new RegExp(SHOP_ALL_URL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.match(
+    mail.internal.text,
+    /This item may disappear from that listing link; you will be redirected to Shop All/
+  );
   assert.doesNotMatch(mail.customer.html, /Shop All|View listing/);
+  // Customer email still gets the real https thumbnail (no Buy Now for store sale).
+  assert.match(mail.customer.html, new RegExp(`src="${img.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`));
 });
 
 test("enrichSubmissionItemMedia prefers listing https image over junk client image", async () => {
