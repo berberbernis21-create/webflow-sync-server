@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  composeShopifyBodyHtml,
+  formatShopifyDimsLine,
   formatShopifyErrorBody,
+  mergeShopifyListingTags,
   namesEqualFull,
   normalizeCallerImageUrls,
   normalizeFullItemName,
@@ -11,6 +14,7 @@ import {
   shopifyTitlePollIntervalMs,
   shopifyTitlePollMaxDelayMs,
   sniffImageKind,
+  stripListingDimJunk,
 } from "../lib/shopifyIntakeImages.js";
 
 test("normalizeFullItemName collapses whitespace", () => {
@@ -80,6 +84,50 @@ test("prepareShopifyAttachment converts webp to jpeg for Shopify REST", async ()
   assert.equal(prepared.filename, "intake.jpg");
   assert.equal(sniffImageKind(prepared.buffer), "jpeg");
   assert.equal(prepared.converted, true);
+});
+
+test("stripListingDimJunk removes Measured + mid-copy measuring + old footers", () => {
+  const messy =
+    "Comfortable loveseat for a bedroom sitting nook. Measuring 40 H x 65 W x 29 D inches, it is an ideal apartment-size loveseat.\n\nDimensions: Width: 40\" × Depth: 65\" × Height: 120\".\nWeight: 99 lb.";
+  const cleaned = stripListingDimJunk(messy);
+  assert.match(cleaned, /Comfortable loveseat/i);
+  assert.match(cleaned, /ideal apartment-size loveseat/i);
+  assert.equal(/\bmeasur(?:ing|es)/i.test(cleaned), false);
+  assert.equal(/Dimensions:/i.test(cleaned), false);
+  assert.equal(/Weight:\s*\d+/i.test(cleaned), false);
+  assert.equal(/40 H x 65 W/i.test(cleaned), false);
+});
+
+test("formatShopifyDimsLine is one Dimensions + Weight block", () => {
+  const line = formatShopifyDimsLine({ width: 16, depth: 13, height: 25, weightLbs: 13 });
+  assert.equal(
+    line,
+    'Dimensions: Width: 16" × Depth: 13" × Height: 25". Weight: 13 lb.'
+  );
+});
+
+test("composeShopifyBodyHtml strips prior footers then appends one clean block", () => {
+  const html = composeShopifyBodyHtml(
+    'A red glazed pottery pitcher. Measuring 16 H x 13 W x 13 D inches, bold silhouette.\n\nDimensions: Width: 16" × Depth: 13" × Height: 25". Weight: 40 lb.\n\nDimensions: Width: 16" × Depth: 13" × Height: 25".',
+    { width: 16, depth: 13, height: 25, weightLbs: 13 }
+  );
+  assert.match(html, /red glazed pottery pitcher/i);
+  assert.equal(/Measuring 16 H/i.test(html), false);
+  assert.equal((html.match(/Dimensions:/gi) || []).length, 1);
+  assert.match(html, /Dimensions: Width: 16&quot; × Depth: 13&quot; × Height: 25&quot;\. Weight: 13 lb\./);
+  const tags = mergeShopifyListingTags({
+    existingTags: ["Width: 40", "Height: 120", "Depth: 65", "Used", "ACTIVE"],
+    ecommerceTags: ["FH", "B", "X", "Bedroom"],
+    merchType: "furniture",
+    websiteCategory: "Bedroom",
+    dims: { width: 16, depth: 13, height: 25, weightLbs: 13 },
+  });
+  assert.ok(tags.includes("Width: 16"));
+  assert.ok(tags.includes("Depth: 13"));
+  assert.ok(tags.includes("Height: 25"));
+  assert.ok(tags.includes("Weight: 13"));
+  assert.equal(tags.some((t) => /^Width:\s*40$/i.test(t)), false);
+  assert.equal(tags.some((t) => /^Height:\s*120$/i.test(t)), false);
 });
 
 test("shopify title poll defaults to ~5s steady cadence", () => {

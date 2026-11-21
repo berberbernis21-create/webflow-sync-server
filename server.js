@@ -82,10 +82,12 @@ import {
 import {
   ensureIntakeImagesForFullName,
   ensureShopifyProductHasIntakeImages,
+  formatShopifyDimsLine,
   handleIntakeListingUpdate,
   handleIntakePhotoAdded,
   intakeShopifyImagesConfigured,
   intakeShopifyImagesEnabled,
+  stripListingDimJunk,
 } from "./lib/shopifyIntakeImages.js";
 
 dotenv.config();
@@ -5644,40 +5646,55 @@ function buildDimensionsValidateNoteHtml(missingKeys) {
   return `<br><br><em>${dimensionsValidateNotePlainText(missingKeys)}</em>`;
 }
 
-/** Format dimensions for description. Dimensions on one line, weight on the next. Uses <br> for HTML line breaks. Only called when hasAnyDimensions. */
+/** Format dimensions for description — one clean Dimensions + Weight block. */
 function formatDimensionsForDescription(dims) {
   if (!dims || !hasAnyDimensions(dims)) return "";
-  const sizeParts = [];
-  if (dims.width != null && !Number.isNaN(dims.width)) sizeParts.push(`Width: ${dims.width}"`);
-  if (dims.length != null && !Number.isNaN(dims.length)) sizeParts.push(`Depth: ${dims.length}"`);
-  if (dims.height != null && !Number.isNaN(dims.height)) sizeParts.push(`Height: ${dims.height}"`);
-  const hasWeight = dims.weight != null && !Number.isNaN(dims.weight) && dims.weight > 0;
-  const sizeLine = sizeParts.length ? `Dimensions: ${sizeParts.join(" × ")}.` : "";
-  const weightLine = hasWeight ? `Weight: ${dims.weight} lb.` : "";
-  if (sizeLine && weightLine) return `${sizeLine}<br>${weightLine}`;
-  return sizeLine || weightLine || "";
+  // Map sync dims (length=depth) onto Intake-style keys used by formatShopifyDimsLine.
+  const line = formatShopifyDimsLine({
+    width: dims.width,
+    depth: dims.length ?? dims.depth,
+    height: dims.height,
+    weightLbs: dims.weight,
+  });
+  return line || "";
 }
 
-/** Strip existing dimensions/weight block(s) from description to prevent duplication.
- * Must match BOTH formats we emit:
- * 1) Dimensions: ... Weight: ... (furniture with size + weight)
- * 2) Weight: N lb. (handbags with weight only - was not matched before, causing repeated appends)
- * Also strips any number of trailing duplicate blocks from prior bug.
+/**
+ * Strip ALL Dimensions:/Weight: footers (HTML <p>, <br>, same-line, duplicates)
+ * before re-appending one clean block — listing-update + syncAfter must not stack.
  */
 function stripExistingDimensions(descriptionHtml) {
   if (!descriptionHtml || typeof descriptionHtml !== "string") return "";
   let s = descriptionHtml;
-  // Strip trailing blocks in a loop (handles multiple duplicates from prior bug)
   for (let prev = ""; prev !== s; ) {
     prev = s;
-    // Pattern 1: <br><br>Dimensions: ... (optional Weight: ...)
-    s = s.replace(/(<br\s*\/?>\s*){2,}Dimensions:[\s\S]*?Weight:\s*[\d.]+?\s*lb\.?$/i, "").trim();
-    s = s.replace(/(<br\s*\/?>\s*){2,}Dimensions:[\s\S]*?$/i, "").trim();
-    // Pattern 2: <br><br>Weight: N lb. (weight-only — handbags)
-    s = s.replace(/(<br\s*\/?>\s*){2,}Weight:\s*[\d.]+?\s*lb\.?$/i, "").trim();
-    s = s.replace(/(<br\s*\/?>\s*)+Weight:\s*[\d.]+?\s*lb\.?$/i, "").trim();
+    // Intake/Shopify <p> footers from composeShopifyBodyHtml
+    s = s.replace(/<p[^>]*>\s*Dimensions:[\s\S]*?<\/p>/gi, "");
+    s = s.replace(/<p[^>]*>\s*Weight:\s*[\d.]+?\s*lb\.?\s*<\/p>/gi, "");
+    // <br> / plain blocks (legacy sync append + same-line)
+    s = s.replace(/(?:<br\s*\/?>\s*)+Dimensions:[\s\S]*?Weight:\s*[\d.]+?\s*lb\.?/gi, "");
+    s = s.replace(/(?:<br\s*\/?>\s*)+Dimensions:[^<]*/gi, "");
+    s = s.replace(/(?:<br\s*\/?>\s*)*Dimensions:\s*[^<\n]*?Weight:\s*[\d.]+?\s*lb\.?/gi, "");
+    s = s.replace(/(?:<br\s*\/?>\s*)*Dimensions:\s*Width:[^<\n]*/gi, "");
+    s = s.replace(/(?:<br\s*\/?>\s*)*Weight:\s*[\d.]+?\s*lb\.?/gi, "");
+    s = s.replace(/\n*Dimensions:\s*[^\n]*/gi, "");
+    s = s.replace(/\n*Weight:\s*[\d.]+\s*lb\.?\s*/gi, "");
   }
-  return s.trim();
+  s = s
+    .replace(
+      /\bmeasur(?:ing|es|ed)?\s+\d+(?:\.\d+)?\s*[HhWwDdLl]\s*[x×]\s*\d+(?:\.\d+)?\s*[HhWwDdLl](?:\s*[x×]\s*\d+(?:\.\d+)?\s*[HhWwDdLl])?(?:\s*(?:inches|in\.?|&quot;|")?)?/gi,
+      ""
+    )
+    .replace(
+      /\b\d+(?:\.\d+)?\s*[Hh]\s*[x×]\s*\d+(?:\.\d+)?\s*[Ww]\s*[x×]\s*\d+(?:\.\d+)?\s*[Dd](?:\s*(?:inches|in\.?|&quot;|")?)?/gi,
+      ""
+    )
+    .replace(/(?:<p[^>]*>\s*<\/p>\s*)+/gi, "")
+    .replace(/(?:<br\s*\/?>\s*){3,}/gi, "<br><br>")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([,.;:])/g, "$1")
+    .trim();
+  return s;
 }
 
 /** Remove the sync-appended dimension validation note so we can replace it cleanly. */
@@ -14987,11 +15004,14 @@ app.post("/intake-images/photo-added", async (req, res) => {
     shopifyProductId: String(req.body?.shopifyProductId || "").trim() || null,
   };
   try {
+    // When product id is unknown, briefly poll by title so photo-added still lands;
+    // once stamped, later photos use id and skip poll.
+    const defaultWait = payload.shopifyProductId ? "0" : "30000";
     const result = await handleIntakePhotoAdded(payload, {
       log: (level, data) => webflowLog(level, data),
       maxWaitMs: Math.min(
         120000,
-        Math.max(0, parseInt(req.body?.maxWaitMs || "0", 10) || 0)
+        Math.max(0, parseInt(req.body?.maxWaitMs || defaultWait, 10) || 0)
       ),
     });
     const status = result.ok ? 200 : result.deferred ? 202 : 422;
