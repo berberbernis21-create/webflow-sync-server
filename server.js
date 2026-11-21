@@ -87,6 +87,7 @@ import {
   handleIntakePhotoAdded,
   intakeShopifyImagesConfigured,
   intakeShopifyImagesEnabled,
+  mirrorShopifyProductToIntake,
   stripListingDimJunk,
 } from "./lib/shopifyIntakeImages.js";
 
@@ -10074,6 +10075,22 @@ async function runWebhookSingleProductSync(shopifyProductId, triggerPath) {
         disappeared,
       });
       return;
+    }
+    // Traxia name/SKU → Shopify → Intake: stamp Intake name + traxiaSku + shopifyProductId.
+    // Match via External Link / intake-uuid tag / prior shopifyProductId / exact title.
+    try {
+      if (intakeShopifyImagesConfigured()) {
+        await mirrorShopifyProductToIntake(product, {
+          log: (level, data) => webflowLog(level, data),
+        });
+      }
+    } catch (mirrorErr) {
+      webflowLog("warn", {
+        event: "shopify.intake_mirror.error",
+        path: triggerPath,
+        shopifyProductId: id,
+        message: mirrorErr?.message || String(mirrorErr),
+      });
     }
     const duplicateEmailSentFor = new Set();
     const shopifyWriteEmailSentFor = new Set();

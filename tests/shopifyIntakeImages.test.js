@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   composeShopifyBodyHtml,
+  deriveListingSeoFields,
   formatShopifyDimsLine,
   formatShopifyErrorBody,
   mergeShopifyListingTags,
@@ -104,6 +105,21 @@ test("formatShopifyDimsLine is one Dimensions + Weight block", () => {
     line,
     'Dimensions: Width: 16" × Depth: 13" × Height: 25". Weight: 13 lb.'
   );
+});
+
+test("deriveListingSeoFields builds SEO title/meta plus AEO/GEO", () => {
+  const fields = deriveListingSeoFields({
+    name: "Tuscany Fortunata Red Glazed Pottery Pitcher- 13X13X16",
+    description:
+      "This red glazed pottery pitcher from Tuscany Fortunata has a bold silhouette and classic handles. Ideal for a dining table or kitchen display.",
+    brand: "Tuscany Fortunata",
+    category: "Accessories",
+    dims: { width: 13, depth: 13, height: 16, weightLbs: 12 },
+  });
+  assert.match(fields.seoTitle, /Tuscany Fortunata/i);
+  assert.ok(fields.seoDescription.length <= 160);
+  assert.match(fields.aeoDescription, /pitcher|pottery|glazed/i);
+  assert.match(fields.geoDescription, /Tuscany Fortunata|Accessories|Dimensions/i);
 });
 
 test("composeShopifyBodyHtml strips prior footers then appends one clean block", () => {
