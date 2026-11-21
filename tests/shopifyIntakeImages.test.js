@@ -4,6 +4,7 @@ import {
   composeShopifyBodyHtml,
   deriveListingSeoFields,
   formatShopifyDimsLine,
+  isDimsOnlyListingText,
   formatShopifyErrorBody,
   mergeShopifyListingTags,
   namesEqualFull,
@@ -105,6 +106,21 @@ test("formatShopifyDimsLine is one Dimensions + Weight block", () => {
     line,
     'Dimensions: Width: 16" × Depth: 13" × Height: 25". Weight: 13 lb.'
   );
+});
+
+
+test("composeShopifyBodyHtml never returns dims-only or weight-only", () => {
+  assert.equal(composeShopifyBodyHtml("", { width: 10, depth: 8, height: 3.5, weightLbs: 8 }), "");
+  assert.equal(composeShopifyBodyHtml("   ", { weightLbs: 9 }), "");
+  assert.equal(isDimsOnlyListingText(""), true);
+  assert.equal(isDimsOnlyListingText('Dimensions: Width: 10" × Depth: 8" × Height: 3.5". Weight: 8 lb.'), true);
+  const html = composeShopifyBodyHtml(
+    "This vintage wood box has a small drawer and warm patina for a console or bookshelf.",
+    { width: 10, depth: 8, height: 3.5, weightLbs: 8 }
+  );
+  assert.match(html, /vintage wood box/i);
+  assert.match(html, /Dimensions:/i);
+  assert.equal((html.match(/Dimensions:/gi) || []).length, 1);
 });
 
 test("deriveListingSeoFields builds SEO title/meta plus AEO/GEO", () => {
