@@ -14838,9 +14838,21 @@ app.post("/intake-images/ensure-by-name", async (req, res) => {
     10 * 60 * 1000,
     Math.max(5000, parseInt(req.body?.maxWaitMs || "180000", 10) || 180000)
   );
+  // Prefer SHOPIFY_TITLE_POLL(_INTERVAL)_MS; body intervalMs wins. Default ~5s steady.
+  const envPollMs = parseInt(
+    process.env.SHOPIFY_TITLE_POLL_INTERVAL_MS ||
+      process.env.SHOPIFY_TITLE_POLL_MS ||
+      "5000",
+    10
+  );
+  const defaultIntervalMs =
+    Number.isFinite(envPollMs) && envPollMs >= 1000 ? Math.min(30000, envPollMs) : 5000;
   const intervalMs = Math.min(
     30000,
-    Math.max(1000, parseInt(req.body?.intervalMs || "5000", 10) || 5000)
+    Math.max(
+      1000,
+      parseInt(req.body?.intervalMs || String(defaultIntervalMs), 10) || defaultIntervalMs
+    )
   );
   const runAsync = req.body?.async === true || req.body?.background === true;
   const syncAfter = req.body?.syncAfter !== false;

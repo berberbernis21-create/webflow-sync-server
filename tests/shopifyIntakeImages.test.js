@@ -6,6 +6,8 @@ import {
   normalizeFullItemName,
   parseIntakeItemIdFromText,
   shopifyProductHasDisplayImages,
+  shopifyTitlePollIntervalMs,
+  shopifyTitlePollMaxDelayMs,
 } from "../lib/shopifyIntakeImages.js";
 
 test("normalizeFullItemName collapses whitespace", () => {
@@ -42,4 +44,32 @@ test("normalizeCallerImageUrls absolutizes and dedupes", () => {
     "https://lostfound-pricing-api.onrender.com/api/lost-and-found-intake/media/view/abc/tok?v=full",
     "https://cdn.example/b.jpg",
   ]);
+});
+
+test("shopify title poll defaults to ~5s steady cadence", () => {
+  const prevInterval = process.env.SHOPIFY_TITLE_POLL_INTERVAL_MS;
+  const prevAlias = process.env.SHOPIFY_TITLE_POLL_MS;
+  const prevMax = process.env.SHOPIFY_TITLE_POLL_MAX_DELAY_MS;
+  try {
+    delete process.env.SHOPIFY_TITLE_POLL_INTERVAL_MS;
+    delete process.env.SHOPIFY_TITLE_POLL_MS;
+    delete process.env.SHOPIFY_TITLE_POLL_MAX_DELAY_MS;
+    assert.equal(shopifyTitlePollIntervalMs(), 5000);
+    assert.equal(shopifyTitlePollMaxDelayMs(5000), 5000);
+
+    process.env.SHOPIFY_TITLE_POLL_MS = "5000";
+    assert.equal(shopifyTitlePollIntervalMs(), 5000);
+
+    process.env.SHOPIFY_TITLE_POLL_INTERVAL_MS = "4000";
+    assert.equal(shopifyTitlePollIntervalMs(), 4000);
+    process.env.SHOPIFY_TITLE_POLL_MAX_DELAY_MS = "12000";
+    assert.equal(shopifyTitlePollMaxDelayMs(4000), 12000);
+  } finally {
+    if (prevInterval == null) delete process.env.SHOPIFY_TITLE_POLL_INTERVAL_MS;
+    else process.env.SHOPIFY_TITLE_POLL_INTERVAL_MS = prevInterval;
+    if (prevAlias == null) delete process.env.SHOPIFY_TITLE_POLL_MS;
+    else process.env.SHOPIFY_TITLE_POLL_MS = prevAlias;
+    if (prevMax == null) delete process.env.SHOPIFY_TITLE_POLL_MAX_DELAY_MS;
+    else process.env.SHOPIFY_TITLE_POLL_MAX_DELAY_MS = prevMax;
+  }
 });
