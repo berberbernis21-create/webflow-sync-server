@@ -82,6 +82,7 @@ import {
 import {
   ensureIntakeImagesForFullName,
   ensureShopifyProductHasIntakeImages,
+  handleIntakeListingUpdate,
   handleIntakePhotoAdded,
   intakeShopifyImagesConfigured,
   intakeShopifyImagesEnabled,
@@ -14998,6 +14999,67 @@ app.post("/intake-images/photo-added", async (req, res) => {
   } catch (err) {
     webflowLog("error", {
       event: "intake_images.photo_added.error",
+      intakeItemId,
+      message: err?.message || String(err),
+    });
+    return res.status(500).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+/**
+ * Pricing Engine → sync server when Intake listing/taxonomy fields change.
+ * Writes the same description + ecommerce tags Shopify/Traxia should share,
+ * plus dims / vertical / website category onto the Shopify product.
+ *
+ * Body: {
+ *   intakeItemId?, shopifyProductId?, name?,
+ *   description?, ecommerceTags?, merchType?, websiteCategory?, category?, brand?,
+ *   dims?: { width, depth, height, weightLbs }
+ * }
+ */
+app.post("/intake-images/listing-update", async (req, res) => {
+  if (!intakeSyncHookSecretOk(req)) {
+    return res.status(401).json({ ok: false, error: "Invalid or missing X-Intake-Sync-Secret" });
+  }
+  const intakeItemId = String(req.body?.intakeItemId || req.body?.itemId || "").trim() || null;
+  const name = String(req.body?.name || req.body?.title || "").trim() || null;
+  const shopifyProductId = String(req.body?.shopifyProductId || "").trim() || null;
+  if (!intakeItemId && !name && !shopifyProductId) {
+    return res.status(400).json({
+      ok: false,
+      error: "intakeItemId, name, or shopifyProductId is required",
+    });
+  }
+  if (!(process.env.SHOPIFY_STORE && process.env.SHOPIFY_ACCESS_TOKEN)) {
+    return res.status(503).json({ ok: false, error: "SHOPIFY_STORE and SHOPIFY_ACCESS_TOKEN required" });
+  }
+  try {
+    const result = await handleIntakeListingUpdate(req.body || {}, {
+      log: (level, data) => webflowLog(level, data),
+    });
+    // After listing lands, keep Webflow/Google in sync when we know the product id.
+    if (result?.ok && result?.shopifyProductId && req.body?.syncAfter !== false) {
+      try {
+        await runWebhookSingleProductSync(
+          result.shopifyProductId,
+          "/intake-images/listing-update"
+        );
+        result.syncTriggered = true;
+      } catch (err) {
+        webflowLog("warn", {
+          event: "intake_images.listing_update.sync_trigger_failed",
+          shopifyProductId: result.shopifyProductId,
+          message: err?.message || String(err),
+        });
+        result.syncTriggered = false;
+        result.syncError = err?.message || String(err);
+      }
+    }
+    const status = result.ok ? 200 : result.deferred ? 202 : 422;
+    return res.status(status).json(result);
+  } catch (err) {
+    webflowLog("error", {
+      event: "intake_images.listing_update.error",
       intakeItemId,
       message: err?.message || String(err),
     });
