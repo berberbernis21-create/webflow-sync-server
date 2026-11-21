@@ -21,12 +21,12 @@ Dual-pipeline sync: **Luxury / Accessories** and **Furniture & Home**. Each vert
 **Intake → Shopify images (before Webflow / Google)**  
 Kickoff: Traxia Intake Push details-only Save → **POST `/intake-images/ensure-by-name`** (often `{ "async": true, "intervalMs": 5000 }`) polls Shopify by **exact full title** about every **5 seconds** until the product lands (or timeout), attaches Intake photos via Admin API, stamps Pricing Engine `shopifySyncStatus` / `shopifySyncNote`, then triggers the normal single-product sync (Webflow/Google). Optional body `imageUrls` (signed Intake `media/view` URLs) skips Intake login.  
 On `/sync-all` / product webhooks: when a Shopify product has **no** display images, sync looks up the matching Intake item (External Link `item.html?id=…` if present, else exact title), attaches photos, and stamps. Products that already have images are left alone. If Intake matched but photos/upload are not ready, Webflow/Google are deferred until the next run.  
-Later Intake photos: Pricing Engine **POST `/intake-images/photo-added`** appends to Shopify and updates the sync note (Traxia is not in the image path).  
+Later Intake photos: Pricing Engine **POST `/intake-images/photo-added`** appends to Shopify (no Traxia) and updates the sync note. Appends download the signed Intake URL, attach as base64 (WebP/oversized recompressed to JPEG ≤5MB), omit `position` to avoid occupied-slot 422s, and strip a stale `no-images` tag when media lands.  
 `INTAKE_API_BASE` — default `https://lostfound-pricing-api.onrender.com`  
 `INTAKE_EMAIL` + `INTAKE_PASSWORD` — or `INTAKE_SESSION_COOKIE`  
 `INTAKE_SHOPIFY_IMAGES_ENABLED` — default on when creds are set; `0`/`false` to disable  
 `INTAKE_SHOPIFY_IMAGES_MAX` — max photos per product (default `25`)  
-`INTAKE_SYNC_HOOK_SECRET` — optional shared secret (`X-Intake-Sync-Secret`) for photo-added + stamp  
+`INTAKE_SYNC_HOOK_SECRET` — optional shared secret (`X-Intake-Sync-Secret`) for photo-added + stamp — **must match** the same value on `lostfound-pricing-api` when set  
 `SHOPIFY_TITLE_POLL_INTERVAL_MS` / `SHOPIFY_TITLE_POLL_MS` — title poll cadence (default `5000`)  
 `SHOPIFY_TITLE_POLL_MAX_DELAY_MS` — optional backoff cap (default same as interval → steady ~5s)
 

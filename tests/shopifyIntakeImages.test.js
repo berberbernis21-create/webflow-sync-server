@@ -1,13 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  formatShopifyErrorBody,
   namesEqualFull,
   normalizeCallerImageUrls,
   normalizeFullItemName,
   parseIntakeItemIdFromText,
+  prepareShopifyAttachment,
   shopifyProductHasDisplayImages,
   shopifyTitlePollIntervalMs,
   shopifyTitlePollMaxDelayMs,
+  sniffImageKind,
 } from "../lib/shopifyIntakeImages.js";
 
 test("normalizeFullItemName collapses whitespace", () => {
@@ -44,6 +47,39 @@ test("normalizeCallerImageUrls absolutizes and dedupes", () => {
     "https://lostfound-pricing-api.onrender.com/api/lost-and-found-intake/media/view/abc/tok?v=full",
     "https://cdn.example/b.jpg",
   ]);
+});
+
+test("formatShopifyErrorBody stringifies nested Shopify errors", () => {
+  assert.equal(
+    formatShopifyErrorBody({ image: ["Could not download image"] }),
+    '{"image":["Could not download image"]}'
+  );
+  assert.equal(formatShopifyErrorBody("plain"), "plain");
+  assert.equal(formatShopifyErrorBody(null), "");
+});
+
+test("sniffImageKind detects jpeg/png/webp", () => {
+  assert.equal(sniffImageKind(Buffer.from([0xff, 0xd8, 0xff, 0xe0])), "jpeg");
+  assert.equal(
+    sniffImageKind(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
+    "png"
+  );
+  const webp = Buffer.alloc(12);
+  webp.write("RIFF", 0);
+  webp.write("WEBP", 8);
+  assert.equal(sniffImageKind(webp), "webp");
+});
+
+test("prepareShopifyAttachment converts webp to jpeg for Shopify REST", async () => {
+  // 1x1 lossless WebP
+  const webp = Buffer.from(
+    "UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAwA0JaQAA3AA/vuUAAA=",
+    "base64"
+  );
+  const prepared = await prepareShopifyAttachment(webp);
+  assert.equal(prepared.filename, "intake.jpg");
+  assert.equal(sniffImageKind(prepared.buffer), "jpeg");
+  assert.equal(prepared.converted, true);
 });
 
 test("shopify title poll defaults to ~5s steady cadence", () => {
