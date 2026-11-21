@@ -83,6 +83,7 @@ import {
   ensureIntakeImagesForFullName,
   ensureShopifyProductHasIntakeImages,
   formatShopifyDimsLine,
+  handleIntakeImagesReorder,
   handleIntakeListingUpdate,
   handleIntakePhotoAdded,
   intakeShopifyImagesConfigured,
@@ -15054,6 +15055,71 @@ app.post("/intake-images/photo-added", async (req, res) => {
  *   dims?: { width, depth, height, weightLbs }
  * }
  */
+/**
+ * Pricing Engine → sync server when Intake photo order / primary changes.
+ * Body: { intakeItemId?, shopifyProductId?, name?, imageUrls: string[] }
+ * Reorders Shopify product images to match Intake sort_order (primary first).
+ */
+app.post("/intake-images/reorder", async (req, res) => {
+  if (!intakeSyncHookSecretOk(req)) {
+    return res.status(401).json({ ok: false, error: "Invalid or missing X-Intake-Sync-Secret" });
+  }
+  const intakeItemId = String(req.body?.intakeItemId || req.body?.itemId || "").trim() || null;
+  const name = String(req.body?.name || req.body?.title || "").trim() || null;
+  const shopifyProductId = String(req.body?.shopifyProductId || "").trim() || null;
+  const imageUrls = Array.isArray(req.body?.imageUrls)
+    ? req.body.imageUrls
+    : Array.isArray(req.body?.photos)
+      ? req.body.photos
+      : null;
+  if (!intakeItemId && !name && !shopifyProductId) {
+    return res.status(400).json({
+      ok: false,
+      error: "intakeItemId, name, or shopifyProductId is required",
+    });
+  }
+  if (!(process.env.SHOPIFY_STORE && process.env.SHOPIFY_ACCESS_TOKEN)) {
+    return res.status(503).json({ ok: false, error: "SHOPIFY_STORE and SHOPIFY_ACCESS_TOKEN required" });
+  }
+  try {
+    const result = await handleIntakeImagesReorder(
+      {
+        intakeItemId,
+        shopifyProductId,
+        name,
+        imageUrls,
+      },
+      { log: (level, data) => webflowLog(level, data) }
+    );
+    if (result?.ok && result?.shopifyProductId && req.body?.syncAfter !== false) {
+      try {
+        await runWebhookSingleProductSync(
+          result.shopifyProductId,
+          "/intake-images/reorder"
+        );
+        result.syncTriggered = true;
+      } catch (err) {
+        webflowLog("warn", {
+          event: "intake_images.reorder.sync_trigger_failed",
+          shopifyProductId: result.shopifyProductId,
+          message: err?.message || String(err),
+        });
+        result.syncTriggered = false;
+        result.syncError = err?.message || String(err);
+      }
+    }
+    const status = result.ok ? 200 : result.deferred ? 202 : 422;
+    return res.status(status).json(result);
+  } catch (err) {
+    webflowLog("error", {
+      event: "intake_images.reorder.error",
+      intakeItemId,
+      message: err?.message || String(err),
+    });
+    return res.status(500).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
 app.post("/intake-images/listing-update", async (req, res) => {
   if (!intakeSyncHookSecretOk(req)) {
     return res.status(401).json({ ok: false, error: "Invalid or missing X-Intake-Sync-Secret" });
@@ -15265,6 +15331,9 @@ app.listen(PORT, () => {
   );
   console.log(
     `  Intake photo-added: POST ${scheme}://${host}/intake-images/photo-added (Pricing Engine → append + stamp)`
+  );
+  console.log(
+    `  Intake images reorder: POST ${scheme}://${host}/intake-images/reorder (Pricing Engine → Shopify gallery order)`
   );
   console.log(
     `  Intake image gate: ${intakeShopifyImagesEnabled() ? "ENABLED" : "off (missing creds or INTAKE_SHOPIFY_IMAGES_ENABLED=0)"}`

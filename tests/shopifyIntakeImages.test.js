@@ -1,9 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import sharp from "sharp";
 import {
   composeShopifyBodyHtml,
   deriveListingSeoFields,
   formatShopifyDimsLine,
+  hammingDistance64,
+  imageAverageHash,
   isDimsOnlyListingText,
   formatShopifyErrorBody,
   mergeShopifyListingTags,
@@ -53,6 +56,39 @@ test("normalizeCallerImageUrls absolutizes and dedupes", () => {
     "https://lostfound-pricing-api.onrender.com/api/lost-and-found-intake/media/view/abc/tok?v=full",
     "https://cdn.example/b.jpg",
   ]);
+});
+
+test("imageAverageHash is stable and hammingDistance64 matches identical hashes", async () => {
+  // Patterned images — solid colors collapse to the same aHash (all pixels == avg).
+  const left = Buffer.alloc(32 * 32 * 3, 30);
+  for (let y = 0; y < 32; y++) {
+    for (let x = 0; x < 16; x++) {
+      const i = (y * 32 + x) * 3;
+      left[i] = 220;
+      left[i + 1] = 220;
+      left[i + 2] = 220;
+    }
+  }
+  const right = Buffer.alloc(32 * 32 * 3, 30);
+  for (let y = 0; y < 32; y++) {
+    for (let x = 16; x < 32; x++) {
+      const i = (y * 32 + x) * 3;
+      right[i] = 220;
+      right[i + 1] = 220;
+      right[i + 2] = 220;
+    }
+  }
+  const png = await sharp(left, { raw: { width: 32, height: 32, channels: 3 } })
+    .png()
+    .toBuffer();
+  const other = await sharp(right, { raw: { width: 32, height: 32, channels: 3 } })
+    .png()
+    .toBuffer();
+  const a = await imageAverageHash(png);
+  const b = await imageAverageHash(png);
+  assert.equal(hammingDistance64(a, b), 0);
+  const c = await imageAverageHash(other);
+  assert.ok(hammingDistance64(a, c) > 0);
 });
 
 test("formatShopifyErrorBody stringifies nested Shopify errors", () => {
