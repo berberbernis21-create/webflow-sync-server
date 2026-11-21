@@ -79,6 +79,13 @@ import {
   isEcommerceVerticalOnlyTag,
   productHasLuxuryEcommerceTag,
 } from "./ecommerceTags.js";
+import {
+  ensureIntakeImagesForFullName,
+  ensureShopifyProductHasIntakeImages,
+  handleIntakePhotoAdded,
+  intakeShopifyImagesConfigured,
+  intakeShopifyImagesEnabled,
+} from "./lib/shopifyIntakeImages.js";
 
 dotenv.config();
 
@@ -7483,6 +7490,36 @@ function runSerializedByShopifyProductId(shopifyProductId, fn) {
 async function syncSingleProductCore(product, cache, options = {}) {
   rememberShopifyProductVariants(product, { source: "shopify_sync" });
   const shopifyProductId = String(product.id);
+
+  // Image-before-downstream gate: GraphQL backfill first, then Intake → Shopify
+  // when the product still has no display images. Block Webflow/Google only when
+  // this looks like an Intake item waiting on photos / upload.
+  if (options.skipIntakeImageGate !== true) {
+    await enrichShopifyProductImagesFromGraphql(product);
+    const imageGate = await ensureShopifyProductHasIntakeImages(product, {
+      log: (level, payload) => webflowLog(level, payload),
+    });
+    if (Array.isArray(imageGate?.product?.images) && imageGate.product.images.length) {
+      product.images = imageGate.product.images;
+    }
+    if (imageGate?.blocked) {
+      webflowLog("info", {
+        event: "sync_product.skip_waiting_intake_images",
+        shopifyProductId,
+        productTitle: product.title || "",
+        intakeItemId: imageGate.intakeItemId || null,
+        status: imageGate.status,
+        reason: imageGate.reason,
+        message: "Deferring Webflow/Google until Intake images are on Shopify",
+      });
+      return {
+        operation: "skip_waiting_intake_images",
+        id: getCacheEntry(cache, shopifyProductId)?.webflowId ?? null,
+        intakeItemId: imageGate.intakeItemId || null,
+      };
+    }
+  }
+
   const cacheEntry = getCacheEntry(cache, shopifyProductId);
   const ecommerceClassification = getEcommerceClassification(product);
   const ecommerceFingerprintChanged =
@@ -14774,6 +14811,188 @@ app.post("/set-categories", (_req, res) => {
   });
 });
 
+function intakeSyncHookSecretOk(req) {
+  const secret = String(process.env.INTAKE_SYNC_HOOK_SECRET || "").trim();
+  if (!secret) return true;
+  const got = String(req.headers["x-intake-sync-secret"] || "").trim();
+  return Boolean(got) && got === secret;
+}
+
+/**
+ * Poll Shopify by full item name, attach Intake images, then kick Webflow/Google sync.
+ *
+ * Body: { name, intakeItemId?, imageUrls?, maxWaitMs?, intervalMs?, async?, syncAfter? }
+ * async:true → 202 immediately (Traxia bulk kickoff); work continues in background.
+ * imageUrls: optional signed Intake media/view URLs (skips Intake login when provided).
+ * syncAfter: default true — run the same single-product sync path after images land.
+ */
+app.post("/intake-images/ensure-by-name", async (req, res) => {
+  const name = String(req.body?.name || req.body?.title || req.body?.fullName || "").trim();
+  const intakeItemId = String(req.body?.intakeItemId || req.body?.itemId || "").trim() || null;
+  const imageUrls = Array.isArray(req.body?.imageUrls)
+    ? req.body.imageUrls
+    : Array.isArray(req.body?.photos)
+      ? req.body.photos
+      : null;
+  const maxWaitMs = Math.min(
+    10 * 60 * 1000,
+    Math.max(5000, parseInt(req.body?.maxWaitMs || "180000", 10) || 180000)
+  );
+  const intervalMs = Math.min(
+    30000,
+    Math.max(1000, parseInt(req.body?.intervalMs || "5000", 10) || 5000)
+  );
+  const runAsync = req.body?.async === true || req.body?.background === true;
+  const syncAfter = req.body?.syncAfter !== false;
+  const hasCallerUrls = Array.isArray(imageUrls) && imageUrls.some((u) => String(u || "").trim());
+  if (!name) {
+    return res.status(400).json({ ok: false, error: "name is required (full item name)" });
+  }
+  if (!hasCallerUrls && !intakeShopifyImagesEnabled()) {
+    return res.status(503).json({
+      ok: false,
+      error: intakeShopifyImagesConfigured()
+        ? "INTAKE_SHOPIFY_IMAGES_ENABLED is off"
+        : "Set INTAKE_EMAIL + INTAKE_PASSWORD (or INTAKE_SESSION_COOKIE) and SHOPIFY_*, or pass imageUrls",
+    });
+  }
+  if (hasCallerUrls && !(process.env.SHOPIFY_STORE && process.env.SHOPIFY_ACCESS_TOKEN)) {
+    return res.status(503).json({
+      ok: false,
+      error: "SHOPIFY_STORE and SHOPIFY_ACCESS_TOKEN required to upload imageUrls",
+    });
+  }
+  const run = async () => {
+    const result = await ensureIntakeImagesForFullName(name, {
+      log: (level, payload) => webflowLog(level, payload),
+      intakeItemId,
+      imageUrls,
+      maxWaitMs,
+      intervalMs,
+    });
+    // After images land, continue Webflow / Google via the normal single-product path.
+    if (
+      syncAfter &&
+      result?.ok &&
+      result?.shopifyProductId &&
+      (result.status === "uploaded" || result.status === "skipped_has_images")
+    ) {
+      try {
+        await runWebhookSingleProductSync(
+          result.shopifyProductId,
+          "/intake-images/ensure-by-name"
+        );
+        result.syncTriggered = true;
+      } catch (err) {
+        webflowLog("warn", {
+          event: "intake_images.ensure_by_name.sync_trigger_failed",
+          shopifyProductId: result.shopifyProductId,
+          message: err?.message || String(err),
+        });
+        result.syncTriggered = false;
+        result.syncError = err?.message || String(err);
+      }
+    }
+    return result;
+  };
+  if (runAsync) {
+    webflowLog("info", {
+      event: "intake_images.ensure_by_name.accepted",
+      name: name.slice(0, 120),
+      intakeItemId,
+      imageUrlCount: hasCallerUrls ? imageUrls.length : 0,
+    });
+    Promise.resolve()
+      .then(run)
+      .then((result) => {
+        webflowLog(result?.ok ? "info" : "warn", {
+          event: "intake_images.ensure_by_name.background_done",
+          name: name.slice(0, 120),
+          intakeItemId,
+          ok: Boolean(result?.ok),
+          status: result?.status || null,
+          reason: result?.reason || null,
+          shopifyProductId: result?.shopifyProductId || null,
+          syncTriggered: result?.syncTriggered === true,
+        });
+      })
+      .catch((err) => {
+        webflowLog("error", {
+          event: "intake_images.ensure_by_name.background_error",
+          name: name.slice(0, 120),
+          message: err?.message || String(err),
+        });
+      });
+    return res.status(202).json({
+      ok: true,
+      accepted: true,
+      name,
+      intakeItemId,
+    });
+  }
+  try {
+    const result = await run();
+    const status = result.ok ? 200 : result.reason === "shopify_not_found" ? 404 : 422;
+    return res.status(status).json(result);
+  } catch (err) {
+    webflowLog("error", {
+      event: "intake_images.ensure_by_name.error",
+      name: name.slice(0, 120),
+      message: err?.message || String(err),
+    });
+    return res.status(500).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+/**
+ * Pricing Engine → sync server when a new Intake photo is saved.
+ * Appends to Shopify (or defers until the product exists) and stamps sync note.
+ *
+ * Body: { intakeItemId, photoId?, imageUrl?, name?, shopifyProductId? }
+ */
+app.post("/intake-images/photo-added", async (req, res) => {
+  if (!intakeSyncHookSecretOk(req)) {
+    return res.status(401).json({ ok: false, error: "Invalid or missing X-Intake-Sync-Secret" });
+  }
+  const intakeItemId = String(req.body?.intakeItemId || req.body?.itemId || "").trim();
+  if (!intakeItemId) {
+    return res.status(400).json({ ok: false, error: "intakeItemId is required" });
+  }
+  if (!intakeShopifyImagesEnabled()) {
+    return res.status(503).json({
+      ok: false,
+      error: intakeShopifyImagesConfigured()
+        ? "INTAKE_SHOPIFY_IMAGES_ENABLED is off"
+        : "Set INTAKE_EMAIL + INTAKE_PASSWORD (or INTAKE_SESSION_COOKIE) and SHOPIFY_*",
+    });
+  }
+  const payload = {
+    intakeItemId,
+    photoId: String(req.body?.photoId || "").trim() || null,
+    imageUrl: String(req.body?.imageUrl || req.body?.url || "").trim() || null,
+    name: String(req.body?.name || "").trim() || null,
+    shopifyProductId: String(req.body?.shopifyProductId || "").trim() || null,
+  };
+  try {
+    const result = await handleIntakePhotoAdded(payload, {
+      log: (level, data) => webflowLog(level, data),
+      maxWaitMs: Math.min(
+        120000,
+        Math.max(0, parseInt(req.body?.maxWaitMs || "0", 10) || 0)
+      ),
+    });
+    const status = result.ok ? 200 : result.deferred ? 202 : 422;
+    return res.status(status).json(result);
+  } catch (err) {
+    webflowLog("error", {
+      event: "intake_images.photo_added.error",
+      intakeItemId,
+      message: err?.message || String(err),
+    });
+    return res.status(500).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
 app.post("/sync-by-ids", async (req, res) => {
   syncRequestId = crypto.randomUUID().slice(0, 8);
   syncStartTime = Date.now();
@@ -14930,6 +15149,15 @@ app.listen(PORT, () => {
   console.log(`  Facebook copy (OpenAI): POST ${scheme}://${host}/api/listing-blurb (needs OPENAI_API_KEY)`);
   console.log(`  Social caption (OpenAI gpt-4o vision): POST ${scheme}://${host}/api/social-caption`);
   console.log(`  Package assign (OpenAI): POST ${scheme}://${host}/api/package-assign (OPENAI_PACKAGE_MODEL, default gpt-5.2)`);
+  console.log(
+    `  Intake→Shopify images: POST ${scheme}://${host}/intake-images/ensure-by-name (async ok; INTAKE_EMAIL/PASSWORD or INTAKE_SESSION_COOKIE; gate on sync-all/webhooks)`
+  );
+  console.log(
+    `  Intake photo-added: POST ${scheme}://${host}/intake-images/photo-added (Pricing Engine → append + stamp)`
+  );
+  console.log(
+    `  Intake image gate: ${intakeShopifyImagesEnabled() ? "ENABLED" : "off (missing creds or INTAKE_SHOPIFY_IMAGES_ENABLED=0)"}`
+  );
   void recoverStaleConsignmentIntakes().catch((err) => {
     webflowLog("error", {
       event: "consignment.intake_recovery_failed",

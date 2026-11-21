@@ -18,6 +18,17 @@ Dual-pipeline sync: **Luxury / Accessories** and **Furniture & Home**. Each vert
 **Shopify (shared)**  
 `SHOPIFY_STORE`, `SHOPIFY_ACCESS_TOKEN`
 
+**Intake → Shopify images (before Webflow / Google)**  
+Kickoff: Traxia Intake Push details-only Save → **POST `/intake-images/ensure-by-name`** (often `{ "async": true }`) polls Shopify by **exact full title** (backoff), attaches Intake photos via Admin API, stamps Pricing Engine `shopifySyncStatus` / `shopifySyncNote`, then triggers the normal single-product sync (Webflow/Google). Optional body `imageUrls` (signed Intake `media/view` URLs) skips Intake login.  
+On `/sync-all` / product webhooks: when a Shopify product has **no** display images, sync looks up the matching Intake item (External Link `item.html?id=…` if present, else exact title), attaches photos, and stamps. Products that already have images are left alone. If Intake matched but photos/upload are not ready, Webflow/Google are deferred until the next run.  
+Later Intake photos: Pricing Engine **POST `/intake-images/photo-added`** appends to Shopify and updates the sync note (Traxia is not in the image path).  
+`INTAKE_API_BASE` — default `https://lostfound-pricing-api.onrender.com`  
+`INTAKE_EMAIL` + `INTAKE_PASSWORD` — or `INTAKE_SESSION_COOKIE`  
+`INTAKE_SHOPIFY_IMAGES_ENABLED` — default on when creds are set; `0`/`false` to disable  
+`INTAKE_SHOPIFY_IMAGES_MAX` — max photos per product (default `25`)  
+`INTAKE_SYNC_HOOK_SECRET` — optional shared secret (`X-Intake-Sync-Secret`) for photo-added + stamp  
+`SHOPIFY_TITLE_POLL_MAX_DELAY_MS` — poll backoff cap (default `15000`)
+
 **Luxury (existing)**  
 `WEBFLOW_TOKEN`, `WEBFLOW_COLLECTION_ID`
 
