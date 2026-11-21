@@ -15091,22 +15091,18 @@ app.post("/intake-images/reorder", async (req, res) => {
       },
       { log: (level, data) => webflowLog(level, data) }
     );
+    // Fire-and-forget Webflow/Google sync — don't block the reorder response.
     if (result?.ok && result?.shopifyProductId && req.body?.syncAfter !== false) {
-      try {
-        await runWebhookSingleProductSync(
-          result.shopifyProductId,
-          "/intake-images/reorder"
-        );
-        result.syncTriggered = true;
-      } catch (err) {
-        webflowLog("warn", {
-          event: "intake_images.reorder.sync_trigger_failed",
-          shopifyProductId: result.shopifyProductId,
-          message: err?.message || String(err),
-        });
-        result.syncTriggered = false;
-        result.syncError = err?.message || String(err);
-      }
+      result.syncTriggered = true;
+      void runWebhookSingleProductSync(result.shopifyProductId, "/intake-images/reorder").catch(
+        (err) => {
+          webflowLog("warn", {
+            event: "intake_images.reorder.sync_trigger_failed",
+            shopifyProductId: result.shopifyProductId,
+            message: err?.message || String(err),
+          });
+        }
+      );
     }
     const status = result.ok ? 200 : result.deferred ? 202 : 422;
     return res.status(status).json(result);
@@ -15140,23 +15136,19 @@ app.post("/intake-images/listing-update", async (req, res) => {
     const result = await handleIntakeListingUpdate(req.body || {}, {
       log: (level, data) => webflowLog(level, data),
     });
-    // After listing lands, keep Webflow/Google in sync when we know the product id.
+    // Fire-and-forget Webflow/Google sync — return as soon as Shopify listing write finishes.
     if (result?.ok && result?.shopifyProductId && req.body?.syncAfter !== false) {
-      try {
-        await runWebhookSingleProductSync(
-          result.shopifyProductId,
-          "/intake-images/listing-update"
-        );
-        result.syncTriggered = true;
-      } catch (err) {
+      result.syncTriggered = true;
+      void runWebhookSingleProductSync(
+        result.shopifyProductId,
+        "/intake-images/listing-update"
+      ).catch((err) => {
         webflowLog("warn", {
           event: "intake_images.listing_update.sync_trigger_failed",
           shopifyProductId: result.shopifyProductId,
           message: err?.message || String(err),
         });
-        result.syncTriggered = false;
-        result.syncError = err?.message || String(err);
-      }
+      });
     }
     const status = result.ok ? 200 : result.deferred ? 202 : 422;
     return res.status(status).json(result);

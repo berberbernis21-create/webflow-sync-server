@@ -198,7 +198,7 @@ test("composeShopifyBodyHtml strips prior footers then appends one clean block",
   assert.equal(tags.some((t) => /^Height:\s*120$/i.test(t)), false);
 });
 
-test("shopify title poll defaults to ~5s steady cadence", () => {
+test("shopify title poll defaults to ~2.5s steady cadence (cap ~3s)", () => {
   const prevInterval = process.env.SHOPIFY_TITLE_POLL_INTERVAL_MS;
   const prevAlias = process.env.SHOPIFY_TITLE_POLL_MS;
   const prevMax = process.env.SHOPIFY_TITLE_POLL_MAX_DELAY_MS;
@@ -206,16 +206,16 @@ test("shopify title poll defaults to ~5s steady cadence", () => {
     delete process.env.SHOPIFY_TITLE_POLL_INTERVAL_MS;
     delete process.env.SHOPIFY_TITLE_POLL_MS;
     delete process.env.SHOPIFY_TITLE_POLL_MAX_DELAY_MS;
-    assert.equal(shopifyTitlePollIntervalMs(), 5000);
-    assert.equal(shopifyTitlePollMaxDelayMs(5000), 5000);
+    assert.equal(shopifyTitlePollIntervalMs(), 2500);
+    assert.equal(shopifyTitlePollMaxDelayMs(2500), 2500);
 
-    process.env.SHOPIFY_TITLE_POLL_MS = "5000";
-    assert.equal(shopifyTitlePollIntervalMs(), 5000);
+    process.env.SHOPIFY_TITLE_POLL_MS = "2500";
+    assert.equal(shopifyTitlePollIntervalMs(), 2500);
 
-    process.env.SHOPIFY_TITLE_POLL_INTERVAL_MS = "4000";
-    assert.equal(shopifyTitlePollIntervalMs(), 4000);
+    process.env.SHOPIFY_TITLE_POLL_INTERVAL_MS = "2000";
+    assert.equal(shopifyTitlePollIntervalMs(), 2000);
     process.env.SHOPIFY_TITLE_POLL_MAX_DELAY_MS = "12000";
-    assert.equal(shopifyTitlePollMaxDelayMs(4000), 12000);
+    assert.equal(shopifyTitlePollMaxDelayMs(2000), 12000);
   } finally {
     if (prevInterval == null) delete process.env.SHOPIFY_TITLE_POLL_INTERVAL_MS;
     else process.env.SHOPIFY_TITLE_POLL_INTERVAL_MS = prevInterval;
