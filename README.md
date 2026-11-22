@@ -25,7 +25,18 @@ Later Intake photos: Pricing Engine **POST `/intake-images/photo-added`** append
 
 Photo reorder / primary / partial delete: Pricing Engine **POST `/intake-images/reorder`** with ordered `imageUrls` (+ `shopifyProductId`) matches Intake gallery order onto Shopify image positions (primary first) and deletes Shopify orphans not in the Intake set. Triggered after Intake `photos/reorder`, primary-photo change, and photo delete when photos remain. Empty Intake gallery soft-skips — never wipes Shopify images or deletes the Shopify product.
   
-Listing / taxonomy: Pricing Engine **POST `/intake-images/listing-update`** (also after ensure-by-name) writes Shopify **title**, **body_html** (Intake listing copy + dims at the end, no Traxia Measured spill), **tags**, and **product_type** from Intake. Triggered on Intake PATCH of name/dims/description/tags/category/vertical, generate-listing, Online sync, and photo ensure. Helper-style description + ecommerce tags are generated on the Pricing Engine (`helper_listing_copy`) before the push.
+Listing / taxonomy: Pricing Engine **POST `/intake-images/listing-update`** (also after ensure-by-name / Traxia push) writes Shopify **title**, **body_html** (Helper prose + one Dimensions/Weight footer — weight under dims, no `.0`), **tags** (full SEO set), optional **variant price**, and **product_type** from Intake in **one** product PUT. Never sends empty `body_html` or `images: []` (that was the price-wipe root cause). Triggered on Intake PATCH (incl. price), Traxia push/confirm auto-generate, generate-listing, Online sync, photo ensure, and after Shopify→Intake webhook mirrors.
+
+### Direction of sync (Intake ↔ Shopify)
+
+| Event | Direction | Fields |
+| --- | --- | --- |
+| Traxia push / confirm (item has **name**) | Intake ← Helper AI, then Intake → Shopify | Auto-fills Intake **DESCRIPTION** + full **ecommerceTags**; derives Business Vertical / Website Categories from tag codes (`FH`→Furniture/Home, `A`→Art/Mirrors, …); one coalesced `/intake-images/listing-update` |
+| Intake PATCH (name, price, dims, notes, tags, …) | Intake → Shopify | Debounced (~2.5s) full listing-update; Helper prose redone; dims footer; tags; price in same PUT |
+| Shopify `products/create` + `products/update` webhooks | Shopify → Intake, then Intake → Shopify | Mirror **title→name**, **variant price→retailPrice**, **SKU→traxiaSku**, **product id**; Intake then queues one coalesced full listing-update so a Traxia price sync cannot leave Shopify wiped |
+| Intake photos add/reorder | Intake → Shopify | Photo append / reorder; listing copy kept in the same overall flow (no Traxia gallery) |
+
+**Webhook endpoints (sync-server):** `POST /webhook/products`, `POST /webhook/products/update` (HMAC). Debounced (~3.5s) into one sync per product. Traxia extension does **not** write e-com description/tags into Traxia UI — Intake holds copy; Shopify gets it from Lost & Found.
 `INTAKE_API_BASE` — default `https://lostfound-pricing-api.onrender.com`  
 `INTAKE_EMAIL` + `INTAKE_PASSWORD` — or `INTAKE_SESSION_COOKIE`  
 `INTAKE_SHOPIFY_IMAGES_ENABLED` — default on when creds are set; `0`/`false` to disable  
