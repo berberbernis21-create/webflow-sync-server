@@ -2,12 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import sharp from "sharp";
 import {
+  classifyShopifyBodyForIntake,
   composeShopifyBodyHtml,
   deriveListingSeoFields,
   formatShopifyDimsLine,
   hammingDistance64,
   imageAverageHash,
+  isCustomerConditionListingNote,
   isDimsOnlyListingText,
+  isInternalOpsListingNote,
   formatShopifyErrorBody,
   mergeShopifyListingTags,
   namesEqualFull,
@@ -146,6 +149,28 @@ test("formatShopifyDimsLine puts Weight under Dimensions", () => {
     'Dimensions: Width: 65" × Depth: 29" × Height: 40".\nWeight: 29 lb.');
 });
 
+
+test("warehouse Shopify notes are internal ops; damage notes are customer condition", () => {
+  const warehouse = "Box In Warehouse- tall box that says DITZ";
+  assert.equal(isInternalOpsListingNote(warehouse), true);
+  assert.equal(isCustomerConditionListingNote(warehouse), false);
+  const helper =
+    "This Arctic Explorer map print has a bold cartographic look and warm paper tone for a study wall.";
+  const ops = classifyShopifyBodyForIntake(warehouse, helper);
+  assert.equal(ops.kind, "internal_ops");
+  assert.equal(ops.applyDescription, false);
+  assert.equal(ops.applyNotes, false);
+  assert.equal(ops.restoreListing, true);
+
+  const damage = "Small scratch on lower left corner; otherwise solid.";
+  assert.equal(isInternalOpsListingNote(damage), false);
+  assert.equal(isCustomerConditionListingNote(damage), true);
+  const cond = classifyShopifyBodyForIntake(damage, helper);
+  assert.equal(cond.kind, "customer_condition");
+  assert.equal(cond.applyDescription, false);
+  assert.equal(cond.applyNotes, true);
+  assert.equal(cond.restoreListing, true);
+});
 
 test("composeShopifyBodyHtml never returns dims-only or weight-only", () => {
   assert.equal(composeShopifyBodyHtml("", { width: 10, depth: 8, height: 3.5, weightLbs: 8 }), "");
