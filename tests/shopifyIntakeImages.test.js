@@ -5,6 +5,9 @@ import {
   classifyShopifyBodyForIntake,
   extractShopifyListingFacts,
   appendIntakeNotesToDescription,
+  listingMissesCustomerFlaw,
+  naturalFlawSentence,
+  selectIntakeItemForShopifyProduct,
   composeShopifyBodyHtml,
   deriveListingSeoFields,
   formatShopifyDimsLine,
@@ -12,6 +15,15 @@ import {
   imageAverageHash,
   pairIntakePhotosToShopifyMedia,
   planShopifyMediaMoves,
+  shopifyImageReorderNeedsWrite,
+  imagePositionNeedsWrite,
+  draftBlocksImageUpload,
+  buildSyncSnapshot,
+  shopifyWriteNeeded,
+  planEcommerceOff,
+  planIntakeWakeup,
+  isRawFlawListingBody,
+  listingBodyNeedsWrite,
   isCustomerConditionListingNote,
   isDimsOnlyListingText,
   isInternalOpsListingNote,
@@ -283,6 +295,66 @@ test("Shopify description payload keeps marketing copy and writes the flaw as a 
   const brand = appendIntakeNotesToDescription(marketing, "Brand is Everything Teak");
   assert.equal(/brand is/i.test(brand), false);
   assert.equal(/teak/i.test(brand), false);
+  const scratch = "SMALL LITTLE SCRATCH IN TOP RIGHT";
+  const scratchSentence = "There is a small scratch in the top right.";
+  assert.equal(naturalFlawSentence(scratch), scratchSentence);
+  const withScratch = appendIntakeNotesToDescription(marketing, "", scratch);
+  assert.equal(withScratch.includes(scratchSentence), true);
+  assert.equal(withScratch.includes(scratch), false);
+  assert.equal(withScratch.includes("Condition note"), false);
+  assert.equal(withScratch.includes("AS IS:"), false);
+  assert.ok(withScratch.indexOf("oil-on-canvas") < withScratch.indexOf(scratchSentence));
+  assert.equal(listingMissesCustomerFlaw(marketing, "", scratch), true);
+  assert.equal(listingMissesCustomerFlaw(withScratch, "", scratch), false);
+});
+
+test("shopify identity uses product id and SKU before title", () => {
+  const pid = "9824538460419";
+  const sku = "R5FDVL";
+  const locked = { id: "b5c575f8-4472-42f7-b1f0-86c07bf15d6c", shopifyProductId: pid, traxiaSku: sku, name: "old" };
+  const other = { id: "other", shopifyProductId: "111", traxiaSku: "OTHER", name: "old" };
+  const byId = selectIntakeItemForShopifyProduct({
+    shopifyProductId: pid,
+    sku,
+    byProductId: locked,
+    byExactTitle: other,
+  });
+  assert.equal(byId.via, "shopify_product_id");
+  assert.equal(byId.item.id, locked.id);
+  const bySku = selectIntakeItemForShopifyProduct({
+    shopifyProductId: pid,
+    sku,
+    bySku: { id: locked.id, traxiaSku: sku, name: "old" },
+    byExactTitle: other,
+  });
+  assert.equal(bySku.via, "traxia_sku");
+  const first = selectIntakeItemForShopifyProduct({
+    shopifyProductId: pid,
+    sku,
+    byExactTitle: { id: locked.id, name: "old" },
+  });
+  assert.equal(first.via, "exact_title");
+  assert.equal(first.locked, false);
+  const stolen = selectIntakeItemForShopifyProduct({
+    shopifyProductId: pid,
+    sku,
+    byExactTitle: other,
+  });
+  assert.equal(stolen.item, null);
+});
+
+test("SMALLT crack note is one sentence and not an AS IS label", () => {
+  const marketing =
+    'Original 1938 "Naked Birches" oil-on-canvas landscape painting in a warm-toned wood frame for rustic interiors.';
+  const body = appendIntakeNotesToDescription(marketing, "SMALLT CRACK IN TOP RIGHT");
+  const sentence = "There is a small crack in the top right.";
+  assert.match(body, /oil-on-canvas landscape painting/);
+  assert.equal(body.includes("AS IS:"), false);
+  assert.equal(body.includes("SMALLT"), false);
+  assert.equal(/as shown in the photos/i.test(body), false);
+  assert.ok(body.includes(sentence));
+  assert.ok(body.indexOf("rustic interiors") < body.indexOf(sentence));
+  assert.equal(appendIntakeNotesToDescription(body, "SMALLT CRACK IN TOP RIGHT").split(sentence).length - 1, 1);
 });
 
 test("composeShopifyBodyHtml never returns dims-only or weight-only", () => {
@@ -503,4 +575,122 @@ test("pairIntakePhotosToShopifyMedia reorders existing images and skips distant 
     maxHamming: 12,
   });
   assert.deepEqual(sameCount, [0]);
+});
+
+test("cleared Extra Information removes the old flaw sentence", () => {
+  const marketing =
+    'Original 1938 "Naked Birches" oil-on-canvas landscape painting in a warm-toned wood frame for rustic interiors.';
+  const previous = `${marketing} AS IS: SMALLT CRACK IN TOP RIGHT, as shown in the photos.`;
+  const body = appendIntakeNotesToDescription(previous, "", "");
+  assert.match(body, /oil-on-canvas landscape painting/);
+  assert.match(body, /rustic interiors/);
+  assert.equal(body.includes("AS IS:"), false);
+  assert.equal(body.includes("SMALLT"), false);
+  assert.equal(/crack/i.test(body), false);
+  const woven = appendIntakeNotesToDescription(
+    marketing,
+    "",
+    "SMALLT CRACK IN TOP RIGHT"
+  );
+  assert.match(woven, /There is a small crack in the top right\./);
+  assert.equal(woven.includes("AS IS:"), false);
+  assert.equal(woven.includes("SMALLT"), false);
+});
+
+test("raw flaw body is replaced by the listing paragraph plus one sentence", () => {
+  const paragraph =
+    'Original 1938 "Naked Birches" oil-on-canvas landscape painting in a warm-toned wood frame for rustic interiors.';
+  const raw = "SMALLI CRACK IN TOP RIGHT";
+  assert.equal(isRawFlawListingBody(raw), true);
+  const written = appendIntakeNotesToDescription(paragraph, "", raw);
+  assert.match(written, /oil-on-canvas landscape painting/);
+  assert.match(written, /There is a small crack in the top right\./);
+  assert.equal(written.includes("SMALLI"), false);
+  assert.equal(written.includes("AS IS:"), false);
+  assert.equal(listingBodyNeedsWrite(raw, written), true);
+  assert.equal(listingBodyNeedsWrite(written, written), false);
+});
+
+test("second reorder of the same gallery does not write", () => {
+  const first = planShopifyMediaMoves(["a", "b", "c"], ["c", "a", "b"]);
+  assert.equal(shopifyImageReorderNeedsWrite(first.order, ["c", "a", "b"]), false);
+  assert.equal(imagePositionNeedsWrite({ id: "a", position: 1 }, 1), false);
+  assert.equal(imagePositionNeedsWrite({ id: "a", position: 3 }, 1), true);
+});
+
+test("e-commerce off keeps the lock and a later Intake wake-up uses that product", () => {
+  const productId = "9824538460419";
+  const sku = "R5EDVL";
+  const intakeItemId = "b5c575f8-4472-42f7-b1f0-86c07bf15d6c";
+  const off = planEcommerceOff({
+    shopifyProductId: productId,
+    sku,
+    intakeItemId,
+    body: 'Original 1938 "Naked Birches" oil-on-canvas landscape painting in a warm-toned wood frame.',
+  });
+  assert.equal(off.shopifyStatus, "draft");
+  assert.equal(off.clearLock, false);
+  assert.equal(off.keepPhotos, true);
+  assert.equal(off.shopifyProductId, productId);
+  assert.equal(off.sku, sku);
+  assert.equal(/AS IS:/i.test(off.body), false);
+  const wake = planIntakeWakeup({
+    shopifyProductId: off.shopifyProductId,
+    sku: off.sku,
+    intakeItemId,
+    shopifyStatus: "draft",
+    alreadySynced: true,
+  });
+  assert.equal(wake.shopifyProductId, productId);
+  assert.equal(wake.shopifyStatus, "active");
+  assert.equal(wake.writeImages, true);
+  assert.equal(wake.writeBody, true);
+  assert.equal(wake.blockedByDraft, false);
+  assert.equal(wake.blockedByAlreadySynced, false);
+  assert.equal(draftBlocksImageUpload("draft"), false);
+  const stored = buildSyncSnapshot({
+    intakeItemId,
+    shopifyProductId: productId,
+    sku,
+    body: off.body,
+    title: "Naked Birches",
+    tags: "FH, A",
+    price: "349.00",
+    imageOrder: ["1", "2"],
+    publishStatus: "draft",
+  });
+  assert.equal(
+    shopifyWriteNeeded({
+      stored,
+      desired: {
+        intakeItemId,
+        shopifyProductId: productId,
+        sku,
+        body: off.body,
+        title: "Naked Birches",
+        tags: "FH, A",
+        price: "349.00",
+        imageOrder: ["1", "2"],
+        publishStatus: "draft",
+      },
+    }).write,
+    false
+  );
+  assert.equal(
+    shopifyWriteNeeded({
+      stored,
+      desired: {
+        intakeItemId,
+        shopifyProductId: productId,
+        sku,
+        body: off.body,
+        title: "Naked Birches",
+        tags: "FH, A",
+        price: "349.00",
+        publishStatus: "active",
+      },
+      explicit: true,
+    }).reason,
+    "intake_wakeup"
+  );
 });
