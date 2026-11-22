@@ -807,17 +807,27 @@ const WEBHOOK_PRODUCT_DEBOUNCE_MS = Math.max(
   parseInt(process.env.WEBHOOK_PRODUCT_DEBOUNCE_MS || "3500", 10) || 3500
 );
 const productWebhookDebounceTimers = new Map();
+/** One in-flight webhook sync per product; newer events collapse into a single follow-up. */
+const productWebhookInflight = new Map(); // id -> Promise
+const productWebhookPending = new Map(); // id -> pathLabel
 /** Skip full webhook sync briefly after /set-categories (metafield write would otherwise re-trigger heavy sync). */
 const categoryOnlyWebhookSuppress = new Map();
 const CATEGORY_ONLY_WEBHOOK_SUPPRESS_MS = Math.max(
   30_000,
   parseInt(process.env.CATEGORY_ONLY_WEBHOOK_SUPPRESS_MS || "120000", 10) || 120_000
 );
+/** After Intake listing-update / reorder writes Shopify, suppress echo webhooks briefly. */
+const INTAKE_WRITE_WEBHOOK_SUPPRESS_MS = Math.max(
+  5_000,
+  parseInt(process.env.INTAKE_WRITE_WEBHOOK_SUPPRESS_MS || "20000", 10) || 20_000
+);
 
 function suppressWebhookSyncForProduct(shopifyProductId, ms = CATEGORY_ONLY_WEBHOOK_SUPPRESS_MS) {
   const id = String(shopifyProductId ?? "").trim();
   if (!id) return;
-  categoryOnlyWebhookSuppress.set(id, Date.now() + ms);
+  const until = Date.now() + ms;
+  const prev = categoryOnlyWebhookSuppress.get(id) || 0;
+  categoryOnlyWebhookSuppress.set(id, Math.max(prev, until));
 }
 
 function isWebhookSyncSuppressed(shopifyProductId) {
@@ -835,7 +845,7 @@ function scheduleDebouncedProductWebhookSync(shopifyProductId, triggerPath) {
   const id = String(shopifyProductId ?? "").trim();
   if (!id) return;
   if (WEBHOOK_PRODUCT_DEBOUNCE_MS <= 0) {
-    void runWebhookSingleProductSync(id, triggerPath);
+    void runWebhookSingleProductSyncCoalesced(id, triggerPath);
     return;
   }
   const prev = productWebhookDebounceTimers.get(id);
@@ -851,9 +861,41 @@ function scheduleDebouncedProductWebhookSync(shopifyProductId, triggerPath) {
       paths: uniquePaths,
       waitMs: WEBHOOK_PRODUCT_DEBOUNCE_MS,
     });
-    void runWebhookSingleProductSync(id, pathLabel);
+    void runWebhookSingleProductSyncCoalesced(id, pathLabel);
   }, WEBHOOK_PRODUCT_DEBOUNCE_MS);
   productWebhookDebounceTimers.set(id, { timer, paths });
+}
+
+async function runWebhookSingleProductSyncCoalesced(shopifyProductId, triggerPath) {
+  const id = String(shopifyProductId ?? "").trim();
+  if (!id) return;
+  if (productWebhookInflight.has(id)) {
+    productWebhookPending.set(id, triggerPath);
+    webflowLog("info", {
+      event: "shopify.webhook.product_coalesced",
+      shopifyProductId: id,
+      path: triggerPath,
+      reason: "in_flight",
+    });
+    return productWebhookInflight.get(id);
+  }
+  const run = (async () => {
+    try {
+      await runWebhookSingleProductSync(id, triggerPath);
+    } finally {
+      productWebhookInflight.delete(id);
+      const pendingPath = productWebhookPending.get(id);
+      if (pendingPath != null) {
+        productWebhookPending.delete(id);
+        // Short settle then one follow-up sync with latest product state.
+        setTimeout(() => {
+          void runWebhookSingleProductSyncCoalesced(id, pendingPath);
+        }, Math.min(WEBHOOK_PRODUCT_DEBOUNCE_MS || 1500, 1500));
+      }
+    }
+  })();
+  productWebhookInflight.set(id, run);
+  return run;
 }
 
 function scheduleProductWebhookSync(req, res) {
@@ -10047,12 +10089,14 @@ async function syncSingleProduct(product, cache, options = {}) {
 async function runWebhookSingleProductSync(shopifyProductId, triggerPath) {
   const id = String(shopifyProductId ?? "").trim();
   if (!id) return;
-  if (isWebhookSyncSuppressed(id)) {
+  // Suppress only Shopify webhook echoes — intentional /intake-images/* syncAfter still runs.
+  const fromShopifyWebhook = /\/webhook\//i.test(String(triggerPath || ""));
+  if (fromShopifyWebhook && isWebhookSyncSuppressed(id)) {
     webflowLog("info", {
       event: "shopify.webhook.sync_suppressed",
       path: triggerPath,
       shopifyProductId: id,
-      reason: "category_only_batch",
+      reason: "intake_write_echo_or_category_batch",
     });
     return;
   }
@@ -15095,9 +15139,11 @@ app.post("/intake-images/reorder", async (req, res) => {
       { log: (level, data) => webflowLog(level, data) }
     );
     // Fire-and-forget Webflow/Google sync — don't block the reorder response.
+    // Suppress Shopify echo webhooks from this write so Intake isn't stamped again.
     if (result?.ok && result?.shopifyProductId && req.body?.syncAfter !== false) {
       result.syncTriggered = true;
-      void runWebhookSingleProductSync(result.shopifyProductId, "/intake-images/reorder").catch(
+      suppressWebhookSyncForProduct(result.shopifyProductId, INTAKE_WRITE_WEBHOOK_SUPPRESS_MS);
+      void runWebhookSingleProductSyncCoalesced(result.shopifyProductId, "/intake-images/reorder").catch(
         (err) => {
           webflowLog("warn", {
             event: "intake_images.reorder.sync_trigger_failed",
@@ -15140,9 +15186,11 @@ app.post("/intake-images/listing-update", async (req, res) => {
       log: (level, data) => webflowLog(level, data),
     });
     // Fire-and-forget Webflow/Google sync — return as soon as Shopify listing write finishes.
+    // Suppress echo webhooks from this Intake write (breaks Shopify→Intake→Shopify loop).
     if (result?.ok && result?.shopifyProductId && req.body?.syncAfter !== false) {
       result.syncTriggered = true;
-      void runWebhookSingleProductSync(
+      suppressWebhookSyncForProduct(result.shopifyProductId, INTAKE_WRITE_WEBHOOK_SUPPRESS_MS);
+      void runWebhookSingleProductSyncCoalesced(
         result.shopifyProductId,
         "/intake-images/listing-update"
       ).catch((err) => {
