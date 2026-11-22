@@ -4077,6 +4077,8 @@ function furnitureBedroomIndicatesBedroom(title, descriptionHtml, tags) {
   const tagsStr = Array.isArray(tags) ? tags.join(" ").toLowerCase() : typeof tags === "string" ? tags.toLowerCase() : "";
   const hay = `${name} ${descText} ${tagsStr}`;
   if (!hay.trim()) return false;
+  // Plain beds (Cal-King Bed, Low Profile Bed) — \bbeds?\b does not match "bedside".
+  if (/\bbeds?\b/i.test(hay)) return true;
   if (/\bheadboards?\b/i.test(hay)) return true;
   if (/\bbed frames?\b/i.test(hay) || /\bbedframe\b/i.test(hay)) return true;
   if (/\bbunk beds?\b/i.test(hay)) return true;
@@ -5584,14 +5586,27 @@ function productHasFurnitureAccessoriesCategoryTag(product) {
 function getFurnitureCategoryManualOverride(tags, product = null) {
   const fromLetter = getFurnitureCategoryOverrideFromEcommerceTags(tags);
   if (fromLetter) {
+    // Intake FH + B (Bedroom) etc. always win — never let Traxia ACCESSORIES overwrite.
     return { category: fromLetter.category, letter: fromLetter.letter, source: "ecommerce_letter_tag" };
   }
-  if (product && productHasFurnitureAccessoriesCategoryTag(product)) {
-    const verticalTag = getEcommerceVerticalOverrideFromTags(tags);
-    if (verticalTag?.vertical === "luxury") return null;
-    if (productHasJewelryCategoryTag(product)) return null;
-    return { category: "Accessories", letter: null, source: "traxia_category_accessories" };
+  // Full room labels on tags (from Intake listing-update / prior sync).
+  if (Array.isArray(tags)) {
+    for (const raw of tags) {
+      const t = String(raw || "").trim();
+      if (!t) continue;
+      if (FURNITURE_TAXONOMY.includes(t) && t !== "Accessories") {
+        return { category: t, letter: null, source: "ecommerce_category_label_tag" };
+      }
+    }
   }
+  // Product type already healed to Bedroom / Living Room by listing-update.
+  const productType = String(product?.product_type || "").trim();
+  if (productType && FURNITURE_TAXONOMY.includes(productType) && productType !== "Accessories") {
+    return { category: productType, letter: null, source: "shopify_product_type" };
+  }
+  // Traxia "Category: ACCESSORIES" only locks vertical to Furniture — NOT subcategory.
+  // Beds/consoles often carry that Traxia tag while Intake Website Categories = Bedroom/Living Room.
+  // Subcategory comes from letter tags, product_type, or keyword/LLM detection below.
   return null;
 }
 

@@ -18,6 +18,7 @@ import {
   normalizeFullItemName,
   parseIntakeItemIdFromText,
   prepareShopifyAttachment,
+  resolveIntakeShopifyTaxonomy,
   shopifyProductHasDisplayImages,
   shopifyTitlePollIntervalMs,
   shopifyTitlePollMaxDelayMs,
@@ -199,6 +200,66 @@ test("deriveListingSeoFields builds SEO title/meta plus AEO/GEO", () => {
   assert.ok(fields.seoDescription.length <= 160);
   assert.match(fields.aeoDescription, /pitcher|pottery|glazed/i);
   assert.match(fields.geoDescription, /Tuscany Fortunata|Accessories|Dimensions/i);
+});
+
+test("resolveIntakeShopifyTaxonomy prefers Website Categories Bedroom over Traxia BED/Accessories", () => {
+  const bed = resolveIntakeShopifyTaxonomy({
+    merchType: "furniture",
+    websiteCategory: "Bedroom",
+    category: "BED",
+    name: "RH Curved Wing Grey Leather King Low Profile Bed",
+  });
+  assert.equal(bed.department, "Furniture & Home");
+  assert.equal(bed.category, "Bedroom");
+  assert.equal(bed.websiteCode, "B");
+
+  const bedCode = resolveIntakeShopifyTaxonomy({
+    merchType: "furniture",
+    websiteCategory: "B",
+    category: "ACCESSORIES",
+    name: "RH Graydon Shagreen Cal-King Bed",
+  });
+  assert.equal(bedCode.category, "Bedroom");
+
+  const consoleTable = resolveIntakeShopifyTaxonomy({
+    merchType: "furniture",
+    websiteCategory: "Living Room",
+    category: "CONSOLE",
+    name: "Restoration Hardware Balustrade Salvaged Wood Ebonized Console Table",
+  });
+  assert.equal(consoleTable.category, "Living Room");
+
+  const fromTraxiaBed = resolveIntakeShopifyTaxonomy({
+    merchType: "furniture",
+    websiteCategory: "",
+    category: "BED",
+    name: "King Bed",
+  });
+  assert.equal(fromTraxiaBed.category, "Bedroom");
+
+  const fromName = resolveIntakeShopifyTaxonomy({
+    merchType: "furniture",
+    websiteCategory: "",
+    category: "ACCESSORIES",
+    name: "RH Graydon Shagreen Cal-King Bed W/ 2 Bedside Tables",
+  });
+  assert.equal(fromName.category, "Bedroom");
+});
+
+test("mergeShopifyListingTags writes FH+B for Bedroom website category", () => {
+  const tags = mergeShopifyListingTags({
+    existingTags: ["Category: ACCESSORIES", "Used", "ACTIVE", "X", "Accessories"],
+    ecommerceTags: "FH, X, graydon-bed",
+    merchType: "furniture",
+    websiteCategory: "Bedroom",
+    dims: { width: 80, depth: 91, height: 37.5 },
+  });
+  assert.ok(tags.includes("FH"));
+  assert.ok(tags.includes("B"));
+  assert.equal(tags.includes("X"), false);
+  assert.equal(tags.some((t) => /^Accessories$/i.test(t)), false);
+  assert.ok(tags.includes("Category: ACCESSORIES"));
+  assert.ok(tags.includes("graydon-bed"));
 });
 
 test("composeShopifyBodyHtml strips prior footers then appends one clean block", () => {
