@@ -49,6 +49,10 @@ import {
   scheduleGalleryRetry,
   setGalleryRetryHandler,
   syncWebhookFactsToIntake,
+  refreshTitleDimensions,
+  convergeShopifyEvents,
+  resolveQueuedListingJob,
+  planSettledCleanliness,
 } from "../lib/shopifyIntakeImages.js";
 import {
   planShopifyCallTimes,
@@ -861,4 +865,76 @@ test("a deleted product unlinks and an exact name relinks only an open row", () 
   assert.equal(many.linked, false);
   assert.equal(many.matches[0].id, "1");
   assert.equal(many.matches[1].id, "2");
+});
+
+const NAKED_BAD =
+  'Original 1938 "Naked Birches" Oil on Canvas Landscape Painting - 27.5 x 41.5H BERNIS TEST (delete this part of name if you see it in store) - 27.5X1.5X41.5H';
+const NAKED_CLEAN =
+  'Original 1938 "Naked Birches" Oil on Canvas Landscape Painting - 27.5X1.5X41.5H';
+const NAKED_CURRENT =
+  'Original 1938 "Naked Birches" Oil on Canvas Landscape Painting - 27.5 x 41.5H';
+
+test("title formatter collapses the doubled suffix and stays idempotent", () => {
+  assert.equal(refreshTitleDimensions(NAKED_BAD, { width: 27.5, depth: 1.5, height: 41.5 }), NAKED_CLEAN);
+  assert.equal(refreshTitleDimensions(NAKED_CLEAN, { width: 27.5, depth: 1.5, height: 41.5 }), NAKED_CLEAN);
+});
+
+test("older webhook and echo do not replace the newest title", () => {
+  assert.equal(
+    convergeShopifyEvents([
+      { updatedAt: "2026-11-22T17:00:00Z", title: NAKED_BAD, body: "old" },
+      { updatedAt: "2026-11-22T18:00:00Z", title: NAKED_CURRENT, body: "new" },
+      { updatedAt: "2026-11-22T17:30:00Z", title: NAKED_BAD, body: "old" },
+    ]),
+    NAKED_CURRENT
+  );
+  const echoed = convergeShopifyEvents([
+    { updatedAt: "2026-11-22T18:00:00Z", title: NAKED_CURRENT, body: "same body" },
+    { updatedAt: "2026-11-22T18:05:00Z", title: NAKED_CURRENT, body: "same body" },
+  ]);
+  assert.equal(echoed, NAKED_CURRENT);
+});
+
+test("queued listing job writes the current item instead of the captured payload", async () => {
+  const item = {
+    id: "b5c575f8-4472-42f7-b1f0-86c07bf15d6c",
+    name: "NEW TITLE",
+    description: "This is the current listing copy that is long enough to be a real description for the buyer.",
+    notes: "",
+    conditionIssues: "we are perfect",
+    retailPrice: 349,
+    shopifySyncSnapshot: JSON.stringify({ v: 1, at: "2026-11-22T16:00:00Z", title: "old-hash" }),
+  };
+  const written = resolveQueuedListingJob(
+    { queuedAt: "2026-11-22T17:00:00Z", name: "OLD TITLE", description: "old captured body" },
+    item
+  );
+  assert.equal(written.action, "write");
+  assert.equal(written.payload.name, "NEW TITLE");
+  assert.equal(written.payload.description.includes("old captured"), false);
+  const { createHash } = await import("node:crypto");
+  const titleHash = createHash("sha256").update("new title").digest("hex").slice(0, 16);
+  item.shopifySyncSnapshot = JSON.stringify({ v: 1, at: "2026-11-22T18:00:00Z", title: titleHash });
+  const skipped = resolveQueuedListingJob(
+    { queuedAt: "2026-11-22T17:00:00Z", name: "OLD TITLE", description: "old captured body" },
+    item
+  );
+  assert.equal(skipped.action, "noop");
+  assert.equal(skipped.name, "NEW TITLE");
+});
+
+test("a dirty settled listing schedules one rebuild and a clean one does not", () => {
+  const longBody =
+    "Original 1938 oil-on-canvas landscape painting in a warm wood frame for rustic interiors. Pickup is available in Scottsdale.";
+  assert.equal(planSettledCleanliness({ title: NAKED_BAD, body: longBody, note: "we are perfect" }).action, "rebuild");
+  const stopped = planSettledCleanliness(
+    { title: NAKED_BAD, body: "AS IS: SMALLT CRACK IN TOP RIGHT", note: "we are perfect" },
+    { corrective: true }
+  );
+  assert.equal(stopped.action, "stop");
+  assert.match(stopped.note, /cleanup/);
+  assert.equal(
+    planSettledCleanliness({ title: NAKED_CLEAN, body: longBody, note: "we are perfect", tags: "FH, A" }).action,
+    "none"
+  );
 });
