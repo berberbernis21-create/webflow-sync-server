@@ -40,7 +40,21 @@ import {
   shopifyTitlePollMaxDelayMs,
   sniffImageKind,
   stripListingDimJunk,
+  titlesMatchForRelink,
+  shopifyStatusUnlinks,
+  planShopifyProductGone,
+  planShopifyRelink,
+  planManualShopifyLink,
+  gallerySyncOutcome,
+  scheduleGalleryRetry,
+  setGalleryRetryHandler,
+  syncWebhookFactsToIntake,
 } from "../lib/shopifyIntakeImages.js";
+import {
+  planShopifyCallTimes,
+  resetShopifyThrottleForTests,
+  retryAfterShopify429,
+} from "../lib/shopifyThrottle.js";
 
 test("normalizeFullItemName collapses whitespace", () => {
   assert.equal(normalizeFullItemName("  Foo   Bar  "), "Foo Bar");
@@ -693,4 +707,158 @@ test("e-commerce off keeps the lock and a later Intake wake-up uses that product
     }).reason,
     "intake_wakeup"
   );
+});
+
+test("excellent condition replaces a stale crack line", () => {
+  const previous =
+    'Original 1938 "Naked Birches" oil-on-canvas landscape painting in a warm-toned wood frame for rustic interiors. AS IS: SMALLT CRACK IN TOP RIGHT, as shown in the photos. Excellent Condition.';
+  const body = appendIntakeNotesToDescription(previous, "", "excellent condition", {
+    name: "Naked Birches",
+    category: "ART - PAINTING",
+  });
+  assert.equal(body.includes("AS IS:"), false);
+  assert.equal(/SMALLT|SMALT|smallt/i.test(body), false);
+  assert.equal(/\bcrack\b/i.test(body), false);
+  assert.equal((body.match(/excellent condition/gi) || []).length, 1);
+  assert.match(body, /This piece is in excellent condition\./);
+  assert.match(body, /rustic interiors/);
+  assert.match(body, /oil-on-canvas/);
+});
+
+test("429 is retried and a partial reorder stays pending", async () => {
+  resetShopifyThrottleForTests();
+  const waits = [];
+  let calls = 0;
+  const done = await retryAfterShopify429(
+    { status: 429, headers: { "retry-after": "1" } },
+    async () => {
+      calls += 1;
+      return calls === 1 ? { status: 429, headers: {} } : { status: 200 };
+    },
+    { sleep: async (ms) => waits.push(ms) }
+  );
+  assert.equal(done.status, 200);
+  assert.equal(calls, 2);
+  assert.equal(waits[0], 1000);
+  assert.deepEqual(planShopifyCallTimes(4), [0, 0, 500, 1000]);
+  const outcome = gallerySyncOutcome({ desired: 6, moved: 2, uploaded: 0, failedMoves: 4 });
+  assert.equal(outcome.status, "pending");
+  assert.equal(outcome.reorderOk, false);
+  assert.equal(outcome.moved, 2);
+  let queued = null;
+  setGalleryRetryHandler((job) => {
+    queued = job;
+  });
+  const scheduled = scheduleGalleryRetry({ shopifyProductId: "9824312295683", intakeItemId: "item-1" });
+  assert.equal(scheduled.queued, true);
+  assert.equal(queued.shopifyProductId, "9824312295683");
+  setGalleryRetryHandler(null);
+});
+
+test("webhook dimension tags post to Intake and rebuild the footer without a model", async () => {
+  const item = {
+    id: "b5c575f8-4472-42f7-b1f0-86c07bf15d6c",
+    name: "Naked Birches Painting - 24X30X1H",
+    description:
+      'Original 1938 "Naked Birches" oil-on-canvas landscape painting. Measuring 24 H x 30 W x 1 D inches. Dimensions: Width: 24 in, Height: 1 in',
+    dimWidth: 24,
+    dimDepth: 1,
+    dimHeight: 24,
+    retailPrice: 349,
+  };
+  const product = {
+    id: 9824538460419,
+    title: "Naked Birches Painting - 24X30X1H",
+    tags: "Width: 30, Height: 36, Depth: 1.5, Weight: 8",
+    variants: [{ sku: "R5EDVL", price: "349.00" }],
+    status: "active",
+  };
+  const result = await syncWebhookFactsToIntake(product, {
+    resolveItem: async () => item,
+    post: async (url, body) => ({ url, body }),
+  });
+  assert.match(result.url, /\/api\/lost-and-found-intake\/items\/b5c575f8-4472-42f7-b1f0-86c07bf15d6c\/shopify-image-sync$/);
+  assert.equal(result.body.dimWidth, 30);
+  assert.equal(result.body.dimHeight, 36);
+  assert.equal(result.body.dimDepth, 1.5);
+  assert.equal(result.body.allowOpenAi, false);
+  assert.equal(result.body.retailPrice, 349);
+  assert.match(result.body.name, /30X1\.5X36H/);
+  assert.match(result.rebuilt.body, /Width: 30/);
+  assert.match(result.rebuilt.body, /Height: 36/);
+  assert.match(result.rebuilt.body, /Depth: 1\.5/);
+  assert.equal(/Width: 24|Measuring/.test(result.rebuilt.body), false);
+  assert.equal(result.llmCalled, false);
+});
+
+test("a deleted product unlinks and an exact name relinks only an open row", () => {
+  const item = {
+    id: "keep",
+    name: "Naked Birches - 30X1.5X36H",
+    description: "Keep this listing.",
+    traxiaSku: "R5EDVL",
+    shopifyProductId: "9824538460419",
+    photos: ["a", "b"],
+  };
+  const gone = planShopifyProductGone(item, { reason: "deleted" });
+  assert.equal(gone.deleteItem, false);
+  assert.equal(gone.clearDescription, false);
+  assert.equal(gone.clearPhotos, false);
+  assert.equal(gone.clearSku, false);
+  assert.equal(gone.description, "Keep this listing.");
+  assert.equal(gone.traxiaSku, "R5EDVL");
+  assert.equal(gone.shopifyProductId, "9824538460419");
+  assert.equal(gone.status, "unlinked");
+  assert.equal(shopifyStatusUnlinks("draft"), false);
+  assert.equal(shopifyStatusUnlinks("archived"), true);
+  assert.equal(shopifyStatusUnlinks("unpublished"), true);
+  assert.equal(shopifyStatusUnlinks("gone"), true);
+  assert.equal(titlesMatchForRelink("Naked Birches - 30X1.5X36H - AS IS", "naked birches - 30x1.5x36h"), true);
+  assert.equal(titlesMatchForRelink("Naked Birches", "Naked Birches - 30X1.5X36H"), false);
+  const locked = { id: "locked", name: "Naked Birches - 30X1.5X36H", shopifyProductId: "111", traxiaSku: "KEEP" };
+  const open = {
+    id: "open",
+    name: "Naked Birches - 30X1.5X36H - AS IS",
+    shopifyProductId: "999",
+    shopifyLinkState: "unlinked",
+    traxiaSku: "R5EDVL",
+  };
+  const relink = planShopifyRelink({
+    shopifyProductId: "555",
+    title: "Naked Birches - 30X1.5X36H",
+    sku: "R5EDVL",
+    candidates: [locked, open],
+  });
+  assert.equal(relink.relink, true);
+  assert.equal(relink.wake, true);
+  assert.equal(relink.item.id, "open");
+  assert.equal(relink.ignoredLocked, 1);
+  const ambiguous = planShopifyRelink({
+    shopifyProductId: "555",
+    title: "Naked Birches - 30X1.5X36H",
+    candidates: [open, { ...open, id: "other" }],
+  });
+  assert.equal(ambiguous.relink, false);
+  assert.equal(ambiguous.action, "ambiguous");
+  const one = planManualShopifyLink({
+    title: "Naked Birches - 30X1.5X36H",
+    products: [{ id: "9824538460419", title: "Naked Birches - 30X1.5X36H", status: "active", variants: [{ sku: "R5EDVL" }] }],
+  });
+  assert.equal(one.matchCount, 1);
+  assert.equal(one.shopifyProductId, "9824538460419");
+  assert.equal(one.traxiaSku, "R5EDVL");
+  const none = planManualShopifyLink({ title: "Naked Birches - 30X1.5X36H", products: [{ id: "1", title: "Other" }] });
+  assert.equal(none.matchCount, 0);
+  assert.equal(none.message, "No exact match found for that name.");
+  const many = planManualShopifyLink({
+    title: "Naked Birches - 30X1.5X36H",
+    products: [
+      { id: "1", title: "Naked Birches - 30X1.5X36H", status: "active" },
+      { id: "2", title: "Naked Birches - 30X1.5X36H - AS IS", status: "draft" },
+    ],
+  });
+  assert.equal(many.matchCount, 2);
+  assert.equal(many.linked, false);
+  assert.equal(many.matches[0].id, "1");
+  assert.equal(many.matches[1].id, "2");
 });

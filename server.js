@@ -88,7 +88,12 @@ import {
   handleIntakePhotoAdded,
   intakeShopifyImagesConfigured,
   intakeShopifyImagesEnabled,
+  markIntakeShopifyProductUnlinked,
   mirrorShopifyProductToIntake,
+  planManualShopifyLink,
+  fetchShopifyProductsByExactTitle,
+  shopifyStatusUnlinks,
+  SHOPIFY_WEBHOOK_COALESCE_CEILING_MS,
   stripListingDimJunk,
 } from "./lib/shopifyIntakeImages.js";
 
@@ -802,10 +807,12 @@ app.post("/shopify/order", async (req, res) => {
    into a single sync so we do not run two full passes (major cause of duplicate Webflow rows).
    WEBHOOK_PRODUCT_DEBOUNCE_MS: default 3500; set 0 to disable debounce.
 ====================================================== */
-const WEBHOOK_PRODUCT_DEBOUNCE_MS = Math.max(
-  0,
-  parseInt(process.env.WEBHOOK_PRODUCT_DEBOUNCE_MS || "3500", 10) || 3500
-);
+const WEBHOOK_PRODUCT_DEBOUNCE_MS = (() => {
+  const raw = parseInt(process.env.WEBHOOK_PRODUCT_DEBOUNCE_MS || "2500", 10);
+  const n = Number.isFinite(raw) ? raw : 2500;
+  if (n <= 0) return 0;
+  return Math.min(SHOPIFY_WEBHOOK_COALESCE_CEILING_MS, n);
+})();
 const productWebhookDebounceTimers = new Map();
 /** One in-flight webhook sync per product; newer events collapse into a single follow-up. */
 const productWebhookInflight = new Map(); // id -> Promise
@@ -921,6 +928,22 @@ function scheduleProductWebhookSync(req, res) {
     shopifyProductId: id,
     productTitle: req.body?.title != null ? String(req.body.title).slice(0, 200) : null,
   });
+  // Intake learns the new dims, price, title, or a gone product in this pass.
+  // The Webflow sync still waits for the short debounce.
+  const product = req.body?.id != null ? req.body : req.body?.product;
+  if (product?.id && intakeShopifyImagesConfigured()) {
+    const log = (level, data) => webflowLog(level, data);
+    const write = shopifyStatusUnlinks(product.status)
+      ? markIntakeShopifyProductUnlinked(product, { log, reason: String(product.status || "unpublished") })
+      : mirrorShopifyProductToIntake(product, { log });
+    void Promise.resolve(write).catch((err) => {
+      webflowLog("warn", {
+        event: "shopify.webhook.intake_immediate_failed",
+        shopifyProductId: id,
+        message: err?.message || String(err),
+      });
+    });
+  }
   scheduleDebouncedProductWebhookSync(id, req.path);
 }
 
@@ -14523,6 +14546,20 @@ app.post("/webhook/products/delete", verifyShopifyHmac, async (req, res) => {
       topic: req.get("X-Shopify-Topic") ?? "",
       shop: req.get("X-Shopify-Shop-Domain") ?? "",
     });
+    if (intakeShopifyImagesConfigured()) {
+      try {
+        await markIntakeShopifyProductUnlinked(
+          { id },
+          { log: (level, data) => webflowLog(level, data), reason: "deleted" }
+        );
+      } catch (unlinkErr) {
+        webflowLog("warn", {
+          event: "shopify.webhook.product_delete.unlink_failed",
+          shopifyProductId: id,
+          message: unlinkErr?.message || String(unlinkErr),
+        });
+      }
+    }
     const cache = loadCache();
     const outcome = await processDisappearedShopifyProduct(id, cache, { trigger: "webhook.products_delete" });
     saveCache(cache);
@@ -15185,6 +15222,27 @@ app.post("/intake-images/reorder", async (req, res) => {
       message: err?.message || String(err),
     });
     return res.status(500).json({ ok: false, error: err?.message || String(err) });
+  }
+});
+
+app.post("/intake-images/link-by-name", async (req, res) => {
+  if (!intakeSyncHookSecretOk(req)) {
+    return res.status(401).json({ ok: false, error: "Invalid or missing X-Intake-Sync-Secret" });
+  }
+  const title = String(req.body?.name || req.body?.title || "").trim();
+  if (!title) return res.status(400).json({ ok: false, linked: false, reason: "name_required", message: "Paste the product title." });
+  if (!(process.env.SHOPIFY_STORE && process.env.SHOPIFY_ACCESS_TOKEN)) {
+    return res.status(503).json({ ok: false, error: "SHOPIFY_STORE and SHOPIFY_ACCESS_TOKEN required" });
+  }
+  try {
+    const products = await fetchShopifyProductsByExactTitle(title, {
+      log: (level, data) => webflowLog(level, data),
+    });
+    const plan = planManualShopifyLink({ title, products });
+    return res.json(plan);
+  } catch (err) {
+    webflowLog("warn", { event: "intake_images.link_by_name.failed", message: err?.message || String(err) });
+    return res.status(500).json({ ok: false, linked: false, message: err?.message || "Shopify title search failed" });
   }
 });
 
