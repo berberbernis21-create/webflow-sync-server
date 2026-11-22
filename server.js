@@ -15123,7 +15123,8 @@ app.post("/intake-images/photo-added", async (req, res) => {
 /**
  * Pricing Engine → sync server when Intake photo order / primary changes.
  * Body: { intakeItemId?, shopifyProductId?, name?, imageUrls: string[] }
- * Reorders Shopify product images to match Intake sort_order (primary first).
+ * Reorders Shopify product images to match Intake order. First URL is featured.
+ * reorderOnly moves images already on the product and does not rewrite the listing.
  */
 app.post("/intake-images/reorder", async (req, res) => {
   if (!intakeSyncHookSecretOk(req)) {
@@ -15137,6 +15138,7 @@ app.post("/intake-images/reorder", async (req, res) => {
     : Array.isArray(req.body?.photos)
       ? req.body.photos
       : null;
+  const reorderOnly = req.body?.reorderOnly === true;
   if (!intakeItemId && !name && !shopifyProductId) {
     return res.status(400).json({
       ok: false,
@@ -15153,12 +15155,15 @@ app.post("/intake-images/reorder", async (req, res) => {
         shopifyProductId,
         name,
         imageUrls,
+        reorderOnly,
       },
       { log: (level, data) => webflowLog(level, data) }
     );
     // Fire-and-forget Webflow/Google sync — don't block the reorder response.
     // Suppress Shopify echo webhooks from this write so Intake isn't stamped again.
-    if (result?.ok && result?.shopifyProductId && req.body?.syncAfter !== false) {
+    // reorderOnly must not run that sync: it rewrites description, tags, price, and
+    // name, and the listing path can call OpenAI.
+    if (result?.ok && result?.shopifyProductId && req.body?.syncAfter !== false && !reorderOnly) {
       result.syncTriggered = true;
       suppressWebhookSyncForProduct(result.shopifyProductId, INTAKE_WRITE_WEBHOOK_SUPPRESS_MS);
       void runWebhookSingleProductSyncCoalesced(result.shopifyProductId, "/intake-images/reorder").catch(

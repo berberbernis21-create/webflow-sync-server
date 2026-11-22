@@ -3,11 +3,15 @@ import assert from "node:assert/strict";
 import sharp from "sharp";
 import {
   classifyShopifyBodyForIntake,
+  extractShopifyListingFacts,
+  appendIntakeNotesToDescription,
   composeShopifyBodyHtml,
   deriveListingSeoFields,
   formatShopifyDimsLine,
   hammingDistance64,
   imageAverageHash,
+  pairIntakePhotosToShopifyMedia,
+  planShopifyMediaMoves,
   isCustomerConditionListingNote,
   isDimsOnlyListingText,
   isInternalOpsListingNote,
@@ -140,6 +144,50 @@ test("stripListingDimJunk removes Measured + mid-copy measuring + old footers", 
   assert.equal(/40 H x 65 W/i.test(cleaned), false);
 });
 
+test("woven size sentence is not repeated under Dimensions", () => {
+  const prose =
+    'Original 1938 "Naked Birches" oil-on-canvas landscape painting in a natural wood frame, featuring a birch grove. Overall size is about 27.5 wide x 1.5 deep x 41.5 high.';
+  const cleaned = stripListingDimJunk(prose);
+  assert.match(cleaned, /Naked Birches/i);
+  assert.equal(/27\.5 wide/i.test(cleaned), false);
+  assert.equal(/1\.5 deep/i.test(cleaned), false);
+  assert.equal(/41\.5 high/i.test(cleaned), false);
+  const html = composeShopifyBodyHtml(prose, {
+    width: 27.5,
+    depth: 1.5,
+    height: 41.5,
+    weightLbs: 15,
+  });
+  assert.match(html, /birch grove/i);
+  assert.equal(/27\.5 wide/i.test(html), false);
+  assert.equal(/1\.5 deep/i.test(html), false);
+  assert.equal(/41\.5 high/i.test(html), false);
+  assert.equal((html.match(/Dimensions:/gi) || []).length, 1);
+  assert.match(html, /Width: 27\.5&quot;/);
+  assert.match(html, /Depth: 1\.5&quot;/);
+  assert.match(html, /Height: 41\.5&quot;/);
+  assert.match(html, /Weight: 15 lb/);
+  const extendsHtml = composeShopifyBodyHtml(
+    "This dining table extends to 77 inches. Overall size is about 36 wide x 18 deep x 30 high.",
+    { width: 36, depth: 18, height: 30, weightLbs: 40 }
+  );
+  assert.match(extendsHtml, /extends to 77 inches/i);
+  assert.equal(/36 wide/i.test(extendsHtml), false);
+  assert.equal((extendsHtml.match(/Dimensions:/gi) || []).length, 1);
+});
+
+test("description without a size sentence still gets one Dimensions footer", () => {
+  const html = composeShopifyBodyHtml(
+    "This vintage wood box has a small drawer and warm patina for a console or bookshelf.",
+    { width: 10, depth: 8, height: 3.5, weightLbs: 8 }
+  );
+  assert.match(html, /vintage wood box/i);
+  assert.equal(/wide x/i.test(html), false);
+  assert.equal((html.match(/Dimensions:/gi) || []).length, 1);
+  assert.match(html, /Width: 10&quot;/);
+  assert.match(html, /Weight: 8 lb/);
+});
+
 test("formatShopifyDimsLine puts Weight under Dimensions", () => {
   const line = formatShopifyDimsLine({ width: 16, depth: 13, height: 25, weightLbs: 13 });
   assert.equal(
@@ -175,6 +223,66 @@ test("warehouse Shopify notes are internal ops; damage notes are customer condit
   const empty = classifyShopifyBodyForIntake("", helper);
   assert.equal(empty.kind, "empty");
   assert.equal(empty.restoreListing, true);
+
+  const leaked =
+    "Scratches. Angel on chariot painting wall art in a classic figurative style " +
+    "with a warm-toned palette. This framed artwork is designed to hang on the wall " +
+    "and works well as a focal piece in a living room, bedroom, or office. " +
+    "AEO: This is a framed wall painting meant for vertical display.";
+  const listed = classifyShopifyBodyForIntake(leaked, helper);
+  assert.equal(listed.applyNotes, false);
+  assert.equal(listed.applyDescription, false);
+});
+
+test("Shopify description payload keeps marketing copy and writes the flaw as a sentence", () => {
+  const marketing =
+    'Original 1938 "Naked Birches" oil-on-canvas landscape painting with birch trees and a wood frame.';
+  const note = "Frame coming a little apart in top right";
+  const sentence = "The frame is coming a little apart at the top right.";
+  const shipping =
+    "Pickup is available in Scottsdale, and we offer both local and nationwide delivery.";
+  const prose = appendIntakeNotesToDescription(marketing, note);
+  assert.match(prose, /oil-on-canvas landscape painting/);
+  assert.match(prose, /The frame is coming a little apart at the top right/);
+  assert.equal(prose.includes(note), false);
+  assert.equal(prose.includes("AS IS"), false);
+  assert.ok(prose.indexOf("oil-on-canvas") < prose.indexOf(sentence));
+  assert.ok(prose.indexOf(sentence) < prose.indexOf(shipping));
+  assert.equal(prose.split(shipping).length - 1, 1);
+  assert.equal(appendIntakeNotesToDescription(prose, note), prose);
+  const labeled = appendIntakeNotesToDescription(
+    "Angel on chariot painting in a warm palette. AEO: This is a framed painting of an angel riding a chariot. Condition note: scratches are present.",
+    ""
+  );
+  assert.equal(labeled.includes("AEO"), false);
+  assert.equal(labeled.includes("Condition note"), false);
+  assert.match(labeled, /This is a framed painting of an angel riding a chariot/);
+  assert.match(labeled, /Scratches are present/);
+  const html = composeShopifyBodyHtml(prose, {
+    width: 27.5,
+    depth: 1.5,
+    height: 41.5,
+    weightLbs: 15,
+  });
+  assert.match(html, /The frame is coming a little apart at the top right/);
+  assert.match(html, /Dimensions:/);
+  assert.ok(html.indexOf("The frame is coming a little apart") < html.indexOf("Dimensions:"));
+  assert.ok(html.indexOf(shipping) < html.indexOf("Dimensions:"));
+  const spill = appendIntakeNotesToDescription(marketing, "Measured Height=41.5 Width=27.5");
+  assert.equal(spill.includes("Measured"), false);
+  assert.equal(spill.includes("Width=27.5"), false);
+  assert.ok(spill.includes(shipping));
+  assert.equal(spill.includes(sentence), false);
+  const warehouse = appendIntakeNotesToDescription(marketing, "In the warehouse");
+  assert.equal(/warehouse/i.test(warehouse), false);
+  assert.ok(warehouse.includes(shipping));
+  const price = appendIntakeNotesToDescription(marketing, "Customer said the price was $500");
+  assert.equal(/price/i.test(price), false);
+  assert.equal(price.includes("$500"), false);
+  assert.equal(price.includes("500"), false);
+  const brand = appendIntakeNotesToDescription(marketing, "Brand is Everything Teak");
+  assert.equal(/brand is/i.test(brand), false);
+  assert.equal(/teak/i.test(brand), false);
 });
 
 test("composeShopifyBodyHtml never returns dims-only or weight-only", () => {
@@ -201,9 +309,12 @@ test("deriveListingSeoFields builds SEO title/meta plus AEO/GEO", () => {
     dims: { width: 13, depth: 13, height: 16, weightLbs: 12 },
   });
   assert.match(fields.seoTitle, /Tuscany Fortunata/i);
+  assert.equal(/13X13X16/i.test(fields.seoTitle), false);
   assert.ok(fields.seoDescription.length <= 160);
   assert.match(fields.aeoDescription, /pitcher|pottery|glazed/i);
-  assert.match(fields.geoDescription, /Tuscany Fortunata|Accessories|Dimensions/i);
+  assert.match(fields.geoDescription, /Tuscany Fortunata/i);
+  assert.match(fields.geoDescription, /Scottsdale/i);
+  assert.equal(/\b(?:AEO|GEO|SEO)\s*:/i.test(fields.geoDescription), false);
 });
 
 test("resolveIntakeShopifyTaxonomy prefers Website Categories Bedroom over Traxia BED/Accessories", () => {
@@ -289,8 +400,8 @@ test("composeShopifyBodyHtml strips prior footers then appends one clean block",
   assert.equal(tags.includes("X"), false);
   assert.equal(tags.some((t) => /^Accessories$/i.test(t)), false);
   assert.equal(tags.some((t) => /^Furniture & Home$/i.test(t)), false);
-  assert.ok(tags.includes("Used"));
-  assert.ok(tags.includes("ACTIVE"));
+  assert.equal(tags.includes("Used"), false);
+  assert.equal(tags.includes("ACTIVE"), false);
   assert.ok(tags.includes("stressless-loveseat"));
   assert.ok(tags.includes("Width: 16"));
   assert.ok(tags.includes("Depth: 13"));
@@ -298,6 +409,38 @@ test("composeShopifyBodyHtml strips prior footers then appends one clean block",
   assert.ok(tags.includes("Weight: 13"));
   assert.equal(tags.some((t) => /^Width:\s*40$/i.test(t)), false);
   assert.equal(tags.some((t) => /^Height:\s*120$/i.test(t)), false);
+});
+
+test("extractShopifyListingFacts ignores zero defaults and reads real tags", () => {
+  const facts = extractShopifyListingFacts({
+    tags: "Used, ACTIVE, Location: The Lost & Found, ART - PAINTING, Width: 0, Height: 41.5, Depth: 1.5, Weight: 15",
+    variants: [{ price: "125.00", weight: 0, grams: 0, weight_unit: "lb" }],
+  });
+  assert.equal(facts.width, null);
+  assert.equal(facts.height, 41.5);
+  assert.equal(facts.depth, 1.5);
+  assert.equal(facts.weightLbs, 15);
+  const fromGrams = extractShopifyListingFacts({
+    tags: "Width: 27.5",
+    variants: [{ grams: 6804, weight: 0, weight_unit: "lb" }],
+  });
+  assert.equal(fromGrams.width, 27.5);
+  assert.ok(Math.abs(fromGrams.weightLbs - 15) < 0.05);
+});
+
+test("Traxia updated staff note stays out of the Shopify description", () => {
+  const marketing =
+    'Original 1938 "Naked Birches" oil-on-canvas landscape painting in a natural wood frame.';
+  const prose = appendIntakeNotesToDescription(
+    marketing,
+    "[2026-11-21 22:50 UTC] Traxia updated price to $125\n[2026-11-21 22:50 UTC] Traxia updated dimensions to 27.5 x 1.5 x 41.5, weight 15 lb",
+    "Scratches"
+  );
+  assert.match(prose, /Naked Birches/);
+  assert.match(prose, /scratches/i);
+  assert.equal(/Traxia updated/i.test(prose), false);
+  assert.equal(/\$125/.test(prose), false);
+  assert.equal(/27\.5 x 1\.5/.test(prose), false);
 });
 
 test("shopify title poll defaults to ~2.5s steady cadence (cap ~3s)", () => {
@@ -326,4 +469,38 @@ test("shopify title poll defaults to ~2.5s steady cadence (cap ~3s)", () => {
     if (prevMax == null) delete process.env.SHOPIFY_TITLE_POLL_MAX_DELAY_MS;
     else process.env.SHOPIFY_TITLE_POLL_MAX_DELAY_MS = prevMax;
   }
+});
+
+test("planShopifyMediaMoves reorders in one sequential move list", () => {
+  const rotated = planShopifyMediaMoves(["a", "b", "c"], ["c", "a", "b"]);
+  assert.deepEqual(rotated.order, ["c", "a", "b"]);
+  assert.deepEqual(rotated.moves, [{ id: "c", newPosition: "0" }]);
+
+  const reversed = planShopifyMediaMoves(["a", "b", "c"], ["c", "b", "a"]);
+  assert.deepEqual(reversed.order, ["c", "b", "a"]);
+  assert.equal(reversed.moves.length >= 1, true);
+
+  const already = planShopifyMediaMoves(["a", "b"], ["a", "b"]);
+  assert.deepEqual(already.moves, []);
+  assert.deepEqual(already.order, ["a", "b"]);
+});
+
+test("pairIntakePhotosToShopifyMedia reorders existing images and skips distant extras", () => {
+  const swapped = pairIntakePhotosToShopifyMedia([0n, 7n], [7n, 0n], {
+    fullSet: false,
+    maxHamming: 12,
+  });
+  assert.deepEqual(swapped, [1, 0]);
+
+  const distant = pairIntakePhotosToShopifyMedia([0n], [(1n << 40n) - 1n], {
+    fullSet: false,
+    maxHamming: 12,
+  });
+  assert.deepEqual(distant, [null]);
+
+  const sameCount = pairIntakePhotosToShopifyMedia([0n], [(1n << 40n) - 1n], {
+    fullSet: true,
+    maxHamming: 12,
+  });
+  assert.deepEqual(sameCount, [0]);
 });
