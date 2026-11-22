@@ -171,6 +171,10 @@ test("warehouse Shopify notes are internal ops; damage notes are customer condit
   assert.equal(cond.applyDescription, false);
   assert.equal(cond.applyNotes, true);
   assert.equal(cond.restoreListing, true);
+
+  const empty = classifyShopifyBodyForIntake("", helper);
+  assert.equal(empty.kind, "empty");
+  assert.equal(empty.restoreListing, true);
 });
 
 test("composeShopifyBodyHtml never returns dims-only or weight-only", () => {
