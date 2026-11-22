@@ -33,7 +33,7 @@ Listing / taxonomy: Pricing Engine **POST `/intake-images/listing-update`** (als
 | --- | --- | --- |
 | Traxia push / confirm (item has **name**) | Intake ← Helper AI, then Intake → Shopify | Auto-fills Intake **DESCRIPTION** + full **ecommerceTags**; derives Business Vertical / Website Categories from tag codes (`FH`→Furniture/Home, `A`→Art/Mirrors, …); one coalesced `/intake-images/listing-update` |
 | Intake PATCH (name, price, dims, notes, tags, …) | Intake → Shopify | Debounced (~2.5s) full listing-update; Helper prose redone; dims footer; tags; price in same PUT |
-| Shopify `products/create` + `products/update` webhooks | Shopify → Intake, then Intake → Shopify | Mirror **title→name**, **variant price→retailPrice**, **SKU→traxiaSku**, **product id**; Intake then queues one coalesced full listing-update so a Traxia price sync cannot leave Shopify wiped |
+| Shopify `products/create` + `products/update` webhooks | Shopify → Intake, then Intake → Shopify | Mirror **title→name**, **variant price→retailPrice**, **SKU→traxiaSku**, **product id**; Shopify **Description** is filtered — warehouse/ops notes (e.g. `Box In Warehouse…`) are **ignored** and Intake Helper prose is re-pushed on the coalesced listing-update; customer damage/condition notes may land in Extra/notes. Name/price/SKU mirror still always OK; debounce prevents hammering |
 | Intake photos add/reorder | Intake → Shopify | Photo append / reorder; listing copy kept in the same overall flow (no Traxia gallery) |
 
 **Webhook endpoints (sync-server):** `POST /webhook/products`, `POST /webhook/products/update` (HMAC). Debounced (~3.5s) into one sync per product. Traxia extension does **not** write e-com description/tags into Traxia UI — Intake holds copy; Shopify gets it from Lost & Found.
