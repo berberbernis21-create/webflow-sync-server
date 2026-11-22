@@ -14939,6 +14939,8 @@ app.post("/intake-images/ensure-by-name", async (req, res) => {
   );
   const runAsync = req.body?.async === true || req.body?.background === true;
   const syncAfter = req.body?.syncAfter !== false;
+  const skipListingUpdate =
+    req.body?.skipListingUpdate === true || req.body?.skip_listing_update === true;
   const hasCallerUrls = Array.isArray(imageUrls) && imageUrls.some((u) => String(u || "").trim());
   if (!name) {
     return res.status(400).json({ ok: false, error: "name is required (full item name)" });
@@ -14964,6 +14966,7 @@ app.post("/intake-images/ensure-by-name", async (req, res) => {
       imageUrls,
       maxWaitMs,
       intervalMs,
+      skipListingUpdate,
     });
     // After images land, continue Webflow / Google via the normal single-product path.
     if (
