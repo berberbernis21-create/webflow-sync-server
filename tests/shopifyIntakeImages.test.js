@@ -55,6 +55,11 @@ import {
   planSettledCleanliness,
   planSaveSync,
   shopifyProductFieldsFromPatch,
+  planLiveFlawSync,
+  readLiveTraxiaExtra,
+  skuRemoteImageUrls,
+  skuFieldDataWithReadyImages,
+  shopifyCdnImageIsReady,
 } from "../lib/shopifyIntakeImages.js";
 import {
   planShopifyCallTimes,
@@ -595,6 +600,83 @@ test("pairIntakePhotosToShopifyMedia reorders existing images and skips distant 
     maxHamming: 12,
   });
   assert.deepEqual(sameCount, [0]);
+});
+
+test("a cleared Traxia note rewrites the body and a live note keeps one sentence", () => {
+  const marketing =
+    'Original 1938 "Naked Birches" oil-on-canvas landscape painting in a warm-toned wood frame for rustic interiors.';
+  const withNote = planLiveFlawSync({
+    shopifyBody: marketing,
+    liveNote: "SMALLT CRACK IN TOP RIGHT",
+    liveKnown: true,
+    storedCondition: "",
+  });
+  assert.match(withNote.prose, /There is a small crack in the top right\./);
+  assert.equal(withNote.prose.includes("SMALLT"), false);
+  assert.equal(withNote.prose.includes("AS IS:"), false);
+
+  const stillThere = planLiveFlawSync({
+    shopifyBody: withNote.prose,
+    liveNote: "SMALLT CRACK IN TOP RIGHT",
+    liveKnown: true,
+    storedCondition: "SMALLT CRACK IN TOP RIGHT",
+  });
+  assert.equal(stillThere.flawMissing, false);
+  assert.equal(stillThere.bodyHtml, "");
+
+  const cleared = planLiveFlawSync({
+    shopifyBody: withNote.prose,
+    liveNote: "",
+    liveKnown: true,
+    storedCondition: "SMALLT CRACK IN TOP RIGHT",
+  });
+  assert.equal(cleared.flawMissing, true);
+  assert.equal(cleared.condition, "");
+  assert.match(cleared.bodyHtml, /rustic interiors/);
+  assert.equal(/crack/i.test(cleared.bodyHtml), false);
+  assert.equal(cleared.bodyHtml.includes("SMALLT"), false);
+  assert.equal(readLiveTraxiaExtra({ body_html: withNote.prose, tags: "FH, A" }).known, false);
+  assert.deepEqual(readLiveTraxiaExtra({ extraInformation: "" }), { known: true, text: "" });
+
+  const item = {
+    id: "b5c575f8-4472-42f7-b1f0-86c07bf15d6c",
+    name: 'Original 1938 "Naked Birches" Oil on Canvas Landscape Painting - 27.5 x 41.5H',
+    description: withNote.prose,
+    notes: "",
+    conditionIssues: "",
+    retailPrice: 349,
+    shopifyProductId: "9824538460419",
+  };
+  const saved = planSaveSync({ conditionIssues: { from: "SMALLT CRACK IN TOP RIGHT", to: "" } }, item);
+  assert.equal(saved.sync, true);
+  assert.equal(saved.payload.clearedNote, true);
+  assert.equal(saved.payload.conditionIssues, "");
+  assert.equal(/crack/i.test(saved.payload.description), false);
+  assert.equal(saved.payload.price, undefined);
+  assert.equal(saved.payload.retailPrice, undefined);
+});
+
+test("a Shopify image is included only after it answers, and a retry can use the new URL", () => {
+  const stale = "https://cdn.shopify.com/s/files/1/intake_old.jpg";
+  const fresh = "https://cdn.shopify.com/s/files/1/intake_new.jpg";
+  const fieldData = {
+    name: "Naked Birches",
+    price: { value: 34900 },
+    "main-image": { url: stale },
+    "more-images": [{ url: fresh }],
+  };
+  assert.deepEqual(skuRemoteImageUrls(fieldData), [stale, fresh]);
+  const waiting = skuFieldDataWithReadyImages(fieldData, []);
+  assert.equal(waiting["main-image"], undefined);
+  assert.equal(waiting["more-images"], undefined);
+  assert.equal(waiting.price.value, 34900);
+  const ready = skuFieldDataWithReadyImages(fieldData, [fresh]);
+  assert.equal(ready["main-image"].url, fresh);
+  assert.equal(ready["more-images"], undefined);
+  const reread = skuFieldDataWithReadyImages(fieldData, [fresh], [fresh]);
+  assert.equal(reread["main-image"].url, fresh);
+  assert.equal(shopifyCdnImageIsReady(200), true);
+  assert.equal(shopifyCdnImageIsReady(404), false);
 });
 
 test("cleared Extra Information removes the old flaw sentence", () => {

@@ -95,6 +95,9 @@ import {
   shopifyStatusUnlinks,
   SHOPIFY_WEBHOOK_COALESCE_CEILING_MS,
   stripListingDimJunk,
+  skuRemoteImageUrls,
+  skuFieldDataWithReadyImages,
+  shopifyCdnImageIsReady,
 } from "./lib/shopifyIntakeImages.js";
 
 dotenv.config();
@@ -1517,6 +1520,24 @@ async function sendSkuImageImportFailureEmail({ siteId, productId, skuId, op, pr
   }
 }
 
+/** A just-uploaded Shopify file often 404s on the CDN for a moment. */
+async function shopifyCdnImagesReady(urls) {
+  const ready = [];
+  for (const url of urls || []) {
+    try {
+      const res = await axios.head(url, {
+        timeout: 8000,
+        maxRedirects: 3,
+        validateStatus: () => true,
+      });
+      if (shopifyCdnImageIsReady(res.status)) ready.push(url);
+    } catch (_err) {
+      /* not on the CDN yet */
+    }
+  }
+  return ready;
+}
+
 function webflowRetryDelayMs(err, attemptIndex) {
   const ra = err?.response?.headers;
   const raw = ra?.["retry-after"] ?? ra?.["Retry-After"];
@@ -2153,9 +2174,35 @@ async function updateWebflowEcommerceSku(siteId, productId, skuId, fieldData, to
   }
 
   let lastErr = null;
+  let imageFd = fullFd;
   for (let attempt = 1; attempt <= WEBFLOW_SKU_IMAGE_MAX_ATTEMPTS; attempt++) {
     try {
-      await axios.patch(url, { sku: { fieldData: fullFd } }, { headers: patchHeaders });
+      if (attempt > 1 && context.shopifyProduct?.id) {
+        const fresh = await fetchShopifyProductById(context.shopifyProduct.id);
+        const freshUrls = (fresh?.images || []).map((img) => img?.src).filter(Boolean);
+        if (freshUrls.length) imageFd = skuFieldDataWithReadyImages(fullFd, null, freshUrls);
+      }
+      const urls = skuRemoteImageUrls(imageFd);
+      let ready = await shopifyCdnImagesReady(urls);
+      if (ready.length < urls.length) {
+        await sleep(2000);
+        ready = await shopifyCdnImagesReady(urls);
+      }
+      // A file that just landed on Shopify 404s for a moment. Wait and re-read
+      // the product before sending that URL to Webflow. On the last try, send
+      // only the URLs that answered so a 400 does not fail the whole SKU.
+      if (ready.length < urls.length && attempt < WEBFLOW_SKU_IMAGE_MAX_ATTEMPTS) {
+        webflowLog("info", {
+          event: "sku.patch.image_not_ready",
+          productId,
+          skuId,
+          attempt,
+          waiting: urls.length - ready.length,
+        });
+        continue;
+      }
+      const payloadFd = skuFieldDataWithReadyImages(imageFd, ready);
+      await axios.patch(url, { sku: { fieldData: payloadFd } }, { headers: patchHeaders });
       return;
     } catch (err) {
       lastErr = err;
