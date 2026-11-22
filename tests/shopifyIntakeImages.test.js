@@ -53,6 +53,8 @@ import {
   convergeShopifyEvents,
   resolveQueuedListingJob,
   planSettledCleanliness,
+  planSaveSync,
+  shopifyProductFieldsFromPatch,
 } from "../lib/shopifyIntakeImages.js";
 import {
   planShopifyCallTimes,
@@ -874,9 +876,19 @@ const NAKED_CLEAN =
 const NAKED_CURRENT =
   'Original 1938 "Naked Birches" Oil on Canvas Landscape Painting - 27.5 x 41.5H';
 
-test("title formatter collapses the doubled suffix and stays idempotent", () => {
-  assert.equal(refreshTitleDimensions(NAKED_BAD, { width: 27.5, depth: 1.5, height: 41.5 }), NAKED_CLEAN);
+const NAKED_TRUTH =
+  'Original 1938 "Naked Birches" Oil on Canvas Landscape Painting - 27.5 x 41.5H Bernis Test';
+const NAKED_KEPT =
+  'Original 1938 "Naked Birches" Oil on Canvas Landscape Painting - 27.5 x 41.5H BERNIS TEST (delete this part of name if you see it in store)';
+
+test("sync keeps the latest name and only updates suffix numbers", () => {
+  assert.equal(refreshTitleDimensions(NAKED_BAD, { width: 27.5, depth: 1.5, height: 41.5 }), NAKED_KEPT);
+  assert.equal(refreshTitleDimensions(NAKED_TRUTH, { width: 27.5, depth: 1.5, height: 41.5 }), NAKED_TRUTH);
   assert.equal(refreshTitleDimensions(NAKED_CLEAN, { width: 27.5, depth: 1.5, height: 41.5 }), NAKED_CLEAN);
+  assert.equal(
+    refreshTitleDimensions(NAKED_TRUTH, { width: 30, depth: 1.5, height: 42 }),
+    'Original 1938 "Naked Birches" Oil on Canvas Landscape Painting - 30 x 42H Bernis Test'
+  );
 });
 
 test("older webhook and echo do not replace the newest title", () => {
@@ -937,4 +949,44 @@ test("a dirty settled listing schedules one rebuild and a clean one does not", (
     planSettledCleanliness({ title: NAKED_CLEAN, body: longBody, note: "we are perfect", tags: "FH, A" }).action,
     "none"
   );
+  assert.equal(
+    planSettledCleanliness({ title: NAKED_TRUTH, body: longBody, note: "we are perfect", tags: "FH, A" }).action,
+    "none"
+  );
+});
+
+test("a name-only save sends the name and an unchanged save sends nothing", () => {
+  const item = {
+    id: "b5c575f8-4472-42f7-b1f0-86c07bf15d6c",
+    name: NAKED_TRUTH,
+    description: "This piece is in excellent condition. Pickup is available in Scottsdale.",
+    notes: "",
+    retailPrice: 349,
+    dimWidth: 27.5,
+    dimDepth: 1.5,
+    dimHeight: 41.5,
+    shopifyProductId: "9824538460419",
+  };
+  const named = planSaveSync({ name: { from: "old", to: NAKED_TRUTH } }, item);
+  assert.equal(named.sync, true);
+  assert.equal(named.payload.name, NAKED_TRUTH);
+  assert.equal(named.payload.nameOnly, true);
+  assert.equal(named.payload.description, undefined);
+  assert.equal(named.payload.dims, undefined);
+  assert.equal(named.payload.images, undefined);
+  assert.equal(named.payload.bodyHtml, undefined);
+  assert.equal(named.payload.price, undefined);
+  const fields = shopifyProductFieldsFromPatch({ title: named.payload.name, nameOnly: true, bodyHtml: "", images: ["x"] });
+  assert.deepEqual(fields, { title: NAKED_TRUTH });
+  assert.equal(fields.body_html, undefined);
+  assert.equal(fields.images, undefined);
+  const quiet = planSaveSync({}, item);
+  assert.equal(quiet.sync, false);
+  assert.equal(quiet.payload, null);
+  assert.equal(planSaveSync({ _context: { source: "item-autosave" } }, item).sync, false);
+  const written = resolveQueuedListingJob({ syncFields: ["name"], queuedAt: "2026-11-22T17:00:00Z" }, item);
+  assert.equal(written.action, "write");
+  assert.equal(written.payload.nameOnly, true);
+  assert.equal(written.payload.description, undefined);
+  assert.equal(written.payload.dims, undefined);
 });
