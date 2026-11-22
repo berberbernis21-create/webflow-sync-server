@@ -8841,11 +8841,14 @@ async function syncSingleProductCore(product, cache, options = {}) {
     const dimStr = formatDimensionsForDescription(dimensions);
     if (dimStr) {
       const body = stripAppendedSyncFooter(description || "").trim();
-      const newDescription = (body + "<br><br>" + dimStr).trim();
-
-      if (newDescription !== originalDescription) {
-        description = newDescription;
-        descriptionChanged = true;
+      // Never write dims-only stubs — Helper prose must already be present.
+      // Empty body after strip means listing-update has not landed yet; leave body alone.
+      if (body) {
+        const newDescription = (body + "<br><br>" + dimStr).trim();
+        if (newDescription !== originalDescription) {
+          description = newDescription;
+          descriptionChanged = true;
+        }
       }
     }
   }

@@ -136,12 +136,14 @@ test("stripListingDimJunk removes Measured + mid-copy measuring + old footers", 
   assert.equal(/40 H x 65 W/i.test(cleaned), false);
 });
 
-test("formatShopifyDimsLine is one Dimensions + Weight block", () => {
+test("formatShopifyDimsLine puts Weight under Dimensions", () => {
   const line = formatShopifyDimsLine({ width: 16, depth: 13, height: 25, weightLbs: 13 });
   assert.equal(
     line,
-    'Dimensions: Width: 16" × Depth: 13" × Height: 25". Weight: 13 lb.'
+    'Dimensions: Width: 16" × Depth: 13" × Height: 25".\nWeight: 13 lb.'
   );
+  assert.equal(formatShopifyDimsLine({ width: 65.0, depth: 29.0, height: 40.0, weightLbs: 29.0 }),
+    'Dimensions: Width: 65" × Depth: 29" × Height: 40".\nWeight: 29 lb.');
 });
 
 
@@ -182,14 +184,24 @@ test("composeShopifyBodyHtml strips prior footers then appends one clean block",
   assert.match(html, /red glazed pottery pitcher/i);
   assert.equal(/Measuring 16 H/i.test(html), false);
   assert.equal((html.match(/Dimensions:/gi) || []).length, 1);
-  assert.match(html, /Dimensions: Width: 16&quot; × Depth: 13&quot; × Height: 25&quot;\. Weight: 13 lb\./);
+  assert.match(html, /Dimensions: Width: 16&quot; × Depth: 13&quot; × Height: 25&quot;\./);
+  assert.match(html, /Weight: 13 lb\./);
+  assert.equal(/Dimensions:[\s\S]*Weight:/i.test(html.replace(/<br\s*\/?>/gi, "\n")), true);
   const tags = mergeShopifyListingTags({
-    existingTags: ["Width: 40", "Height: 120", "Depth: 65", "Used", "ACTIVE"],
-    ecommerceTags: ["FH", "B", "X", "Bedroom"],
+    existingTags: ["Width: 40", "Height: 120", "Depth: 65", "Used", "ACTIVE", "X", "Accessories", "Furniture & Home"],
+    ecommerceTags: ["stressless-loveseat", "paloma-leather"],
     merchType: "furniture",
-    websiteCategory: "Bedroom",
+    websiteCategory: "Living Room",
     dims: { width: 16, depth: 13, height: 25, weightLbs: 13 },
   });
+  assert.ok(tags.includes("FH"));
+  assert.ok(tags.includes("L"));
+  assert.equal(tags.includes("X"), false);
+  assert.equal(tags.some((t) => /^Accessories$/i.test(t)), false);
+  assert.equal(tags.some((t) => /^Furniture & Home$/i.test(t)), false);
+  assert.ok(tags.includes("Used"));
+  assert.ok(tags.includes("ACTIVE"));
+  assert.ok(tags.includes("stressless-loveseat"));
   assert.ok(tags.includes("Width: 16"));
   assert.ok(tags.includes("Depth: 13"));
   assert.ok(tags.includes("Height: 25"));
