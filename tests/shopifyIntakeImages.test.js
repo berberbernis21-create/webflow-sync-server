@@ -46,6 +46,9 @@ import {
   planShopifyRelink,
   planManualShopifyLink,
   gallerySyncOutcome,
+  galleryImagesToDelete,
+  intakePhotosShouldUpload,
+  listingProductOmitsImages,
   scheduleGalleryRetry,
   setGalleryRetryHandler,
   syncWebhookFactsToIntake,
@@ -654,6 +657,63 @@ test("a cleared Traxia note rewrites the body and a live note keeps one sentence
   assert.equal(/crack/i.test(saved.payload.description), false);
   assert.equal(saved.payload.price, undefined);
   assert.equal(saved.payload.retailPrice, undefined);
+});
+
+test("a blank note drops stacked condition sentences and a test note adds none", () => {
+  const marketing =
+    'Original 1938 "Naked Birches" oil-on-canvas landscape painting in a warm-toned wood frame for rustic interiors.';
+  const stacked =
+    `${marketing} There is a small crack in the top right. This piece is in excellent condition. ` +
+    "There is a small scratch in the top right. Pickup is available in Scottsdale, Arizona.";
+  const blank = appendIntakeNotesToDescription(stacked, "", "", {
+    name: "Naked Birches",
+    category: "ART - PAINTING",
+  });
+  assert.match(blank, /rustic interiors/);
+  assert.equal(/\bcrack\b/i.test(blank), false);
+  assert.equal(/\bscratch\b/i.test(blank), false);
+  assert.equal(/excellent condition/i.test(blank), false);
+  const junk = appendIntakeNotesToDescription(marketing, "TEST TEST TEST", "TEST TEST TEST", {
+    name: "Naked Birches",
+    category: "ART - PAINTING",
+  });
+  assert.equal(/\btest\b/i.test(junk), false);
+  assert.match(junk, /rustic interiors/);
+  const scratch = appendIntakeNotesToDescription(stacked, "", "small scratch in top right", {
+    name: "Naked Birches",
+    category: "ART - PAINTING",
+  });
+  assert.equal((scratch.match(/there is a small/gi) || []).length, 1);
+  assert.match(scratch, /There is a small scratch in the top right\./);
+  assert.equal(/\bcrack\b/i.test(scratch), false);
+  assert.equal(/excellent condition/i.test(scratch), false);
+});
+
+test("empty shopify media uploads intake photos and a listing write never deletes images", () => {
+  assert.equal(intakePhotosShouldUpload({ images: [] }, 8), true);
+  assert.equal(intakePhotosShouldUpload({ id: 1 }, 8), true);
+  assert.equal(
+    intakePhotosShouldUpload({ images: [{ id: 1, src: "https://cdn.shopify.com/a.jpg" }] }, 8),
+    false
+  );
+  assert.equal(intakePhotosShouldUpload({ images: [] }, 0), false);
+  const unknown = { img: { id: 1 }, hash: null, used: false };
+  assert.deepEqual(galleryImagesToDelete([unknown], { uploaded: 0, moved: 0 }), []);
+  const orphan = { img: { id: 2 }, hash: "abc", used: false };
+  assert.deepEqual(galleryImagesToDelete([orphan], { uploaded: 0, moved: 0 }), []);
+  assert.deepEqual(
+    galleryImagesToDelete(
+      [orphan, { img: { id: 3 }, hash: "def", used: true }],
+      { uploaded: 0, moved: 1 }
+    ),
+    [orphan]
+  );
+  const put = listingProductOmitsImages({ id: 9, body_html: "<p>Hi</p>", images: [] });
+  assert.equal(Object.prototype.hasOwnProperty.call(put, "images"), false);
+  assert.equal(put.body_html, "<p>Hi</p>");
+  const fields = shopifyProductFieldsFromPatch({ bodyHtml: "<p>Hi</p>", images: [] });
+  assert.equal(fields.images, undefined);
+  assert.equal(fields.body_html, "<p>Hi</p>");
 });
 
 test("a Shopify image is included only after it answers, and a retry can use the new URL", () => {
