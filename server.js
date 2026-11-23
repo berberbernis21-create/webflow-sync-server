@@ -6429,7 +6429,7 @@ async function findExistingWebflowItemByShopifyUrl(config, shopifyUrl) {
 }
 
 /** Slug-only CMS lookup (index + live pagination). Used when shopify-product-id is missing on the Webflow row. */
-async function findExistingWebflowItemBySlug(config, slug) {
+async function findExistingWebflowItemBySlug(config, slug, { forceLiveScan = false } = {}) {
   if (!config?.collectionId || !config?.token) return null;
   const slugNorm = slug ? String(slug).trim() : null;
   if (!slugNorm) return null;
@@ -6445,7 +6445,9 @@ async function findExistingWebflowItemBySlug(config, slug) {
     });
     return hit;
   }
-  if (itemIndex?.complete) {
+  // Stale "complete" indexes miss freshly created Handbags rows — always live-scan on
+  // duplicate-slug recovery (forceLiveScan), otherwise we 400 forever.
+  if (itemIndex?.complete && !forceLiveScan) {
     webflowLog("info", {
       event: "match_scan.slug_index_miss",
       slug: slugNorm,
@@ -10622,11 +10624,18 @@ async function createOrLinkLuxuryCmsItem({
       lastErr = err;
       if (isWebflowDuplicateSlugError(err)) {
         const existing =
-          (await findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, config)) ||
-          (await findExistingWebflowItemBySlug(config, slug));
+          (await findExistingWebflowItemBySlug(config, slug, { forceLiveScan: true })) ||
+          (await findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, config));
         if (existing?.id) {
           return linkExisting(existing, "duplicate_slug");
         }
+        webflowLog("error", {
+          event: "create.cms.duplicate_slug_unresolved",
+          shopifyProductId,
+          productTitle,
+          slug,
+          message: "Webflow says slug exists but live slug scan found nothing",
+        });
       }
       if (isWebflowRemoteAssetImportError(err) && attempt < 2) {
         webflowLog("warn", {
