@@ -62,6 +62,8 @@ import {
   planLiveFlawSync,
   readLiveTraxiaExtra,
   settleBuyerListingCopy,
+  stripInventedMakers,
+  stripMakerTags,
   skuRemoteImageUrls,
   skuFieldDataWithReadyImages,
   shopifyCdnImageIsReady,
@@ -1261,4 +1263,52 @@ test("weight and dimensions update the footer and the matching tags together", (
   assert.equal(weight.payload.allowOpenAi, false);
   assert.equal(weight.payload.price, undefined);
   assert.equal(weight.payload.name, title);
+});
+
+test("an empty brand clears an invented maker and a set brand may keep it", () => {
+  const junkTitle = "Nightstand - TEST TEST Bernis";
+  const generated =
+    "Bernis nightstand in wood with a clean, modern silhouette for bedroom styling. " +
+    "This is a compact bedside table with a flat top for a lamp and a lower storage area to keep nighttime essentials close. " +
+    "The design reads minimal and functional, with straight lines and a smooth finish. " +
+    "Use it beside the bed or in an entryway.";
+  const kept = settleBuyerListingCopy(generated, junkTitle, null, "");
+  assert.equal(/\bbernis\b/i.test(kept.description), false);
+  assert.equal(/\btest\b/i.test(kept.description), false);
+  const freshTags = stripMakerTags(
+    "FH, B, nightstand, bernis, bernis-nightstand-modern-wood-, test",
+    junkTitle,
+    "",
+    "CABINET",
+    generated
+  );
+  assert.equal(/\bbernis\b/i.test(freshTags), false);
+  assert.equal(/\btest\b/i.test(freshTags), false);
+  assert.match(freshTags, /nightstand/i);
+
+  const stored =
+    "Bernis nightstand in wood with a clean, modern silhouette for bedroom styling. " +
+    "This is a compact bedside table with a flat top for a lamp and a lower storage area.";
+  const current = "Modern Black 3-Drawer Nightstand";
+  const healed = stripInventedMakers(stored, current, "");
+  assert.equal(/\bbernis\b/i.test(healed), false);
+  assert.match(healed, /modern black 3-drawer nightstand/i);
+  const healedTags = stripMakerTags(
+    "FH, B, nightstand, bernis, bernis-nightstand-modern-wood-",
+    current,
+    "",
+    "CABINET",
+    stored
+  );
+  assert.equal(/\bbernis\b/i.test(healedTags), false);
+  assert.match(healedTags, /FH/);
+  assert.match(healedTags, /nightstand/i);
+  const published = appendIntakeNotesToDescription(stored, "", "", { name: current, brand: "" });
+  assert.equal(/\bbernis\b/i.test(published), false);
+  assert.match(published, /modern black 3-drawer nightstand/i);
+
+  const branded = stripInventedMakers(stored, current, "Bernis");
+  assert.match(branded, /\bbernis\b/i);
+  const brandedTags = stripMakerTags("FH, B, nightstand, bernis", current, "Bernis", "CABINET", stored);
+  assert.match(brandedTags, /\bbernis\b/i);
 });
