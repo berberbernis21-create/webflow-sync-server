@@ -60,6 +60,7 @@ import {
   shopifyProductFieldsFromPatch,
   planLiveFlawSync,
   readLiveTraxiaExtra,
+  settleBuyerListingCopy,
   skuRemoteImageUrls,
   skuFieldDataWithReadyImages,
   shopifyCdnImageIsReady,
@@ -1131,4 +1132,69 @@ test("a name-only save sends the name and an unchanged save sends nothing", () =
   assert.equal(written.payload.nameOnly, true);
   assert.equal(written.payload.description, undefined);
   assert.equal(written.payload.dims, undefined);
+});
+
+test("hello and no scratch remove a baked scratch sentence", () => {
+  const marketing =
+    'Original 1938 "Naked Birches" oil-on-canvas landscape painting in a warm-toned wood frame for rustic interiors.';
+  const polluted =
+    `${marketing} There is a small scratch in the top right. Pickup is available in Scottsdale, Arizona.`;
+  const hello = planLiveFlawSync({
+    shopifyBody: polluted,
+    liveNote: "hello",
+    liveKnown: true,
+    storedCondition: "small scratch in top right",
+  });
+  assert.equal(hello.flawMissing, true);
+  assert.equal(/\bscratch\b/i.test(hello.prose), false);
+  assert.equal(/\bhello\b/i.test(hello.prose), false);
+  assert.match(hello.prose, /rustic interiors/);
+  const negated = appendIntakeNotesToDescription(
+    polluted,
+    "no scratch",
+    "small scratch in top right",
+    { name: "Naked Birches", category: "ART - PAINTING" }
+  );
+  assert.equal(/\bscratch\b/i.test(negated), false);
+  assert.equal(/there is no/i.test(negated), false);
+  assert.equal(/as is/i.test(negated), false);
+  assert.match(negated, /rustic interiors/);
+  const real = appendIntakeNotesToDescription(polluted, "", "small scratch in top right", {
+    name: "Naked Birches",
+    category: "ART - PAINTING",
+  });
+  assert.equal((real.match(/there is a small/gi) || []).length, 1);
+});
+
+test("meta commentary and a test title do not name a maker", () => {
+  const title = "Nightstand - TEST TEST Bernis";
+  const generated =
+    "Bernis nightstand wood with a clean, modern silhouette for bedroom styling. " +
+    "This is a compact bedside table with a flat top for a lamp and a lower storage area to keep nighttime essentials close. " +
+    "The design reads minimal and functional, with straight lines and a smooth finish that lets the wood tone do the work. " +
+    "Use it beside the bed, as an end table in a living room, or as a small landing spot in an entryway. " +
+    "Maker attribution is based on the Bernis name provided; no additional maker marks or material details are stated here.";
+  const kept = settleBuyerListingCopy(generated, title);
+  assert.equal(kept.flagged, false);
+  assert.equal(kept.regenerated, false);
+  assert.equal(/\bbernis\b/i.test(kept.description), false);
+  assert.equal(/\btest\b/i.test(kept.description), false);
+  assert.equal(/based on/i.test(kept.description), false);
+  assert.equal(/stated/i.test(kept.description), false);
+  assert.match(kept.description, /bedside/);
+  let calls = 0;
+  const fallen = settleBuyerListingCopy(
+    "Maker attribution is based on the Bernis name provided; no additional maker marks or material details are stated here.",
+    title,
+    () => {
+      calls += 1;
+      return "Maker attribution is based on the Bernis name provided; no additional maker marks or material details are stated here.";
+    }
+  );
+  assert.equal(calls, 1);
+  assert.equal(fallen.flagged, true);
+  assert.equal(fallen.regenerated, true);
+  assert.equal(/\bbernis\b/i.test(fallen.description), false);
+  assert.equal(/\btest\b/i.test(fallen.description), false);
+  assert.match(fallen.description, /nightstand/i);
 });
