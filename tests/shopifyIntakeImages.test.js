@@ -29,6 +29,8 @@ import {
   isInternalOpsListingNote,
   formatShopifyErrorBody,
   mergeShopifyListingTags,
+  resolveMerchTypeFromFhLgTags,
+  resolveWebsiteCategoryFromFhLgTags,
   namesEqualFull,
   normalizeCallerImageUrls,
   normalizeFullItemName,
@@ -1467,6 +1469,55 @@ test("Luxury Goods tags are LG and the category code only", () => {
   assert.deepEqual(dining.slice(0, 2), ["FH", "D"]);
   assert.equal(dining.includes("X"), false);
   assert.equal(dining.includes("table"), true);
+});
+
+test("LG in ecommerce tags always wins over furniture merchType default", () => {
+  assert.equal(
+    resolveMerchTypeFromFhLgTags({
+      ecommerceTags: "LG, R, burberry-scarf",
+      merchType: "furniture",
+    }),
+    "luxury"
+  );
+  assert.equal(
+    resolveWebsiteCategoryFromFhLgTags({
+      ecommerceTags: "LG, R, burberry-scarf",
+      websiteCategory: "Accessories",
+    }),
+    "R"
+  );
+  // Burberry scarf case: Traxia LG+R must not be rewritten to FH+X on furniture site.
+  const scarf = mergeShopifyListingTags({
+    existingTags: "FH, X, Category: ACCESSORIES, Width: 57",
+    ecommerceTags:
+      "LG, R, bb, burberry-scarf, burberry-nova-check, nova-check, cashmere-scarf, plaid-scarf, light-blue-scarf",
+    merchType: "furniture",
+    websiteCategory: "Accessories",
+    dims: { width: 57, height: 0.1, depth: 14, weightLbs: 0.5 },
+  });
+  const lgAt = scarf.findIndex((t) => t === "LG");
+  assert.ok(lgAt >= 0);
+  assert.equal(scarf[lgAt + 1], "R");
+  assert.equal(scarf.includes("FH"), false);
+  assert.equal(scarf.includes("X"), false);
+  assert.equal(scarf.includes("burberry-scarf"), true);
+  assert.ok(scarf.some((t) => /^Width:\s*57$/i.test(t)));
+
+  assert.equal(
+    resolveMerchTypeFromFhLgTags({
+      ecommerceTags: "FH, B, nightstand",
+      merchType: "luxury",
+    }),
+    "furniture"
+  );
+  const bed = mergeShopifyListingTags({
+    existingTags: "LG, A",
+    ecommerceTags: "FH, B, graydon-bed",
+    merchType: "luxury",
+    websiteCategory: "Accessories",
+  });
+  assert.deepEqual(bed.slice(0, 2), ["FH", "B"]);
+  assert.equal(bed.includes("LG"), false);
 });
 
 test("from-scratch rewrite weaves Extra Info noticeable wear and drops dual paragraphs", () => {

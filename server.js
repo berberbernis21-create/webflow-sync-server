@@ -4473,12 +4473,13 @@ function productMustStayInLuxuryVertical(product) {
 
 function resolveVerticalFromEvidence(product, llmDetectedVertical) {
   const tags = getProductTagsArray(product);
-  if (productIsLuxuryScarf(product)) {
-    return { vertical: "luxury", reason: "luxury_scarf_always" };
-  }
+  // LG/FH are absolute — always win over scarf heuristics, LLM, and Category: ACCESSORIES.
   const hardTag = getHardFhLgVerticalLock(product);
   if (hardTag) {
     return { vertical: hardTag.vertical, reason: `ecommerce_vertical_tag_${hardTag.tag.toLowerCase()}` };
+  }
+  if (productIsLuxuryScarf(product)) {
+    return { vertical: "luxury", reason: "luxury_scarf_always" };
   }
   if (productTitleLooksLikeWearableJewelry(product) || productIsWearableJewelryPendant(product)) {
     return { vertical: "luxury", reason: "wearable_jewelry_pendant" };
