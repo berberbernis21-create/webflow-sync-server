@@ -47,6 +47,7 @@ import {
   planManualShopifyLink,
   gallerySyncOutcome,
   reorderOnlySyncDecision,
+  pairReorderToMedia,
   galleryImagesToDelete,
   intakePhotosShouldUpload,
   listingProductOmitsImages,
@@ -1844,7 +1845,7 @@ test("name save expands to body and tags without remangling title", () => {
 test("reorder only stays pending when photos could not be paired", () => {
   const missed = reorderOnlySyncDecision({ desired: 2, unmatched: 2, moved: 0, failedMoves: 0 });
   assert.equal(missed.status, "pending");
-  assert.equal(missed.retry, false);
+  assert.equal(missed.retry, true);
   assert.equal(missed.reorderOk, false);
   assert.equal(missed.orderVerified, false);
 
@@ -1860,4 +1861,66 @@ test("reorder only stays pending when photos could not be paired", () => {
   const moveFailed = reorderOnlySyncDecision({ desired: 2, unmatched: 0, moved: 0, failedMoves: 1 });
   assert.equal(moveFailed.status, "pending");
   assert.equal(moveFailed.retry, true);
+});
+
+test("one photo that fails content pairing still lands in the Intake order", () => {
+  const shelf = (1n << 20n) - 1n;
+  const shelfReencoded = shelf ^ ((1n << 16n) - 1n);
+  const planned = pairReorderToMedia({
+    desiredHashes: [null, shelf],
+    mediaHashes: [shelfReencoded, 0n],
+    mediaIds: ["shelf", "window"],
+  });
+  assert.equal(planned.resolved, true);
+  assert.deepEqual(planned.desiredIds, ["window", "shelf"]);
+  assert.deepEqual(planned.order, ["window", "shelf"]);
+  assert.ok(planned.moves.length > 0);
+
+  const reencoded = pairReorderToMedia({
+    desiredHashes: [0n, shelf],
+    mediaHashes: [shelfReencoded, 0n],
+    mediaIds: ["shelf", "window"],
+  });
+  assert.equal(reencoded.resolved, true);
+  assert.deepEqual(reencoded.order, ["window", "shelf"]);
+
+  const bothMissing = pairReorderToMedia({
+    desiredHashes: [null, null],
+    mediaHashes: [shelfReencoded, 0n],
+    mediaIds: ["shelf", "window"],
+  });
+  assert.equal(bothMissing.resolved, false);
+  assert.equal(bothMissing.moves.length, 0);
+  const decision = reorderOnlySyncDecision({
+    desired: 2,
+    unmatched: bothMissing.unmatched,
+    moved: 0,
+    failedMoves: 0,
+  });
+  assert.equal(decision.status, "pending");
+  assert.equal(decision.retry, true);
+
+  let queued = null;
+  setGalleryRetryHandler((job) => {
+    queued = job;
+  });
+  const first = scheduleGalleryRetry({
+    shopifyProductId: "99",
+    intakeItemId: "item-1",
+    reorderOnly: true,
+    attempt: 0,
+  });
+  assert.equal(first.queued, true);
+  assert.equal(first.attempt, 1);
+  assert.equal(queued.attempt, 1);
+  assert.equal(queued.rebuildFromCurrent, true);
+  const capped = scheduleGalleryRetry({
+    shopifyProductId: "99",
+    intakeItemId: "item-1",
+    reorderOnly: true,
+    attempt: 4,
+  });
+  assert.equal(capped.queued, false);
+  assert.equal(capped.reason, "retry_cap");
+  setGalleryRetryHandler(null);
 });
