@@ -9981,6 +9981,8 @@ async function syncSingleProductCore(product, cache, options = {}) {
       if (detectedVertical === "furniture" && furnitureUsesEcommerceApi(guardConfig)) {
         await updateWebflowEcommerceProduct(guardConfig.siteId, guardExisting.id, fieldData, guardConfig.token, guardExisting);
         guardSkuPricing = await syncFurnitureEcommerceSku(product, guardExisting.id, guardConfig);
+      } else if (detectedVertical === "luxury") {
+        await patchLuxuryCmsItemFieldData(guardConfig, guardExisting.id, fieldData, { existing: guardExisting });
       } else {
         await axios.patch(
           `https://api.webflow.com/v2/collections/${guardConfig.collectionId}/items/${guardExisting.id}`,
