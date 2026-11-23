@@ -9653,6 +9653,10 @@ async function syncSingleProductCore(product, cache, options = {}) {
             status: err?.response?.status ?? null,
           });
         }
+      } else if (vertical === "luxury") {
+        // Use image-safe PATCH — raw axios 400s on Shopify CDN import kill the whole sync
+        // even when the Handbags row already exists and is live.
+        await patchLuxuryCmsItemFieldData(config, existing.id, fieldData, { existing });
       } else {
         await axios.patch(
           `https://api.webflow.com/v2/collections/${config.collectionId}/items/${existing.id}`,
@@ -10241,11 +10245,20 @@ async function syncSingleProduct(product, cache, options = {}) {
       status: err?.response?.status ?? null,
       responseBody: err?.response?.data ?? null,
     });
+    let responseBody = err?.response?.data;
+    if (responseBody != null && typeof responseBody !== "string") {
+      try {
+        responseBody = JSON.stringify(responseBody);
+      } catch {
+        responseBody = String(responseBody);
+      }
+    }
     return {
       operation: "failed",
       id: null,
       error: err?.message || String(err),
       status: err?.response?.status ?? null,
+      responseBody: responseBody ? String(responseBody).slice(0, 1500) : null,
     };
   }
 }
@@ -10505,21 +10518,35 @@ async function patchLuxuryCmsItemFieldData(config, itemId, fieldData, { existing
   };
   try {
     await axios.patch(url, { fieldData: payload }, { headers });
-    return;
   } catch (err) {
-    if (!luxuryCmsFieldDataHasRemoteImageFields(payload) || !isWebflowRemoteAssetImportError(err)) {
-      throw err;
-    }
+    const status = err?.response?.status;
+    const canStripImages =
+      luxuryCmsFieldDataHasRemoteImageFields(payload) &&
+      (isWebflowRemoteAssetImportError(err) || status === 400 || status === 422);
+    if (!canStripImages) throw err;
     webflowLog("warn", {
       event: "luxury_cms.patch_images_stripped_retry",
       webflowItemId: itemId,
+      status: status ?? null,
       message: err?.response?.data?.message || err.message,
     });
-    await axios.patch(
-      url,
-      { fieldData: stripLuxuryCmsImageFieldsFromFieldData(payload) },
-      { headers }
-    );
+    try {
+      await axios.patch(
+        url,
+        { fieldData: stripLuxuryCmsImageFieldsFromFieldData(payload) },
+        { headers }
+      );
+    } catch (retryErr) {
+      // Item already exists — keep non-image updates from failing the whole vertical move.
+      webflowLog("error", {
+        event: "luxury_cms.patch_after_image_strip_failed",
+        webflowItemId: itemId,
+        status: retryErr?.response?.status ?? null,
+        message: retryErr?.response?.data?.message || retryErr.message,
+        responseBody: retryErr?.response?.data ?? null,
+      });
+      throw retryErr;
+    }
   }
   if (existing) registerLuxuryItemInRunIndex({ ...existing, id: itemId, fieldData: { ...(existing.fieldData || {}), ...payload } });
 }
@@ -10545,7 +10572,22 @@ async function createOrLinkLuxuryCmsItem({
 
   const linkExisting = async (existing, source) => {
     const live = (await getWebflowItemById(existing.id, config)) || existing;
-    await patchLuxuryCmsItemFieldData(config, live.id, postFieldData, { existing: live });
+    try {
+      await patchLuxuryCmsItemFieldData(config, live.id, postFieldData, { existing: live });
+    } catch (patchErr) {
+      // Never fail a furniture→handbags move because Shopify CDN image import 400'd —
+      // the Handbags CMS row already exists and is live.
+      webflowLog("warn", {
+        event: "create.cms.linked_existing_patch_skipped",
+        shopifyProductId,
+        productTitle,
+        slug,
+        webflowId: live.id,
+        source,
+        status: patchErr?.response?.status ?? null,
+        message: patchErr?.response?.data?.message || patchErr.message,
+      });
+    }
     registerCmsItemInRunIndex(config, live);
     webflowLog("warn", {
       event: "create.cms.linked_existing",
@@ -15530,6 +15572,7 @@ app.post("/sync-by-ids", async (req, res) => {
           webflowId: result?.id ?? null,
           ...(result?.error && { error: result.error }),
           ...(result?.status != null && { status: result.status }),
+          ...(result?.responseBody && { responseBody: result.responseBody }),
           ...(result?.duplicateCorrected && { duplicateCorrected: true }),
           ...(forceSwitchEmail && op !== "failed" && { switchEmailForced: true }),
         });
