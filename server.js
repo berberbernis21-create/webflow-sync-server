@@ -2778,7 +2778,8 @@ async function deleteShopifyMetafields(productId, keys) {
    SHOPIFY — WRITE our logic TO Shopify (vendor, productType, tags)
    Ecommerce tags (FH/LG + category letters) decide taxonomy; we WRITE the resolved
    department/category back to Shopify so Shopify matches Webflow. Tags = department + category.
-   The Traxia ecommerce tags themselves (FH, LG, E COMMERCE …) are never touched.
+   The Traxia ecommerce tags themselves (FH, LG, E COMMERCE …) are never touched —
+   mergeProductTagsForSync must never strip or flip FH/LG.
 ====================================================== */
 const SYNC_DEPARTMENT_TAGS = ["Furniture & Home", "Luxury Goods"];
 /** Shorthand tags merchants or old setups use — we strip these whenever we rewrite department/category so they do not fight automation (e.g. "Luxury" vs "Luxury Goods"). */
@@ -2796,6 +2797,10 @@ function mergeProductTagsForSync(existingTags, department, category) {
   const shorthandRemoveLower = new Set(LEGACY_VERTICAL_SHORTHAND_TAGS.map((t) => String(t).trim().toLowerCase()).filter(Boolean));
   const kept = existing.filter((t) => {
     const s = String(t).trim();
+    // Never strip Traxia FH/LG vertical locks or single category letters (R, H, B, …).
+    const upper = s.toUpperCase();
+    if (upper === ECOMMERCE_VERTICAL_TAG_FURNITURE || upper === ECOMMERCE_VERTICAL_TAG_LUXURY) return true;
+    if (/^(NK|RG|BR|ER|OJ|[A-Z])$/i.test(s)) return true;
     if (toRemove.has(s)) return false;
     if (shorthandRemoveLower.has(s.toLowerCase())) return false;
     return true;
@@ -3350,16 +3355,40 @@ function getEcommerceClassification(product) {
 }
 
 /**
- * LG / FH — absolute vertical lock from Traxia. Never overridden by LLM, classifier, or Category: ACCESSORIES.
+ * LG / FH — absolute vertical lock from Traxia.
+ * Never overridden by LLM, classifier, dimensions, or Category: ACCESSORIES.
+ * If both FH and LG appear, the first tag in list order still locks (never unlock for heuristics).
  */
 function getHardFhLgVerticalLock(product) {
-  const classification = getEcommerceClassification(product);
-  if (classification.conflicts.length || !classification.vertical) return null;
+  const tags = getProductTagsArray(product);
+  const verticalTag = getEcommerceVerticalOverrideFromTags(tags);
+  if (!verticalTag) return null;
   return {
-    vertical: classification.vertical,
-    tag: classification.verticalTag,
+    vertical: verticalTag.vertical,
+    tag: verticalTag.tag,
     source: "hard_ecommerce_vertical_tag",
   };
+}
+
+/** Final rail: FH/LG always win. Call after every heuristic pass before Webflow/Shopify writes. */
+function enforceAbsoluteFhLgVertical(product, vertical, shopifyProductId) {
+  const lock = getHardFhLgVerticalLock(product);
+  if (!lock) return { vertical, lock: null };
+  if (vertical !== lock.vertical) {
+    webflowLog("warn", {
+      event: "vertical.enforced_hard_ecommerce_tag",
+      shopifyProductId,
+      productTitle: product?.title || "",
+      previousVertical: vertical,
+      vertical: lock.vertical,
+      tag: lock.tag,
+      message:
+        lock.tag === ECOMMERCE_VERTICAL_TAG_LUXURY
+          ? "LG tag is absolute — refusing furniture / classifier override"
+          : "FH tag is absolute — refusing luxury / classifier override",
+    });
+  }
+  return { vertical: lock.vertical, lock };
 }
 
 function getManualEcommerceVerticalLock(product) {
@@ -4398,7 +4427,8 @@ function productDimensionsForceFurniture(product) {
 }
 
 /**
- * True home/furniture inventory (coat racks, lamps, case goods, etc.) — may override LG on a mis-tagged item.
+ * True home/furniture inventory (coat racks, lamps, case goods, etc.).
+ * Never overrides an FH/LG tag — those are absolute. This only runs when untagged.
  * Does NOT include oversize-dimension heuristics; those must not strip LG / belt / wallet / jewelry routing.
  */
 function productIsGenuineFurnitureInventory(product) {
@@ -8079,7 +8109,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
   const ecommerceVerticalTag = getEcommerceVerticalOverrideFromTags(getProductTagsArray(product));
   // FH/LG comes from the merchant's Traxia e-commerce tags and is absolute.
   // forceReclassify must refresh classifier-derived decisions, not bypass explicit merchant intent.
-  const hardFhLgLock = getHardFhLgVerticalLock(product);
+  let hardFhLgLock = getHardFhLgVerticalLock(product);
   const placedVertical = getExistingPlacedVertical(product, cacheEntry);
   const freezePlacedVertical =
     !hardFhLgLock &&
@@ -8516,10 +8546,16 @@ async function syncSingleProductCore(product, cache, options = {}) {
 
   } // end !freezePlacedVertical && !hardFhLgLock (final vertical override pass)
 
-  if (hardFhLgLock) {
-    vertical = hardFhLgLock.vertical;
-    detectedVertical = hardFhLgLock.vertical;
-    verticalCorrected = false;
+  // Absolute FH/LG rail — nothing above (heuristics, ACCESSORIES, dimensions) may fight the tag.
+  {
+    const enforced = enforceAbsoluteFhLgVertical(product, vertical, shopifyProductId);
+    vertical = enforced.vertical;
+    if (enforced.lock) {
+      detectedVertical = enforced.lock.vertical;
+      verticalCorrected = false;
+      hardFhLgLock = enforced.lock;
+      manualEcommerceLock = enforced.lock;
+    }
   }
 
   // Remove copy on the other vertical when tag or classifier places item here (incl. manual FH/LG changes).
@@ -8529,6 +8565,8 @@ async function syncSingleProductCore(product, cache, options = {}) {
   if (
     !freezePlacedVertical &&
     !hardFhLgLock &&
+    !productHasLuxuryEcommerceTag(product) &&
+    !hasExplicitFurnitureVerticalTag(product) &&
     vertical === "luxury" &&
     productMustBeFurnitureVertical(product) &&
     !productIsLuxuryScarf(product)
@@ -8542,6 +8580,17 @@ async function syncSingleProductCore(product, cache, options = {}) {
     vertical = "furniture";
     detectedVertical = "furniture";
     verticalCorrected = false;
+  }
+
+  // Re-enforce after cleanup guard — FH/LG still absolute.
+  {
+    const enforced = enforceAbsoluteFhLgVertical(product, vertical, shopifyProductId);
+    vertical = enforced.vertical;
+    if (enforced.lock) {
+      detectedVertical = enforced.lock.vertical;
+      verticalCorrected = false;
+      hardFhLgLock = enforced.lock;
+    }
   }
 
   if (!freezePlacedVertical && vertical === "luxury") {

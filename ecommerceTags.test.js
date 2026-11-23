@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import {
   ecommerceTagsAuthorizeVerticalChange,
   getEcommerceClassificationFromTags,
+  getEcommerceVerticalOverrideFromTags,
+  getHardFhLgVerticalLockFromTags,
 } from "./ecommerceTags.js";
 
 test("FH and category letter create a canonical furniture fingerprint", () => {
@@ -62,4 +64,26 @@ test("untagged inventory delegates to best-guess classification", () => {
   assert.equal(state.tagged, false);
   assert.equal(state.fingerprint, "");
   assert.equal(ecommerceTagsAuthorizeVerticalChange(state, "furniture"), null);
+});
+
+test("hard FH/LG lock still locks when both tags are present (first wins)", () => {
+  const lock = getHardFhLgVerticalLockFromTags(["LG", "R", "FH", "X"]);
+  assert.equal(lock?.vertical, "luxury");
+  assert.equal(lock?.tag, "LG");
+  assert.equal(getEcommerceVerticalOverrideFromTags(["FH", "B", "LG"])?.vertical, "furniture");
+});
+
+test("Burberry scarf style tags lock luxury even with Category ACCESSORIES noise", () => {
+  const tags = [
+    "LG",
+    "R",
+    "Category: ACCESSORIES",
+    "Width: 57",
+    "burberry-scarf",
+    "Furniture & Home",
+  ];
+  const lock = getHardFhLgVerticalLockFromTags(tags);
+  assert.equal(lock?.vertical, "luxury");
+  assert.equal(lock?.tag, "LG");
+  assert.equal(getEcommerceVerticalOverrideFromTags(tags)?.vertical, "luxury");
 });
