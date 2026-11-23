@@ -117,15 +117,16 @@ async function sendDuplicatePlacementEmail(conflictLog, duplicateEmailSentFor) {
     detectedVertical,
     webflowItemIdRemoved,
     webflowIdArchived,
+    force,
   } = conflictLog;
   const removedId = webflowItemIdRemoved || webflowIdArchived;
   const id = String(shopifyProductId ?? "");
-  if (duplicateEmailSentFor && duplicateEmailSentFor.has(id)) {
+  if (!force && duplicateEmailSentFor && duplicateEmailSentFor.has(id)) {
     webflowLog("info", { event: "duplicate_placement.email_skipped", reason: "already_sent_this_run", shopifyProductId: id });
     return;
   }
   const sentPreviously = loadDuplicatePlacementSentIds();
-  if (sentPreviously.has(id)) {
+  if (!force && sentPreviously.has(id)) {
     webflowLog("info", { event: "duplicate_placement.email_skipped", reason: "already_sent_previous_run", shopifyProductId: id });
     return;
   }
@@ -8356,8 +8357,8 @@ async function syncSingleProductCore(product, cache, options = {}) {
       const full = await getWebflowEcommerceProductById(furnitureConfig.siteId, cacheEntry.webflowId, furnitureConfig.token);
       alreadyArchived = full?.isArchived === true;
       if (alreadyArchived) {
+        // Don't mark emailed here — staff still need the switch alert when LG/FH forces the move.
         webflowLog("info", { event: "vertical.corrected.skipped_already_archived", shopifyProductId, webflowId: cacheEntry.webflowId });
-        saveDuplicatePlacementSentId(shopifyProductId);
       } else {
         try {
           await deleteWebflowEcommerceProduct(furnitureConfig.siteId, cacheEntry.webflowId, furnitureConfig.token);
@@ -8620,8 +8621,9 @@ async function syncSingleProductCore(product, cache, options = {}) {
         const full = await getWebflowEcommerceProductById(furnitureConfig.siteId, existingInFurniture.id, furnitureConfig.token);
         const alreadyArchived = full?.isArchived === true;
         if (alreadyArchived) {
+          // Do NOT saveDuplicatePlacementSentId here — that blocked the "switched sites" email
+          // when LG/FH later forced the real move and we still owed the alert.
           webflowLog("info", { event: "cleanup.skipped_already_archived", shopifyProductId, webflowId: existingInFurniture.id });
-          if (!manualEcommerceLock) saveDuplicatePlacementSentId(shopifyProductId);
         } else {
           webflowLog("info", {
             event: "cleanup.found_in_other_vertical",
@@ -8636,19 +8638,18 @@ async function syncSingleProductCore(product, cache, options = {}) {
             await deleteWebflowEcommerceProduct(furnitureConfig.siteId, existingInFurniture.id, furnitureConfig.token);
             webflowLog("info", { event: "cleanup.removed_from_furniture", shopifyProductId, webflowId: existingInFurniture.id });
             if (cacheEntry?.vertical === "furniture") delete cache[shopifyProductId];
-            if (!manualEcommerceLock) {
-              await sendDuplicatePlacementEmail(
-                {
-                  productTitle: product.title || "",
-                  shopifyProductId,
-                  previousVertical: "furniture",
-                  detectedVertical: "luxury",
-                  webflowItemIdRemoved: existingInFurniture.id,
-                  sweep: true,
-                },
-                duplicateEmailSentFor
-              );
-            }
+            // Always email on site switch — including absolute LG/FH locks (those are the moves staff care about).
+            await sendDuplicatePlacementEmail(
+              {
+                productTitle: product.title || "",
+                shopifyProductId,
+                previousVertical: "furniture",
+                detectedVertical: "luxury",
+                webflowItemIdRemoved: existingInFurniture.id,
+                sweep: true,
+              },
+              duplicateEmailSentFor
+            );
           } catch (err) {
             webflowLog("error", { event: "cleanup.remove_furniture_failed", shopifyProductId, webflowId: existingInFurniture.id, message: err.message });
           }
@@ -8675,19 +8676,18 @@ async function syncSingleProductCore(product, cache, options = {}) {
           await deleteWebflowCollectionItem(luxuryConfig.collectionId, existingInLuxury.id, luxuryConfig.token);
           webflowLog("info", { event: "cleanup.deleted_from_luxury", shopifyProductId, webflowId: existingInLuxury.id });
           if (cacheEntry?.vertical === "luxury") delete cache[shopifyProductId];
-          if (!manualEcommerceLock) {
-            await sendDuplicatePlacementEmail(
-              {
-                productTitle: product.title || "",
-                shopifyProductId,
-                previousVertical: "luxury",
-                detectedVertical: "furniture",
-                webflowItemIdRemoved: existingInLuxury.id,
-                sweep: true,
-              },
-              duplicateEmailSentFor
-            );
-          }
+          // Always email on site switch — including absolute LG/FH locks.
+          await sendDuplicatePlacementEmail(
+            {
+              productTitle: product.title || "",
+              shopifyProductId,
+              previousVertical: "luxury",
+              detectedVertical: "furniture",
+              webflowItemIdRemoved: existingInLuxury.id,
+              sweep: true,
+            },
+            duplicateEmailSentFor
+          );
         } catch (err) {
           webflowLog("error", { event: "cleanup.delete_luxury_failed", shopifyProductId, webflowId: existingInLuxury.id, message: err.message });
         }
@@ -8718,7 +8718,6 @@ async function syncSingleProductCore(product, cache, options = {}) {
           shopifyProductId,
           webflowId: cacheEntry.webflowId,
         });
-        saveDuplicatePlacementSentId(shopifyProductId);
       } else {
         try {
           await deleteWebflowEcommerceProduct(furnitureConfig.siteId, cacheEntry.webflowId, furnitureConfig.token);
@@ -10041,7 +10040,6 @@ async function syncSingleProductCore(product, cache, options = {}) {
           }
           if (alreadyArchived) {
             webflowLog("info", { event: "sweep.skipped_already_archived", shopifyProductId, webflowId: existingInFurniture.id });
-            if (!manualLock) saveDuplicatePlacementSentId(shopifyProductId);
           } else {
             webflowLog("info", {
               event: "sweep.found_in_furniture",
@@ -10054,19 +10052,18 @@ async function syncSingleProductCore(product, cache, options = {}) {
             try {
               await removeFurnitureWebflowItem(furnitureConfig, existingInFurniture.id);
               webflowLog("info", { event: "sweep.removed_from_furniture", shopifyProductId, webflowId: existingInFurniture.id });
-              if (!manualLock) {
-                await sendDuplicatePlacementEmail(
-                  {
-                    productTitle: name,
-                    shopifyProductId,
-                    previousVertical: "furniture",
-                    detectedVertical: "luxury",
-                    webflowItemIdRemoved: existingInFurniture.id,
-                    sweep: true,
-                  },
-                  duplicateEmailSentFor
-                );
-              }
+              // Always email on site switch — including absolute LG/FH locks.
+              await sendDuplicatePlacementEmail(
+                {
+                  productTitle: name,
+                  shopifyProductId,
+                  previousVertical: "furniture",
+                  detectedVertical: "luxury",
+                  webflowItemIdRemoved: existingInFurniture.id,
+                  sweep: true,
+                },
+                duplicateEmailSentFor
+              );
             } catch (err) {
               webflowLog("error", { event: "sweep.remove_furniture_failed", shopifyProductId, webflowId: existingInFurniture.id, message: err.message });
             }
@@ -10159,34 +10156,45 @@ async function syncSingleProductCore(product, cache, options = {}) {
       }
     } else {
       webflowLog("info", { event: "create.cms.start", shopifyProductId, productTitle: name, collectionId: createConfig.collectionId });
-      try {
-        const cmsResult = await createOrLinkLuxuryCmsItem({
-          config: createConfig,
-          productFieldData,
-          shopifyProductId,
-          shopifyUrl,
-          slug,
-          productTitle: name,
-        });
-        newId = cmsResult.id;
-        webflowLog("info", {
-          event: cmsResult.linked ? "create.cms.ok_linked" : "create.cms.ok",
-          shopifyProductId,
-          productTitle: name,
-          webflowId: newId,
-          linked: cmsResult.linked,
-        });
-      } catch (createErr) {
-        webflowLog("error", {
-          event: "create.cms.failed",
-          shopifyProductId,
-          productTitle: name,
-          message: createErr.message,
-          status: createErr.response?.status,
-          responseBody: createErr.response?.data,
-        });
-        throw createErr;
+      let lastCreateErr = null;
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try {
+          const cmsResult = await createOrLinkLuxuryCmsItem({
+            config: createConfig,
+            productFieldData,
+            shopifyProductId,
+            shopifyUrl,
+            slug,
+            productTitle: name,
+          });
+          newId = cmsResult.id;
+          webflowLog("info", {
+            event: cmsResult.linked ? "create.cms.ok_linked" : "create.cms.ok",
+            shopifyProductId,
+            productTitle: name,
+            webflowId: newId,
+            linked: cmsResult.linked,
+            attempt,
+          });
+          lastCreateErr = null;
+          break;
+        } catch (createErr) {
+          lastCreateErr = createErr;
+          webflowLog("error", {
+            event: "create.cms.failed",
+            shopifyProductId,
+            productTitle: name,
+            message: createErr.message,
+            status: createErr.response?.status,
+            responseBody: createErr.response?.data,
+            attempt,
+          });
+          if (attempt < 2) {
+            await new Promise((r) => setTimeout(r, 1500));
+          }
+        }
       }
+      if (lastCreateErr) throw lastCreateErr;
     }
     if (detectedVertical === "furniture" && furnitureUsesCmsProducts(createConfig)) {
       await syncFurnitureSku(product, newId, createConfig);
@@ -10233,7 +10241,12 @@ async function syncSingleProduct(product, cache, options = {}) {
       status: err?.response?.status ?? null,
       responseBody: err?.response?.data ?? null,
     });
-    return { operation: "failed", id: null };
+    return {
+      operation: "failed",
+      id: null,
+      error: err?.message || String(err),
+      status: err?.response?.status ?? null,
+    };
   }
 }
 
@@ -15445,11 +15458,15 @@ app.post("/sync-by-ids", async (req, res) => {
   }
   const forceReclassify = req.body?.forceReclassify !== false;
   const createOnly = req.body?.createOnly === true;
+  const forceSwitchEmail = req.body?.forceSwitchEmail === true;
+  const switchFrom = String(req.body?.previousVertical || "furniture").toLowerCase();
+  const switchTo = String(req.body?.detectedVertical || "luxury").toLowerCase();
   webflowLog("info", {
     event: "sync-by-ids.entry",
     count: ids.length,
     forceReclassify,
     createOnly,
+    forceSwitchEmail,
   });
   try {
     await loadFurnitureCategoryMap();
@@ -15487,6 +15504,19 @@ app.post("/sync-by-ids", async (req, res) => {
         });
         if (result?.duplicateCorrected && result?.duplicateLog) {
           await sendDuplicatePlacementEmail(result.duplicateLog, duplicateEmailSentFor);
+        } else if (forceSwitchEmail && result?.operation !== "failed") {
+          // Recovery: LG/FH moves used to skip the switch email — force-send when requested.
+          await sendDuplicatePlacementEmail(
+            {
+              productTitle: product.title || "",
+              shopifyProductId,
+              previousVertical: switchFrom,
+              detectedVertical: switchTo,
+              webflowItemIdRemoved: result?.id || null,
+              force: true,
+            },
+            duplicateEmailSentFor
+          );
         }
         const op = result?.operation ?? "unknown";
         if (op === "failed") failed++;
@@ -15498,7 +15528,10 @@ app.post("/sync-by-ids", async (req, res) => {
           title: product.title || "",
           operation: op,
           webflowId: result?.id ?? null,
+          ...(result?.error && { error: result.error }),
+          ...(result?.status != null && { status: result.status }),
           ...(result?.duplicateCorrected && { duplicateCorrected: true }),
+          ...(forceSwitchEmail && op !== "failed" && { switchEmailForced: true }),
         });
       } catch (err) {
         failed++;
