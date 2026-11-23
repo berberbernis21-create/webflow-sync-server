@@ -53,6 +53,7 @@ import {
   setGalleryRetryHandler,
   syncWebhookFactsToIntake,
   refreshTitleDimensions,
+  listingBodyHtmlForUpdate,
   convergeShopifyEvents,
   resolveQueuedListingJob,
   planSettledCleanliness,
@@ -1197,4 +1198,67 @@ test("meta commentary and a test title do not name a maker", () => {
   assert.equal(/\bbernis\b/i.test(fallen.description), false);
   assert.equal(/\btest\b/i.test(fallen.description), false);
   assert.match(fallen.description, /nightstand/i);
+});
+
+test("weight and dimensions update the footer and the matching tags together", () => {
+  const title = "Vintage Limoges Linden Dinner Plates - Set Of 6 - 10X1X10";
+  const prose =
+    "Vintage Limoges linden dinner plates, a set of six for the table. Glazed white with a linden pattern.";
+  const stale = `${prose}<br><br>Dimensions: Width: 10" × Depth: 1" × Height: 10".<br>Weight: 1 lb.`;
+  const dims = { width: 10, depth: 1, height: 10, weightLbs: 10 };
+  const html = listingBodyHtmlForUpdate(stale, prose, dims);
+  assert.match(html, /Weight: 10 lb\./);
+  assert.equal(html.includes("Weight: 1 lb"), false);
+  const tags = mergeShopifyListingTags({
+    existingTags: "Weight: 1, Width: 10, Depth: 1, Height: 10",
+    ecommerceTags: "white",
+    merchType: "furniture",
+    websiteCategory: "D",
+    dims,
+  });
+  assert.equal(tags.includes("Weight: 10"), true);
+  assert.equal(tags.includes("Weight: 1"), false);
+  assert.equal(tags.includes("Width: 10"), true);
+  assert.equal(listingBodyHtmlForUpdate(html, prose, dims), "");
+  assert.equal(listingBodyHtmlForUpdate(html, prose, { ...dims, weightLbs: 0 }), "");
+  const wider = listingBodyHtmlForUpdate(html, prose, { ...dims, width: 12 });
+  assert.match(wider, /Width: 12/);
+  assert.match(wider, /Weight: 10 lb\./);
+  const wideTags = mergeShopifyListingTags({
+    existingTags: tags.join(", "),
+    ecommerceTags: "white",
+    merchType: "furniture",
+    websiteCategory: "D",
+    dims: { ...dims, width: 12 },
+  });
+  assert.equal(wideTags.includes("Width: 12"), true);
+  assert.equal(wideTags.includes("Width: 10"), false);
+  assert.equal(refreshTitleDimensions(title, { ...dims, weightLbs: 99 }), title);
+  assert.equal(
+    refreshTitleDimensions(title, { width: 12, depth: 1, height: 10 }),
+    "Vintage Limoges Linden Dinner Plates - Set Of 6 - 12X1X10"
+  );
+  const item = {
+    name: title,
+    description: prose,
+    notes: "",
+    conditionIssues: "",
+    dimWidth: 10,
+    dimDepth: 1,
+    dimHeight: 10,
+    weightLbs: 10,
+    retailPrice: 349,
+  };
+  assert.equal(planSaveSync({}, item).sync, false);
+  const named = planSaveSync({ name: { from: "Old", to: title } }, item);
+  assert.equal(named.payload.nameOnly, true);
+  assert.equal(named.payload.name, title);
+  assert.equal(named.payload.price, undefined);
+  assert.equal(named.payload.description, undefined);
+  const weight = planSaveSync({ weightLbs: { from: 1, to: 10 } }, item);
+  assert.equal(weight.sync, true);
+  assert.equal(weight.payload.dims.weightLbs, 10);
+  assert.equal(weight.payload.allowOpenAi, false);
+  assert.equal(weight.payload.price, undefined);
+  assert.equal(weight.payload.name, title);
 });
