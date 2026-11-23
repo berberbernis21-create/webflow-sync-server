@@ -69,6 +69,8 @@ import {
   skuRemoteImageUrls,
   skuFieldDataWithReadyImages,
   shopifyCdnImageIsReady,
+  descriptionHasStackedProductProse,
+  descriptionHasStackedWear,
 } from "../lib/shopifyIntakeImages.js";
 import {
   planShopifyCallTimes,
@@ -234,14 +236,15 @@ test("description without a size sentence still gets one Dimensions footer", () 
   assert.match(html, /Weight: 8 lb/);
 });
 
-test("formatShopifyDimsLine puts Weight under Dimensions", () => {
+test("formatShopifyDimsLine keeps Weight on the Dimensions line", () => {
   const line = formatShopifyDimsLine({ width: 16, depth: 13, height: 25, weightLbs: 13 });
   assert.equal(
     line,
-    'Dimensions: Width: 16" × Depth: 13" × Height: 25".\nWeight: 13 lb.'
+    'Dimensions: Width: 16" × Depth: 13" × Height: 25". Weight: 13 lb.'
   );
   assert.equal(formatShopifyDimsLine({ width: 65.0, depth: 29.0, height: 40.0, weightLbs: 29.0 }),
-    'Dimensions: Width: 65" × Depth: 29" × Height: 40".\nWeight: 29 lb.');
+    'Dimensions: Width: 65" × Depth: 29" × Height: 40". Weight: 29 lb.');
+  assert.equal(line.includes("\n"), false);
 });
 
 
@@ -1087,8 +1090,15 @@ test("a dirty settled listing schedules one rebuild and a clean one does not", (
   const longBody =
     "Original 1938 oil-on-canvas landscape painting in a warm wood frame for rustic interiors. Pickup is available in Scottsdale.";
   assert.equal(planSettledCleanliness({ title: NAKED_BAD, body: longBody, note: "we are perfect" }).action, "rebuild");
-  const stopped = planSettledCleanliness(
+  // body_as_is_paste must rebuild clean even on the corrective pass — never stop and leave garbage.
+  const cleaned = planSettledCleanliness(
     { title: NAKED_BAD, body: "AS IS: SMALLT CRACK IN TOP RIGHT", note: "we are perfect" },
+    { corrective: true }
+  );
+  assert.equal(cleaned.action, "rebuild");
+  assert.equal(cleaned.forceCleanBody, true);
+  const stopped = planSettledCleanliness(
+    { title: NAKED_BAD, body: longBody, note: "we are perfect", tags: "used, location: A1" },
     { corrective: true }
   );
   assert.equal(stopped.action, "stop");
@@ -1101,6 +1111,79 @@ test("a dirty settled listing schedules one rebuild and a clean one does not", (
     planSettledCleanliness({ title: NAKED_TRUTH, body: longBody, note: "we are perfect", tags: "FH, A" }).action,
     "none"
   );
+});
+
+test("dual product paragraphs and AS IS paste collapse to one Intake paragraph", () => {
+  const intake =
+    "Curved wing grey leather king low profile platform bed with an upholstered wingback headboard. " +
+    "Tailored grey leather upholstery wraps the headboard and frame for a clean, modern look " +
+    "that suits contemporary and transitional bedrooms. " +
+    "The distinctive wraparound wing silhouette adds depth and a cocooning feel behind the pillows " +
+    "while keeping the profile streamlined. " +
+    "A low platform design positions the mattress closer to the floor for an anchored, minimal " +
+    "presence beside wood, linen, or metal nightstands.";
+  const previousShopify =
+    intake +
+    " This RH curved wing grey leather king low profile bed features a sleek upholstered " +
+    "headboard and a distinctive wraparound wing silhouette. " +
+    "Designed to anchor your primary bedroom, this king-size platform bed showcases clean and " +
+    "tailored grey leather upholstery that enhances its modern aesthetic. " +
+    "Ideal for contemporary and transitional interiors, it pairs beautifully with wood, linen, " +
+    "or metal nightstands. " +
+    "Pickup is available in Scottsdale, and we offer both local and nationwide delivery. " +
+    "Please see Delivery, Pickup & Freight Options below the description for additional details. " +
+    "AS IS: this item is sold AS IS, with visible wear consistent with prior use, as shown in the photos.";
+  const allowed =
+    "Sold AS IS with visible wear consistent with prior use; " +
+    "please review photos for the most accurate view of condition.";
+  const item = {
+    name: "RH Curved Wing Grey Leather King Low Profile Bed- AS IS",
+    category: "BED",
+    ecommerceTags: "FH, B, king-bed, grey-leather, wingback-headboard",
+    merchType: "furniture",
+    dims: { width: 82.5, depth: 91, height: 37.5, weightLbs: 91 },
+  };
+
+  assert.equal(descriptionHasStackedProductProse(previousShopify), true);
+  assert.equal(descriptionHasStackedWear(previousShopify), true);
+
+  // Restore / rebuild from Intake only — never concatenate the old dual Shopify body.
+  const out = appendIntakeNotesToDescription(intake, "Sold AS IS with visible wear", "", item);
+  assert.ok(out.startsWith("Curved wing grey leather king low profile platform bed"));
+  assert.equal(out.includes("This RH curved wing"), false);
+  assert.equal(out.includes("AS IS: this item is sold AS IS"), false);
+  assert.equal(out.includes("AS IS:"), false);
+  assert.equal(out.split(allowed).length - 1, 1);
+  assert.equal(out.split("Pickup is available in Scottsdale").length - 1, 1);
+
+  // Polluted Intake (mirrored dual body) also collapses on the next finalize.
+  const cleaned = appendIntakeNotesToDescription(previousShopify, "Sold AS IS with visible wear", "", item);
+  assert.ok(cleaned.startsWith("Curved wing grey leather king low profile platform bed"));
+  assert.equal(cleaned.includes("This RH curved wing"), false);
+  assert.equal(cleaned.includes("AS IS: this item is sold AS IS"), false);
+  assert.equal(cleaned.split(allowed).length - 1, 1);
+
+  // Idempotent: a second finalize does not stack another wear sentence or product paragraph.
+  const again = appendIntakeNotesToDescription(cleaned, "Sold AS IS with visible wear", "", item);
+  assert.equal(again.split(allowed).length - 1, 1);
+  assert.equal(again.includes("This RH curved wing"), false);
+
+  // Mirror must restore stacked Shopify bodies, not leave them or write them into Intake.
+  const decision = classifyShopifyBodyForIntake(previousShopify, intake);
+  assert.equal(decision.applyDescription, false);
+  assert.equal(decision.restoreListing, true);
+
+  // Empty Shopify body (user deleted description) restores from Intake finalize, not dual garbage.
+  const empty = classifyShopifyBodyForIntake("", intake);
+  assert.equal(empty.restoreListing, true);
+  assert.equal(empty.applyDescription, false);
+
+  const settled = planSettledCleanliness(
+    { title: item.name, body: previousShopify, note: "Sold AS IS with visible wear" },
+    { corrective: true }
+  );
+  assert.equal(settled.action, "rebuild");
+  assert.equal(settled.forceCleanBody, true);
 });
 
 test("a name-only save sends the name and an unchanged save sends nothing", () => {
