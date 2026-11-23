@@ -1397,7 +1397,9 @@ test("an empty brand clears an invented maker and a set brand may keep it", () =
     "This is a compact bedside table with a flat top for a lamp and a lower storage area.";
   const current = "Modern Black 3-Drawer Nightstand";
   assert.equal(proseHasInventedMaker(stored, ""), true);
-  assert.equal(stripInventedMakers(stored, current, ""), "");
+  const keptCopy = stripInventedMakers(stored, current, "");
+  assert.equal(/\bbernis\b/i.test(keptCopy), false);
+  assert.match(keptCopy, /bedside/i);
   const rebuilt = freshListingTags({
     name: current,
     brand: "",
@@ -1411,9 +1413,10 @@ test("an empty brand clears an invented maker and a set brand may keep it", () =
   assert.match(rebuilt, /modern/i);
   assert.match(rebuilt, /black/i);
   const published = appendIntakeNotesToDescription(stored, "", "", { name: current, brand: "" });
-  assert.match(published, /this nightstand is a straightforward piece for everyday use/i);
+  assert.doesNotMatch(published, /straightforward piece/i);
   assert.equal(/\bbernis\b/i.test(published), false);
-  assert.equal(/silhouette|bedside|modern black/i.test(published), false);
+  assert.match(published, /bedside/i);
+  assert.equal(/silhouette|modern black/i.test(published), false);
 
   const branded = stripInventedMakers(stored, current, "Bernis");
   assert.match(branded, /\bbernis\b/i);
@@ -1923,4 +1926,38 @@ test("one photo that fails content pairing still lands in the Intake order", () 
   assert.equal(capped.queued, false);
   assert.equal(capped.reason, "retry_cap");
   setGalleryRetryHandler(null);
+});
+
+test("a deleted Shopify body is restored even when the title still matches", () => {
+  const decision = shopifyWritebackDecision({
+    snapshot: {
+      title: "t",
+      body: "old-body",
+      tags: "tags",
+      price: "349",
+      at: "2026-11-23T10:00:00Z",
+    },
+    updatedAt: "2026-11-23T18:00:00Z",
+    title: "Different title",
+    body: "",
+    tags: "tags",
+    price: "349",
+    intakeTitle: "Intake title",
+  });
+  assert.equal(decision.apply, true);
+  assert.equal(decision.reason, "body_cleared");
+  assert.equal(decision.bodyOnly, true);
+});
+
+test("a private note is not published and a zinc desk is kept", () => {
+  const item = { name: "Zinc desk", brand: "" };
+  const out = finalizeListingDescription(
+    "Zinc desk with a single drawer and a clean writing top.",
+    item,
+    "Call Mike before selling.",
+    ""
+  );
+  assert.equal(out.includes("Call Mike"), false);
+  assert.match(out, /Zinc desk/);
+  assert.equal(proseHasInventedMaker("Zinc desk with a single drawer.", ""), false);
 });
