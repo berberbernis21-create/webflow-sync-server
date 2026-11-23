@@ -1316,3 +1316,25 @@ test("an empty brand clears an invented maker and a set brand may keep it", () =
   const brandedTags = stripMakerTags("FH, B, nightstand, bernis", current, "Bernis", "CABINET", stored);
   assert.match(brandedTags, /\bbernis\b/i);
 });
+
+test("Furniture / Home and Office Den tags are FH and O only", () => {
+  const tags = mergeShopifyListingTags({
+    existingTags: "FH, X, O, Office Den",
+    ecommerceTags: "FH, X, O, Office Den, desk",
+    merchType: "furniture",
+    websiteCategory: "Office Den",
+  });
+  assert.deepEqual(tags.slice(0, 2), ["FH", "O"]);
+  assert.equal(tags.includes("X"), false);
+  assert.equal(tags.some((tag) => /office den/i.test(tag)), false);
+  assert.equal(tags.includes("desk"), true);
+  const accessories = mergeShopifyListingTags({
+    existingTags: "",
+    ecommerceTags: "FH, X, Accessories",
+    merchType: "furniture",
+    websiteCategory: "Accessories",
+  });
+  assert.equal(accessories.includes("FH"), true);
+  assert.equal(accessories.includes("X"), true);
+  assert.equal(accessories.some((tag) => /^accessories$/i.test(tag)), false);
+});
