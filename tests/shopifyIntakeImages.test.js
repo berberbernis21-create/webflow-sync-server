@@ -74,6 +74,14 @@ import {
   finalizeListingDescription,
   marketingListingBase,
   listingDeltaPayload,
+  handleIntakeListingUpdate,
+  resetListingUpdateCoalesceForTests,
+  listingUpdateCoalesceSnapshotForTests,
+  planImageOrderSync,
+  decideSyncAuthority,
+  intakePhotoIdsFromShopifyOrder,
+  shopifyWritebackDecision,
+  snapshotHash,
 } from "../lib/shopifyIntakeImages.js";
 import {
   planShopifyCallTimes,
@@ -925,6 +933,13 @@ test("webhook dimension tags post to Intake and rebuild the footer without a mod
     dimDepth: 1,
     dimHeight: 24,
     retailPrice: 349,
+    // Prior agreed snapshot so Shopify dim/title tag edits are one-sided, not a crash.
+    shopifySyncSnapshot: buildSyncSnapshot({
+      title: "Naked Birches Painting - 24X30X1H",
+      body: 'Original 1938 "Naked Birches" oil-on-canvas landscape painting.',
+      price: 349,
+      at: "2026-11-22T10:00:00Z",
+    }),
   };
   const product = {
     id: 9824538460419,
@@ -932,22 +947,25 @@ test("webhook dimension tags post to Intake and rebuild the footer without a mod
     tags: "Width: 30, Height: 36, Depth: 1.5, Weight: 8",
     variants: [{ sku: "R5EDVL", price: "349.00" }],
     status: "active",
+    updated_at: "2026-11-22T18:00:00Z",
   };
   const result = await syncWebhookFactsToIntake(product, {
     resolveItem: async () => item,
     post: async (url, body) => ({ url, body }),
   });
   assert.match(result.url, /\/api\/lost-and-found-intake\/items\/b5c575f8-4472-42f7-b1f0-86c07bf15d6c\/shopify-image-sync$/);
-  assert.equal(result.body.dimWidth, 30);
-  assert.equal(result.body.dimHeight, 36);
-  assert.equal(result.body.dimDepth, 1.5);
+  // Title W×D×H wins over Width:/Depth:/Height: tags (item 1 / armoire scramble fix).
+  assert.equal(result.body.dimWidth, 24);
+  assert.equal(result.body.dimDepth, 30);
+  assert.equal(result.body.dimHeight, 1);
+  assert.equal(result.body.weightLbs, 8);
   assert.equal(result.body.allowOpenAi, false);
   assert.equal(result.body.retailPrice, 349);
-  assert.match(result.body.name, /30X1\.5X36H/);
-  assert.match(result.rebuilt.body, /Width: 30/);
-  assert.match(result.rebuilt.body, /Height: 36/);
-  assert.match(result.rebuilt.body, /Depth: 1\.5/);
-  assert.equal(/Width: 24|Measuring/.test(result.rebuilt.body), false);
+  // Title sticks exactly — dim tags never remangle the name token.
+  assert.equal(result.body.name, "Naked Birches Painting - 24X30X1H");
+  assert.match(result.rebuilt.body, /Width: 24/);
+  assert.match(result.rebuilt.body, /Depth: 30/);
+  assert.match(result.rebuilt.body, /Height: 1/);
   assert.equal(result.llmCalled, false);
 });
 
@@ -1189,7 +1207,7 @@ test("dual product paragraphs and AS IS paste collapse to one Intake paragraph",
   assert.equal(settled.forceCleanBody, true);
 });
 
-test("a name-only save sends the name and an unchanged save sends nothing", () => {
+test("a name save rewrites body and tags; an unchanged save sends nothing", () => {
   const item = {
     id: "b5c575f8-4472-42f7-b1f0-86c07bf15d6c",
     name: NAKED_TRUTH,
@@ -1200,28 +1218,25 @@ test("a name-only save sends the name and an unchanged save sends nothing", () =
     dimDepth: 1.5,
     dimHeight: 41.5,
     shopifyProductId: "9824538460419",
+    ecommerceTags: "FH, A",
   };
   const named = planSaveSync({ name: { from: "old", to: NAKED_TRUTH } }, item);
   assert.equal(named.sync, true);
   assert.equal(named.payload.name, NAKED_TRUTH);
-  assert.equal(named.payload.nameOnly, true);
-  assert.equal(named.payload.description, undefined);
+  assert.equal(named.payload.nameOnly, undefined);
+  assert.equal(named.payload.replaceBody, true);
+  assert.equal(named.payload.syncFields.includes("body"), true);
+  assert.equal(named.payload.syncFields.includes("tags"), true);
   assert.equal(named.payload.dims, undefined);
-  assert.equal(named.payload.images, undefined);
-  assert.equal(named.payload.bodyHtml, undefined);
   assert.equal(named.payload.price, undefined);
-  const fields = shopifyProductFieldsFromPatch({ title: named.payload.name, nameOnly: true, bodyHtml: "", images: ["x"] });
-  assert.deepEqual(fields, { title: NAKED_TRUTH });
-  assert.equal(fields.body_html, undefined);
-  assert.equal(fields.images, undefined);
   const quiet = planSaveSync({}, item);
   assert.equal(quiet.sync, false);
   assert.equal(quiet.payload, null);
   assert.equal(planSaveSync({ _context: { source: "item-autosave" } }, item).sync, false);
   const written = resolveQueuedListingJob({ syncFields: ["name"], queuedAt: "2026-11-22T17:00:00Z" }, item);
   assert.equal(written.action, "write");
-  assert.equal(written.payload.nameOnly, true);
-  assert.equal(written.payload.description, undefined);
+  assert.equal(written.payload.name, NAKED_TRUTH);
+  assert.equal(written.payload.replaceBody, true);
   assert.equal(written.payload.dims, undefined);
 });
 
@@ -1341,16 +1356,17 @@ test("weight and dimensions update the footer and the matching tags together", (
   };
   assert.equal(planSaveSync({}, item).sync, false);
   const named = planSaveSync({ name: { from: "Old", to: title } }, item);
-  assert.equal(named.payload.nameOnly, true);
+  assert.equal(named.payload.nameOnly, undefined);
   assert.equal(named.payload.name, title);
+  assert.equal(named.payload.replaceBody, true);
   assert.equal(named.payload.price, undefined);
-  assert.equal(named.payload.description, undefined);
   const weight = planSaveSync({ weightLbs: { from: 1, to: 10 } }, item);
   assert.equal(weight.sync, true);
   assert.equal(weight.payload.dims.weightLbs, 10);
   assert.equal(weight.payload.allowOpenAi, false);
   assert.equal(weight.payload.price, undefined);
-  assert.equal(weight.payload.name, title);
+  // Dim-only save must not rewrite the title token.
+  assert.equal(weight.payload.name, undefined);
 });
 
 test("an empty brand clears an invented maker and a set brand may keep it", () => {
@@ -1544,4 +1560,282 @@ test("from-scratch rewrite weaves Extra Info noticeable wear and drops dual para
   assert.equal(delta.replaceBody, true);
   assert.equal(delta.rewriteBody, true);
   assert.equal(delta.description.includes(woven), true);
+});
+
+test("listing-update coalesce returns deferred and applies latest-wins once", async () => {
+  resetListingUpdateCoalesceForTests();
+  const itemId = "d5efd059-f2e9-48cf-aa86-9c5634634ffb";
+  const calls = [];
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const loadItem = async () => ({
+    id: itemId,
+    name: "RH Bed v3 final",
+    shopifyProductId: "9824309084419",
+    description:
+      "Curved wing grey leather king low profile platform bed with an upholstered wingback headboard for a modern bedroom.",
+    notes: "noticeable wear",
+    conditionIssues: "",
+    ecommerceTags: "FH, B",
+    merchType: "furniture",
+    dimWidth: 82.5,
+    dimLength: 91,
+    dimHeight: 37.5,
+    weightLbs: 91,
+    retailPrice: 1200,
+  });
+
+  const execute = async (payload) => {
+    calls.push({
+      name: payload.name,
+      rebuild: payload.__rebuiltFromCurrent === true || payload.__rebuildFromCurrent === true,
+    });
+    if (calls.length === 1) await gate;
+    return {
+      ok: true,
+      status: "updated",
+      shopifyProductId: payload.shopifyProductId,
+      intakeItemId: payload.intakeItemId,
+      name: payload.name,
+    };
+  };
+
+  const first = handleIntakeListingUpdate(
+    {
+      intakeItemId: itemId,
+      shopifyProductId: "9824309084419",
+      name: "RH Bed v1",
+    },
+    { execute, loadItem }
+  );
+
+  const coalesced = await handleIntakeListingUpdate(
+    {
+      intakeItemId: itemId,
+      shopifyProductId: "9824309084419",
+      name: "RH Bed v2 latest",
+    },
+    { execute, loadItem }
+  );
+  assert.equal(coalesced.deferred, true);
+  assert.equal(coalesced.status, "coalesced");
+  assert.equal(coalesced.ok, false);
+  assert.equal(coalesced.reason, "in_flight_collapsed");
+  assert.deepEqual(listingUpdateCoalesceSnapshotForTests().inflight, [`intake:${itemId}`]);
+  assert.deepEqual(listingUpdateCoalesceSnapshotForTests().pending, [`intake:${itemId}`]);
+
+  // Newer name while still in flight — pending must keep latest only.
+  await handleIntakeListingUpdate(
+    {
+      intakeItemId: itemId,
+      shopifyProductId: "9824309084419",
+      name: "RH Bed v3 final",
+    },
+    { execute, loadItem }
+  );
+
+  release();
+  const firstResult = await first;
+  assert.equal(firstResult.status, "updated");
+  assert.equal(calls[0].name, "RH Bed v1");
+
+  // Pending settle (250ms) then one follow-up with latest Intake name (latest-wins).
+  await new Promise((r) => setTimeout(r, 400));
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].name, "RH Bed v3 final");
+  assert.equal(calls[1].rebuild, true);
+  assert.deepEqual(listingUpdateCoalesceSnapshotForTests(), { inflight: [], pending: [] });
+  resetListingUpdateCoalesceForTests();
+});
+
+test("listing-update coalesce is per-item so other items are not blocked", async () => {
+  resetListingUpdateCoalesceForTests();
+  let releaseBed;
+  const bedGate = new Promise((resolve) => {
+    releaseBed = resolve;
+  });
+  const seen = [];
+  const execute = async (payload) => {
+    seen.push(payload.intakeItemId);
+    if (payload.intakeItemId === "d5efd059-f2e9-48cf-aa86-9c5634634ffb") {
+      await bedGate;
+    }
+    return { ok: true, status: "updated", intakeItemId: payload.intakeItemId };
+  };
+
+  const bed = handleIntakeListingUpdate(
+    {
+      intakeItemId: "d5efd059-f2e9-48cf-aa86-9c5634634ffb",
+      name: "RH Bed",
+    },
+    { execute }
+  );
+  const armoire = await handleIntakeListingUpdate(
+    {
+      intakeItemId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+      name: "Greg Sheres armoire bernis karfen",
+    },
+    { execute }
+  );
+  assert.equal(armoire.status, "updated");
+  assert.ok(seen.includes("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"));
+  releaseBed();
+  await bed;
+  resetListingUpdateCoalesceForTests();
+});
+
+test("empty Shopify body rebuilds from Intake without title price or dims", () => {
+  const item = {
+    id: "b5c575f8-4472-42f7-b1f0-86c07bf15d6c",
+    name: "RH Curved Wing Bed - 80X86X40",
+    description:
+      "This curved wing grey leather king low profile platform bed has a soft silhouette for a primary bedroom.",
+    notes: "",
+    conditionIssues: "noticeable wear",
+    retailPrice: 2495,
+    dimWidth: 80,
+    dimDepth: 86,
+    dimHeight: 40,
+    shopifyProductId: "111",
+  };
+  const empty = classifyShopifyBodyForIntake("", item.description);
+  assert.equal(empty.kind, "empty");
+  assert.equal(empty.restoreListing, true);
+  assert.equal(empty.applyDescription, false);
+  const payload = listingDeltaPayload(item, ["body"]);
+  assert.equal(payload.name, undefined);
+  assert.equal(payload.price, undefined);
+  assert.equal(payload.retailPrice, undefined);
+  assert.equal(payload.dims, undefined);
+  assert.equal(payload.replaceBody, true);
+  assert.equal(payload.rewriteBody, true);
+  assert.match(String(payload.description || ""), /wear/i);
+  assert.equal(/AS\s*IS\s*:/i.test(String(payload.description || "")), false);
+  const fields = shopifyProductFieldsFromPatch({
+    bodyHtml: "<p>" + payload.description + "</p>",
+    title: item.name,
+    price: item.retailPrice,
+    images: ["x"],
+  });
+  // Body-only update payload must not carry title/price/images when scoped correctly.
+  // shopifyProductFieldsFromPatch includes title if passed � listing-update uses allowField instead.
+  assert.equal(payload.syncFields.includes("body"), true);
+  assert.equal(payload.syncFields.includes("name"), false);
+  assert.equal(payload.syncFields.includes("price"), false);
+  assert.equal(payload.syncFields.includes("dims"), false);
+});
+
+test("image order latest-wins both directions and echo stays noop", () => {
+  const snap = snapshotHash("p1|p2|p3");
+  const intake = snapshotHash("p1|p2|p3");
+  const shopify = snapshotHash("p3|p1|p2");
+  const adopt = planImageOrderSync({
+    snapshotImagesHash: snap,
+    intakeOrderHash: intake,
+    shopifyImpliedIntakeHash: shopify,
+  });
+  assert.equal(adopt.action, "adopt_shopify");
+  const push = planImageOrderSync({
+    snapshotImagesHash: snap,
+    intakeOrderHash: shopify,
+    shopifyImpliedIntakeHash: intake,
+  });
+  assert.equal(push.action, "push_intake");
+  const clash = planImageOrderSync({
+    snapshotImagesHash: snap,
+    intakeOrderHash: snapshotHash("p2|p1|p3"),
+    shopifyImpliedIntakeHash: shopify,
+  });
+  assert.equal(clash.action, "push_intake");
+  assert.equal(clash.reason, "clash_intake_wins");
+  const echo = planImageOrderSync({
+    snapshotImagesHash: shopify,
+    intakeOrderHash: shopify,
+    shopifyImpliedIntakeHash: shopify,
+  });
+  assert.equal(echo.action, "noop");
+  const crash = planImageOrderSync({
+    snapshotImagesHash: "",
+    intakeOrderHash: intake,
+    shopifyImpliedIntakeHash: shopify,
+  });
+  assert.equal(crash.action, "push_intake");
+  assert.equal(crash.reason, "no_snapshot_intake_wins");
+  // pairs[i]=media index; positions[media]=Shopify position → sort Intake by that.
+  const ordered = intakePhotoIdsFromShopifyOrder(
+    ["p1", "p2", "p3"],
+    [2, 0, 1],
+    [3, 1, 2]
+  );
+  assert.deepEqual(ordered, ["p3", "p1", "p2"]);
+});
+
+test("sync authority clash and crash prefer Intake", () => {
+  const clash = decideSyncAuthority({
+    snapshotHash: "a",
+    intakeHash: "b",
+    shopifyHash: "c",
+  });
+  assert.equal(clash.authority, "intake");
+  assert.equal(clash.reason, "clash_intake_wins");
+  const crash = decideSyncAuthority({
+    snapshotHash: "",
+    intakeHash: "b",
+    shopifyHash: "c",
+  });
+  assert.equal(crash.authority, "intake");
+  assert.equal(crash.reason, "no_snapshot_intake_wins");
+  const shopifyOnly = decideSyncAuthority({
+    snapshotHash: "a",
+    intakeHash: "a",
+    shopifyHash: "c",
+  });
+  assert.equal(shopifyOnly.authority, "shopify");
+  const writebackClash = shopifyWritebackDecision({
+    snapshot: { title: snapshotHash("Agreed"), at: "2026-11-23T10:00:00Z" },
+    updatedAt: "2026-11-23T18:00:00Z",
+    title: "Shopify Other",
+    intakeTitle: "Intake Latest",
+  });
+  assert.equal(writebackClash.apply, false);
+  assert.equal(writebackClash.reason, "clash_intake_wins");
+  const writebackBootstrap = shopifyWritebackDecision({
+    snapshot: {},
+    updatedAt: "2026-11-23T18:00:00Z",
+    title: "Shopify Other",
+    intakeTitle: "Intake Latest",
+  });
+  assert.equal(writebackBootstrap.apply, true);
+  assert.equal(writebackBootstrap.reason, "bootstrap");
+});
+
+test("name save expands to body and tags without remangling title", () => {
+  const written = "Greg Sheres Post Modern Blonde Armoire- 42X23X75 bernis karfen";
+  const item = {
+    id: "armoire-1",
+    name: written,
+    description: "A blonde armoire with clean mid-century lines for a bedroom.",
+    notes: "",
+    conditionIssues: "",
+    ecommerceTags: "FH, B",
+    dimWidth: 42,
+    dimDepth: 23,
+    dimHeight: 75,
+    retailPrice: 80,
+    shopifyProductId: "999",
+  };
+  const named = planSaveSync({ name: { from: "old", to: written } }, item);
+  assert.equal(named.sync, true);
+  assert.equal(named.payload.name, written);
+  assert.equal(named.payload.nameOnly, undefined);
+  assert.equal(named.payload.replaceBody, true);
+  assert.equal(named.payload.syncFields.includes("body"), true);
+  assert.equal(named.payload.syncFields.includes("tags"), true);
+  assert.equal(named.payload.dims, undefined);
+  const dimsOnly = planSaveSync({ dimWidth: { from: 40, to: 42 } }, item);
+  assert.equal(dimsOnly.payload.name, undefined);
+  assert.equal(dimsOnly.payload.replaceBody, true);
+  assert.equal(dimsOnly.payload.syncFields.includes("dims"), true);
 });

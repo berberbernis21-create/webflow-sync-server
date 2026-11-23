@@ -15249,13 +15249,16 @@ app.post("/intake-images/reorder", async (req, res) => {
       },
       { log: (level, data) => webflowLog(level, data) }
     );
+    // Suppress Shopify echo webhooks from this gallery write so a products/update
+    // is not read as a fresh Shopify-side reorder and written back into Intake.
+    if (result?.ok && result?.shopifyProductId) {
+      suppressWebhookSyncForProduct(result.shopifyProductId, INTAKE_WRITE_WEBHOOK_SUPPRESS_MS);
+    }
     // Fire-and-forget Webflow/Google sync — don't block the reorder response.
-    // Suppress Shopify echo webhooks from this write so Intake isn't stamped again.
     // reorderOnly must not run that sync: it rewrites description, tags, price, and
     // name, and the listing path can call OpenAI.
     if (result?.ok && result?.shopifyProductId && req.body?.syncAfter !== false && !reorderOnly) {
       result.syncTriggered = true;
-      suppressWebhookSyncForProduct(result.shopifyProductId, INTAKE_WRITE_WEBHOOK_SUPPRESS_MS);
       void runWebhookSingleProductSyncCoalesced(result.shopifyProductId, "/intake-images/reorder").catch(
         (err) => {
           webflowLog("warn", {
@@ -15319,9 +15322,14 @@ app.post("/intake-images/listing-update", async (req, res) => {
     const result = await handleIntakeListingUpdate(req.body || {}, {
       log: (level, data) => webflowLog(level, data),
     });
-    // Fire-and-forget Webflow/Google sync — return as soon as Shopify listing write finishes.
-    // Suppress echo webhooks from this Intake write (breaks Shopify→Intake→Shopify loop).
-    if (result?.ok && result?.shopifyProductId && req.body?.syncAfter !== false) {
+    // Fire-and-forget Webflow/Google sync — only after a real Shopify write.
+    // Coalesced/deferred must NOT syncAfter (would amplify listing-update storms).
+    const coalesced =
+      result?.status === "coalesced" || result?.reason === "in_flight_collapsed";
+    const deferred = Boolean(result?.deferred) || coalesced;
+    const wroteListing =
+      Boolean(result?.ok) && !deferred && Boolean(result?.shopifyProductId);
+    if (wroteListing && req.body?.syncAfter !== false) {
       result.syncTriggered = true;
       suppressWebhookSyncForProduct(result.shopifyProductId, INTAKE_WRITE_WEBHOOK_SUPPRESS_MS);
       void runWebhookSingleProductSyncCoalesced(
@@ -15335,7 +15343,7 @@ app.post("/intake-images/listing-update", async (req, res) => {
         });
       });
     }
-    const status = result.ok ? 200 : result.deferred ? 202 : 422;
+    const status = deferred ? 202 : result.ok ? 200 : 422;
     return res.status(status).json(result);
   } catch (err) {
     webflowLog("error", {
