@@ -62,6 +62,8 @@ import {
   planLiveFlawSync,
   readLiveTraxiaExtra,
   settleBuyerListingCopy,
+  freshListingTags,
+  proseHasInventedMaker,
   stripInventedMakers,
   stripMakerTags,
   skuRemoteImageUrls,
@@ -1290,22 +1292,24 @@ test("an empty brand clears an invented maker and a set brand may keep it", () =
     "Bernis nightstand in wood with a clean, modern silhouette for bedroom styling. " +
     "This is a compact bedside table with a flat top for a lamp and a lower storage area.";
   const current = "Modern Black 3-Drawer Nightstand";
-  const healed = stripInventedMakers(stored, current, "");
-  assert.equal(/\bbernis\b/i.test(healed), false);
-  assert.match(healed, /modern black 3-drawer nightstand/i);
-  const healedTags = stripMakerTags(
-    "FH, B, nightstand, bernis, bernis-nightstand-modern-wood-",
-    current,
-    "",
-    "CABINET",
-    stored
-  );
-  assert.equal(/\bbernis\b/i.test(healedTags), false);
-  assert.match(healedTags, /FH/);
-  assert.match(healedTags, /nightstand/i);
+  assert.equal(proseHasInventedMaker(stored, ""), true);
+  assert.equal(stripInventedMakers(stored, current, ""), "");
+  const rebuilt = freshListingTags({
+    name: current,
+    brand: "",
+    websiteCategory: "B",
+    merchType: "furniture",
+  });
+  assert.equal(/\bbernis\b/i.test(rebuilt), false);
+  assert.equal(/bedside|neutral|\bwood\b/i.test(rebuilt), false);
+  assert.match(rebuilt, /^FH, B/);
+  assert.match(rebuilt, /nightstand/i);
+  assert.match(rebuilt, /modern/i);
+  assert.match(rebuilt, /black/i);
   const published = appendIntakeNotesToDescription(stored, "", "", { name: current, brand: "" });
+  assert.match(published, /this nightstand is a straightforward piece for everyday use/i);
   assert.equal(/\bbernis\b/i.test(published), false);
-  assert.match(published, /modern black 3-drawer nightstand/i);
+  assert.equal(/silhouette|bedside|modern black/i.test(published), false);
 
   const branded = stripInventedMakers(stored, current, "Bernis");
   assert.match(branded, /\bbernis\b/i);
