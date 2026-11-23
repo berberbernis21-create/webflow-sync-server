@@ -87,6 +87,19 @@ import {
   intakePhotoIdsFromShopifyOrder,
   shopifyWritebackDecision,
   snapshotHash,
+  enforceOpeningWithoutSize,
+  sentenceHasSizeOrDims,
+  displaySizePhrase,
+  naturalSizeSentence,
+  openingIsTitleRestatement,
+  sharesSubstantialPhrase,
+  labeledFurnitureInches,
+  itemIsRug,
+  attachListingDimMeta,
+  resolveListingDims,
+  rebuildListingFromCurrentState,
+  seoOpeningFallback,
+  shippingSentenceFor,
 } from "../lib/shopifyIntakeImages.js";
 import {
   planShopifyCallTimes,
@@ -1777,7 +1790,7 @@ test("empty Shopify body rebuilds from Intake without title price or dims", () =
     images: ["x"],
   });
   // Body-only update payload must not carry title/price/images when scoped correctly.
-  // shopifyProductFieldsFromPatch includes title if passed � listing-update uses allowField instead.
+  // shopifyProductFieldsFromPatch includes title if passed — listing-update uses allowField instead.
   assert.equal(payload.syncFields.includes("body"), true);
   assert.equal(payload.syncFields.includes("name"), false);
   assert.equal(payload.syncFields.includes("price"), false);
@@ -2080,4 +2093,430 @@ test("model output is one marketing paragraph after a doubled reply or a conditi
     if (previousKey == null) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = previousKey;
   }
+});
+
+function firstSentence(prose) {
+  const plain = String(prose || "").replace(/\n*Dimensions:\s*[\s\S]*$/i, "").trim();
+  return plain.split(/(?<=[.!?])\s+/).filter(Boolean)[0] || "";
+}
+
+function bodySentences(prose) {
+  const plain = String(prose || "")
+    .replace(/\n*Dimensions:\s*[\s\S]*$/i, "")
+    .replace(/Pickup is available[\s\S]*$/i, "")
+    .trim();
+  return plain.split(/(?<=[.!?])\s+/).filter(Boolean);
+}
+
+function sizeSentence(prose) {
+  const hits = bodySentences(prose).filter((part) => sentenceHasSizeOrDims(part));
+  assert.equal(hits.length, 1, prose);
+  return hits[0];
+}
+
+function assertOpeningRules(out, { expectSize, expectWear = false }) {
+  const first = firstSentence(out);
+  assert.ok(first);
+  assert.equal(sentenceHasSizeOrDims(first), false, first);
+  assert.equal(/\b\d+\s*[xX×]\s*\d+/.test(first), false);
+  assert.equal(/room-ready size/i.test(first), false);
+  const body = String(out || "").replace(/\n*Dimensions:\s*[\s\S]*$/i, "").trim();
+  assert.equal((body.match(/Pickup is available in Scottsdale/g) || []).length, 1);
+  assert.equal(/AS IS\s*:/i.test(out), false);
+  if (expectSize) {
+    const size = sizeSentence(out);
+    for (const other of bodySentences(out)) {
+      if (other === size) continue;
+      assert.equal(sharesSubstantialPhrase(size, other), false, `${size} :: ${other}`);
+    }
+  } else {
+    assert.equal(bodySentences(out).some((part) => sentenceHasSizeOrDims(part)), false, out);
+  }
+  if (expectWear) {
+    assert.match(body, /noticeable wear/i);
+    assert.ok((body.match(/\bAS IS\b/gi) || []).length <= 1);
+  }
+}
+
+test("Jaipur rug opening drops size and weaves once", () => {
+  const garbage =
+    "Jaipur wool area rug 8x10 in a versatile, room-ready size for living rooms, bedrooms, and dining areas. Woven in wool for a naturally resilient feel underfoot, it adds warmth and texture while helping define a seating group or anchor a bed. The design reads as a classic area rug look that layers easily with modern, traditional, or transitional furniture. Wool wears well and feels comfortable year-round. A well-chosen rug can make the whole room feel finished.";
+  const item = {
+    name: "Jaipur Wool Area Rug - 8X10",
+    brand: "Jaipur",
+    websiteCategory: "R",
+    dimWidth: 8,
+    dimDepth: 0.5,
+    dimHeight: 10,
+    weightLbs: 59,
+  };
+  const out = finalizeListingDescription(garbage, item);
+  assertOpeningRules(out, { expectSize: true });
+  const size = sizeSentence(out);
+  assert.match(size, /\b8 by 10\b/);
+  assert.equal(/living rooms, bedrooms, and dining areas/i.test(size), false);
+  assert.equal(/8x10/i.test(firstSentence(out)), false);
+  const html = composeShopifyBodyHtml(out, {
+    width: 8,
+    depth: 0.5,
+    height: 10,
+    weightLbs: 59,
+    websiteCategory: "R",
+  });
+  assert.match(html, /Width: 8'/);
+  assert.match(html, /Depth: 0\.5&quot;/);
+  assert.match(html, /Height: 10'/);
+});
+
+test("Greg Sheres armoire opening has labeled inches", () => {
+  const raw =
+    "Greg Sheres Post Modern Blonde Armoire- 42X23X75 bernis karfen in a room-ready size for bedrooms. Blonde wood and clean post-modern lines make a strong storage statement.";
+  const item = {
+    name: "Greg Sheres Post Modern Blonde Armoire- 42X23X75 bernis karfen",
+    brand: "Greg Sheres",
+    dimWidth: 42,
+    dimDepth: 23,
+    dimHeight: 75,
+    weightLbs: 120,
+  };
+  assert.equal(
+    openingIsTitleRestatement("Greg Sheres Post Modern Blonde Armoire bernis karfen for bedrooms.", item),
+    true
+  );
+  const out = finalizeListingDescription(raw, item);
+  assertOpeningRules(out, { expectSize: true });
+  const first = firstSentence(out);
+  assert.equal(/bernis karfen/i.test(first), false);
+  assert.equal(/clean lines/i.test(first), false);
+  assert.equal(/tall storage/i.test(first), false);
+  assert.equal(/bedroom or hallway/i.test(first), false);
+  assert.equal(sharesSubstantialPhrase(first, bodySentences(out).slice(1).join(" ")), false);
+  const size = sizeSentence(out);
+  assert.match(size, /42 inches wide/);
+  assert.match(size, /23 inches deep/);
+  assert.match(size, /75 inches tall/);
+  assert.equal(/42 by 23 by 75/.test(size), false);
+  assert.deepEqual(labeledFurnitureInches(item), [
+    "42 inches wide",
+    "23 inches deep",
+    "75 inches tall",
+  ]);
+  assert.match(out, /Please see Delivery, Pickup & Freight Options/);
+  // compose must not gut the woven size when attaching the Dimensions footer
+  const html = composeShopifyBodyHtml(out, {
+    width: 42,
+    depth: 23,
+    height: 75,
+    weightLbs: 120,
+  }, item);
+  assert.match(html, /It measures 42 inches wide, 23 inches deep, and 75 inches tall/);
+  assert.equal(/It measures,\s*so it works/i.test(html), false);
+  assert.match(html, /Dimensions: Width: 42/);
+});
+
+test("title without size gets no size sentence", () => {
+  const raw =
+    "Vintage oak console with a warm aged finish. It sits well against a wall and softens an entry or living room.";
+  const out = finalizeListingDescription(raw, { name: "Vintage Oak Console", weightLbs: 55 });
+  assertOpeningRules(out, { expectSize: false });
+  assert.match(out, /Please see Delivery, Pickup & Freight Options/);
+  assert.equal(firstSentence(out), "Vintage oak console with a warm aged finish.");
+});
+
+test("AS IS Extra Information keeps wear and clean opening", () => {
+  const raw =
+    "Restoration Hardware grey leather king bed 80X90 in a versatile size for primary bedrooms. Low profile lines and soft grey leather suit a modern suite.";
+  const item = {
+    name: "RH Curved Wing Grey Leather King Low Profile Bed- AS IS",
+    brand: "Restoration Hardware",
+    notes: "noticeable wear",
+    dimWidth: 80,
+    dimDepth: 90,
+    dimHeight: 12,
+  };
+  const out = finalizeListingDescription(raw, item);
+  assertOpeningRules(out, { expectSize: true, expectWear: true });
+  const size = sizeSentence(out);
+  assert.match(size, /80 inches wide/);
+  assert.match(size, /90 inches deep/);
+  assert.equal(/80 by 90 by 12/.test(size), false);
+});
+
+test("title-only opening is rebuilt not passed through", () => {
+  const item = {
+    name: "Greg Sheres Post Modern Blonde Armoire- 42X23X75 bernis karfen",
+    brand: "Greg Sheres",
+    dimWidth: 42,
+    dimDepth: 23,
+    dimHeight: 75,
+  };
+  const rest = "Blonde wood and clean post-modern lines make a strong storage statement.";
+  const out = enforceOpeningWithoutSize(
+    `Greg Sheres Post Modern Blonde Armoire bernis karfen for bedrooms. ${rest}`,
+    item
+  );
+  const first = firstSentence(out);
+  assert.equal(openingIsTitleRestatement(first, item), false);
+  assert.equal(/bernis karfen/i.test(first), false);
+  assert.equal(/clean lines/i.test(first), false);
+  assert.equal(/tall storage/i.test(first), false);
+  assert.equal(sharesSubstantialPhrase(first, rest), false);
+  const rebuilt = seoOpeningFallback(item, rest);
+  assert.equal(/with clean|silhouette|tall storage/i.test(rebuilt), false);
+});
+
+test("enforceOpeningWithoutSize is idempotent", () => {
+  const item = { name: "Jaipur Wool Area Rug - 8X10", websiteCategory: "R" };
+  const once = enforceOpeningWithoutSize(
+    "Jaipur wool area rug 8x10 in a versatile, room-ready size for living rooms. Woven wool feels resilient underfoot. Pickup is available in Scottsdale, and we offer both local and nationwide delivery.",
+    item
+  );
+  const twice = enforceOpeningWithoutSize(once, item);
+  assert.equal(once, twice);
+  assert.equal(bodySentences(once).filter((part) => sentenceHasSizeOrDims(part)).length, 1);
+});
+
+test("rug dimensions footer uses feet and inch pile", () => {
+  assert.equal(itemIsRug({ websiteCategory: "R" }), true);
+  const line = formatShopifyDimsLine({
+    width: 8,
+    depth: 0.5,
+    height: 10,
+    weightLbs: 59,
+    websiteCategory: "R",
+  });
+  assert.match(line, /Width: 8'/);
+  assert.match(line, /Depth: 0\.5"/);
+  assert.match(line, /Height: 10'/);
+});
+
+test("rug over cutoff footprint reads as inches", () => {
+  const line = formatShopifyDimsLine({
+    width: 24,
+    depth: 0.4,
+    height: 36,
+    websiteCategory: "Rugs",
+  });
+  assert.match(line, /Width: 24"/);
+  assert.match(line, /Height: 36"/);
+  assert.match(line, /Depth: 0\.4"/);
+});
+
+test("rug respects stored ft unit fields", () => {
+  const line = formatShopifyDimsLine({
+    width: 9,
+    depth: 0.5,
+    height: 12,
+    websiteCategory: "R",
+    dimWidthUnit: "ft",
+    dimDepthUnit: "in",
+    dimHeightUnit: "ft",
+  });
+  assert.match(line, /Width: 9'/);
+  assert.match(line, /Depth: 0\.5"/);
+  assert.match(line, /Height: 12'/);
+});
+
+test("non-rug dimensions stay inches", () => {
+  const line = formatShopifyDimsLine({
+    width: 24,
+    depth: 26,
+    height: 32,
+    websiteCategory: "L",
+  });
+  assert.match(line, /Width: 24"/);
+  assert.match(line, /Depth: 26"/);
+  assert.match(line, /Height: 32"/);
+});
+
+test("rug feet reach every dims footer caller", () => {
+  const rugNums = { width: 8, depth: 0.5, height: 10, weightLbs: 59 };
+  const rugMeta = { websiteCategory: "R" };
+  const item = {
+    name: "Jaipur Wool Area Rug - 8X10",
+    brand: "Jaipur",
+    websiteCategory: "R",
+    dimWidth: 8,
+    dimDepth: 0.5,
+    dimHeight: 10,
+    weightLbs: 59,
+  };
+  const prose =
+    "Jaipur wool area rug for living rooms. Soft wool pile feels resilient underfoot.";
+  const expectFeet = (text, label) => {
+    const plain = String(text)
+      .replace(/&#39;/g, "'")
+      .replace(/&quot;/g, '"')
+      .replace(/<[^>]+>/g, " ");
+    assert.match(plain, /Width: 8'/, label);
+    assert.match(plain, /Depth: 0\.5"/, label);
+    assert.match(plain, /Height: 10'/, label);
+    assert.equal(/Width: 8"/.test(plain), false, label);
+  };
+
+  // Direct footer helper
+  expectFeet(formatShopifyDimsLine({ ...rugNums, ...rugMeta }), "formatShopifyDimsLine");
+
+  // Shared meta attach (numbers-only dims + item)
+  expectFeet(
+    formatShopifyDimsLine(attachListingDimMeta(rugNums, item)),
+    "attachListingDimMeta"
+  );
+
+  // resolveListingDims must not drop category
+  const resolved = resolveListingDims({ ...rugNums, ...rugMeta }, "");
+  assert.equal(resolved.websiteCategory, "R");
+  expectFeet(formatShopifyDimsLine(resolved), "resolveListingDims");
+
+  // compose / listingBodyHtmlForUpdate / rebuild (deleted-body style)
+  expectFeet(
+    composeShopifyBodyHtml(prose, rugNums, item),
+    "composeShopifyBodyHtml with item"
+  );
+  expectFeet(
+    listingBodyHtmlForUpdate("", prose, { ...rugNums, ...rugMeta }, { clearedBody: true }),
+    "listingBodyHtmlForUpdate"
+  );
+  const rebuilt = rebuildListingFromCurrentState({
+    description: prose,
+    item,
+    // Mirror-style dims: numbers only — category must come from item
+    dims: rugNums,
+    title: item.name,
+  });
+  expectFeet(rebuilt.body, "rebuildListingFromCurrentState");
+
+  // Finalize prose + compose footer (JS finalize leaves dims to composeShopifyBodyHtml)
+  expectFeet(
+    composeShopifyBodyHtml(finalizeListingDescription(prose, item), rugNums, item),
+    "finalizeListingDescription + composeShopifyBodyHtml"
+  );
+});
+
+test("rug feet drive freight closing at 40 lb", () => {
+  const item = {
+    name: "Jaipur Wool Area Rug - 8X10",
+    brand: "Jaipur",
+    websiteCategory: "R",
+    dimWidth: 8,
+    dimDepth: 0.5,
+    dimHeight: 10,
+    weightLbs: 40,
+  };
+  assert.match(shippingSentenceFor(item), /Please see Delivery, Pickup & Freight Options/);
+  const out = finalizeListingDescription(
+    "Jaipur wool area rug for living rooms. Soft wool pile underfoot.",
+    item
+  );
+  assert.match(out, /Please see Delivery, Pickup & Freight Options/);
+});
+
+test("inch mat at 5 lb stays parcel closing", () => {
+  const item = {
+    name: "Small Wool Mat - 24X36",
+    websiteCategory: "R",
+    dimWidth: 24,
+    dimDepth: 0.4,
+    dimHeight: 36,
+    weightLbs: 5,
+  };
+  assert.equal(
+    shippingSentenceFor(item),
+    "Pickup is available in Scottsdale, and we offer both local and nationwide delivery."
+  );
+  const out = finalizeListingDescription("Small wool mat for an entry. Soft underfoot.", item);
+  assert.equal(/Please see Delivery, Pickup & Freight Options/.test(out), false);
+  assert.match(out, /Pickup is available in Scottsdale/);
+});
+
+test("non-rug closing unchanged by feet conversion", () => {
+  assert.equal(
+    shippingSentenceFor({
+      name: "Oak Nightstand",
+      dimWidth: 24,
+      dimDepth: 16,
+      dimHeight: 26,
+      weightLbs: 20,
+    }),
+    "Pickup is available in Scottsdale, and we offer both local and nationwide delivery."
+  );
+  assert.match(
+    shippingSentenceFor({
+      name: "Greg Sheres Armoire",
+      dimWidth: 42,
+      dimDepth: 23,
+      dimHeight: 75,
+      weightLbs: 40,
+    }),
+    /Please see Delivery, Pickup & Freight Options/
+  );
+});
+
+test("published size sentences never lose their numbers", () => {
+  const broken = /\bmeasures,\s|\bmeasures\s+so\b|\bAt\s*,|\bfootprint of\s*,/i;
+  const cases = [
+    {
+      name: "Greg Sheres Post Modern Blonde Armoire- 42X23X75 bernis karfen",
+      brand: "Greg Sheres",
+      raw: "Greg Sheres Post Modern Blonde Armoire- 42X23X75 bernis karfen in a room-ready size for bedrooms. Blonde wood and clean post-modern lines make a strong storage statement.",
+      dims: { width: 42, depth: 23, height: 75, weightLbs: 120 },
+      item: { dimWidth: 42, dimDepth: 23, dimHeight: 75, weightLbs: 120, brand: "Greg Sheres" },
+      expect: /It measures 42 inches wide, 23 inches deep, and 75 inches tall/,
+    },
+    {
+      name: "Vintage Oak Console",
+      raw: "Vintage oak console with a warm aged finish. It sits well against a wall and softens an entry or living room.",
+      dims: { width: 48, depth: 16, height: 30, weightLbs: 55 },
+      item: { dimWidth: 48, dimDepth: 16, dimHeight: 30, weightLbs: 55 },
+      expect: /It measures 48 inches wide, 16 inches deep, and 30 inches tall/,
+    },
+    {
+      name: "Jaipur Wool Area Rug - 8X10",
+      brand: "Jaipur",
+      websiteCategory: "R",
+      raw: "Jaipur wool area rug 8x10 in a versatile, room-ready size for living rooms. Woven in wool for a naturally resilient feel underfoot.",
+      dims: { width: 8, depth: 0.5, height: 10, weightLbs: 59, websiteCategory: "R" },
+      item: {
+        websiteCategory: "R",
+        dimWidth: 8,
+        dimDepth: 0.5,
+        dimHeight: 10,
+        weightLbs: 59,
+        brand: "Jaipur",
+      },
+      expect: /\b8 by 10\b/,
+    },
+    {
+      name: "RH Curved Wing Grey Leather King Low Profile Bed- AS IS",
+      brand: "Restoration Hardware",
+      notes: "noticeable wear",
+      raw: "Restoration Hardware grey leather king bed 80X90 in a versatile size for primary bedrooms. Low profile lines and soft grey leather suit a modern suite.",
+      dims: { width: 80, depth: 90, height: 12, weightLbs: 180 },
+      item: {
+        brand: "Restoration Hardware",
+        notes: "noticeable wear",
+        dimWidth: 80,
+        dimDepth: 90,
+        dimHeight: 12,
+        weightLbs: 180,
+      },
+      expect: /It measures 80 inches wide and 90 inches deep/,
+    },
+  ];
+  for (const fx of cases) {
+    const item = { name: fx.name, brand: fx.brand || "", ...fx.item };
+    const prose = finalizeListingDescription(fx.raw, item, fx.notes || item.notes || "", "");
+    const html = composeShopifyBodyHtml(prose, fx.dims, item);
+    assert.equal(broken.test(prose), false, `prose broken for ${fx.name}: ${prose}`);
+    assert.equal(broken.test(html), false, `html broken for ${fx.name}: ${html}`);
+    assert.match(prose, fx.expect, fx.name);
+    assert.match(html.replace(/&quot;/g, '"').replace(/&#39;/g, "'"), fx.expect, fx.name);
+  }
+  // Junk dumps without "inches" still strip
+  assert.equal(
+    /27\.5 wide/.test(
+      stripListingDimJunk("Overall size is about 27.5 wide x 1.5 deep x 41.5 high. Nice piece.")
+    ),
+    false
+  );
 });

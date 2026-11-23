@@ -99,6 +99,7 @@ import {
   skuFieldDataWithReadyImages,
   shopifyCdnImageIsReady,
 } from "./lib/shopifyIntakeImages.js";
+import { runWithShopifyPriority } from "./lib/shopifyThrottle.js";
 
 dotenv.config();
 
@@ -5810,11 +5811,24 @@ function buildDimensionsValidateNoteHtml(missingKeys) {
 function formatDimensionsForDescription(dims) {
   if (!dims || !hasAnyDimensions(dims)) return "";
   // Map sync dims (length=depth) onto Intake-style keys used by formatShopifyDimsLine.
+  // Pass category/units through so rugs keep feet when Traxia/sync dims carry them.
   const line = formatShopifyDimsLine({
     width: dims.width,
     depth: dims.length ?? dims.depth,
     height: dims.height,
     weightLbs: dims.weight,
+    websiteCategory: dims.websiteCategory ?? dims.website_category ?? "",
+    category: dims.category ?? "",
+    dimWidthUnit: dims.dimWidthUnit ?? dims.dim_width_unit ?? dims.widthUnit ?? "",
+    dimDepthUnit:
+      dims.dimDepthUnit ??
+      dims.dim_depth_unit ??
+      dims.dimLengthUnit ??
+      dims.dim_length_unit ??
+      dims.lengthUnit ??
+      dims.depthUnit ??
+      "",
+    dimHeightUnit: dims.dimHeightUnit ?? dims.dim_height_unit ?? dims.heightUnit ?? "",
   });
   return line || "";
 }
@@ -15368,10 +15382,36 @@ app.post("/intake-images/listing-update", async (req, res) => {
   if (!(process.env.SHOPIFY_STORE && process.env.SHOPIFY_ACCESS_TOKEN)) {
     return res.status(503).json({ ok: false, error: "SHOPIFY_STORE and SHOPIFY_ACCESS_TOKEN required" });
   }
-  try {
-    const result = await handleIntakeListingUpdate(req.body || {}, {
-      log: (level, data) => webflowLog(level, data),
+  // Our own write comes back as a products/update webhook. Hold that webhook
+  // off for a moment and run the one Webflow/Google sync ourselves.
+  const afterOwnListingWrite = (written) => {
+    suppressWebhookSyncForProduct(written.shopifyProductId, INTAKE_WRITE_WEBHOOK_SUPPRESS_MS);
+    void runWebhookSingleProductSyncCoalesced(
+      written.shopifyProductId,
+      "/intake-images/listing-update"
+    ).catch((err) => {
+      webflowLog("warn", {
+        event: "intake_images.listing_update.sync_trigger_failed",
+        shopifyProductId: written.shopifyProductId,
+        message: err?.message || String(err),
+      });
     });
+  };
+  try {
+    // A user edit in Intake: its Shopify calls go ahead of bulk and Webflow
+    // sync calls waiting on the shared rate limit. The follow-up sync below
+    // runs outside this scope, at normal priority.
+    const result = await runWithShopifyPriority(() =>
+      handleIntakeListingUpdate(req.body || {}, {
+        log: (level, data) => webflowLog(level, data),
+        // A coalesced follow-up or a corrective rebuild writes Shopify after
+        // this request has been answered. It gets the same treatment as the
+        // first write.
+        onFollowUpWrite: (written) => {
+          if (req.body?.syncAfter !== false) afterOwnListingWrite(written);
+        },
+      })
+    );
     // Fire-and-forget Webflow/Google sync — only after a real Shopify write.
     // Coalesced/deferred must NOT syncAfter (would amplify listing-update storms).
     const coalesced =
@@ -15381,17 +15421,7 @@ app.post("/intake-images/listing-update", async (req, res) => {
       Boolean(result?.ok) && !deferred && Boolean(result?.shopifyProductId);
     if (wroteListing && req.body?.syncAfter !== false) {
       result.syncTriggered = true;
-      suppressWebhookSyncForProduct(result.shopifyProductId, INTAKE_WRITE_WEBHOOK_SUPPRESS_MS);
-      void runWebhookSingleProductSyncCoalesced(
-        result.shopifyProductId,
-        "/intake-images/listing-update"
-      ).catch((err) => {
-        webflowLog("warn", {
-          event: "intake_images.listing_update.sync_trigger_failed",
-          shopifyProductId: result.shopifyProductId,
-          message: err?.message || String(err),
-        });
-      });
+      afterOwnListingWrite(result);
     }
     const status = deferred ? 202 : result.ok ? 200 : 422;
     return res.status(status).json(result);
