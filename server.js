@@ -8971,7 +8971,13 @@ async function syncSingleProductCore(product, cache, options = {}) {
       // Never write dims-only stubs — Helper prose must already be present.
       // Empty body after strip means listing-update has not landed yet; leave body alone.
       if (body) {
-        const newDescription = (body + "<br><br>" + dimStr).trim();
+        const dimLine = String(dimStr).replace(/\s*\n+\s*/g, " ").replace(/\s{2,}/g, " ").trim();
+        const base = body.replace(/(?:<br\s*\/?>\s*)+$/i, "").trim();
+        // Keep the footer in the last paragraph. <br><br> after </p> plus
+        // the paragraph margin is the large gap above Dimensions.
+        const newDescription = /<\/p>\s*$/i.test(base)
+          ? base.replace(/(?:<br\s*\/?>\s*)*<\/p>\s*$/i, `<br><br>${dimLine}</p>`)
+          : `${base}<br><br>${dimLine}`;
         if (newDescription !== originalDescription) {
           description = newDescription;
           descriptionChanged = true;

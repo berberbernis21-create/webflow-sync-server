@@ -71,6 +71,9 @@ import {
   shopifyCdnImageIsReady,
   descriptionHasStackedProductProse,
   descriptionHasStackedWear,
+  finalizeListingDescription,
+  marketingListingBase,
+  listingDeltaPayload,
 } from "../lib/shopifyIntakeImages.js";
 import {
   planShopifyCallTimes,
@@ -1442,4 +1445,103 @@ test("Luxury Goods tags are LG and the category code only", () => {
   assert.deepEqual(dining.slice(0, 2), ["FH", "D"]);
   assert.equal(dining.includes("X"), false);
   assert.equal(dining.includes("table"), true);
+});
+
+test("from-scratch rewrite weaves Extra Info noticeable wear and drops dual paragraphs", () => {
+  const p1 =
+    "Grey leather king low profile platform bed with a curved wing upholstered headboard. " +
+    "Tailored grey leather upholstery wraps the headboard and frame for a clean, modern look, " +
+    "while the distinctive wraparound wing silhouette adds depth and a subtle wingback feel. " +
+    "The low profile design keeps the mattress closer to the floor for a streamlined, contemporary " +
+    "bedroom footprint. It pairs easily with wood, linen, or metal nightstands in both modern and " +
+    "transitional interiors.";
+  const p2 =
+    "This RH curved wing grey leather king low profile bed features a sleek upholstered headboard " +
+    "and a distinctive wraparound wing silhouette. Designed to anchor your primary bedroom, this " +
+    "king-size platform bed showcases clean and tailored grey leather upholstery that enhances its " +
+    "modern aesthetic. The low profile frame positions the mattress closer to the floor, creating a " +
+    "streamlined look, while the curved wings add visual depth to the headboard. Ideal for contemporary " +
+    "and transitional interiors, it pairs beautifully with wood, linen, or metal nightstands.";
+  const dual = `${p1} ${p2}`;
+  const woven =
+    "Sold AS IS with noticeable wear consistent with prior use; " +
+    "please review photos for the most accurate view of condition.";
+  const stockVisible =
+    "Sold AS IS with visible wear consistent with prior use; " +
+    "please review photos for the most accurate view of condition.";
+  const item = {
+    name: "RH Curved Wing Grey Leather King Low Profile Bed- AS IS",
+    merchType: "furniture",
+    category: "BED",
+    ecommerceTags: "FH, B",
+    dimWidth: 82.5,
+    dimLength: 91,
+    dimHeight: 37.5,
+    weightLbs: 91,
+  };
+
+  assert.equal(descriptionHasStackedProductProse(dual), true);
+  assert.equal(/This RH curved wing/i.test(marketingListingBase(dual)), false);
+
+  const out = finalizeListingDescription(dual, item, "noticeable wear", "");
+  assert.match(out, /^Grey leather king low profile platform bed/);
+  assert.equal(/This RH curved wing/i.test(out), false);
+  assert.equal(/Designed to anchor your primary bedroom/i.test(out), false);
+  assert.equal(/Ideal for contemporary/i.test(out), false);
+  assert.match(out, /noticeable wear/i);
+  assert.equal(out.includes(woven), true);
+  assert.equal(out.includes(stockVisible), false);
+  assert.equal((out.match(/Pickup is available in Scottsdale/g) || []).length, 1);
+  assert.ok(out.indexOf(woven) < out.indexOf("Pickup is available in Scottsdale"));
+
+  // Empty / dirty prior Shopify body is ignored — from-scratch only.
+  const empty = appendIntakeNotesToDescription(p1, "noticeable wear", "", item);
+  assert.equal(/This RH curved wing/i.test(empty), false);
+  assert.equal(empty.includes(woven), true);
+
+  // Coalesce rebuild uses latest Extra Info and replaceBody.
+  const queued = resolveQueuedListingJob(
+    { __rebuildFromCurrent: true, syncFields: ["body"], queuedAt: "2026-11-23T15:00:00Z" },
+    {
+      id: "d5efd059-f2e9-48cf-aa86-9c5634634ffb",
+      name: item.name,
+      description: dual,
+      notes: "noticeable wear",
+      conditionIssues: "",
+      ecommerceTags: "FH, B",
+      merchType: "furniture",
+      dimWidth: 82.5,
+      dim_length: 91,
+      dimHeight: 37.5,
+      weightLbs: 91,
+      shopifyProductId: "9824309084419",
+    }
+  );
+  assert.equal(queued.action, "write");
+  assert.equal(queued.payload.replaceBody, true);
+  assert.equal(queued.payload.rewriteBody, true);
+  assert.equal(queued.payload.forceRefresh, true);
+  assert.equal(queued.payload.notes, "noticeable wear");
+  assert.equal(queued.payload.description.includes(woven), true);
+  assert.equal(/This RH curved wing/i.test(queued.payload.description), false);
+
+  const delta = listingDeltaPayload(
+    {
+      id: "d5efd059-f2e9-48cf-aa86-9c5634634ffb",
+      name: item.name,
+      description: p1,
+      notes: "noticeable wear",
+      conditionIssues: "",
+      ecommerceTags: "FH, B",
+      merchType: "furniture",
+      dimWidth: 82.5,
+      dimLength: 91,
+      dimHeight: 37.5,
+      weightLbs: 91,
+    },
+    ["body"]
+  );
+  assert.equal(delta.replaceBody, true);
+  assert.equal(delta.rewriteBody, true);
+  assert.equal(delta.description.includes(woven), true);
 });
