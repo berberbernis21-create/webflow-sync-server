@@ -46,6 +46,7 @@ import {
   planShopifyRelink,
   planManualShopifyLink,
   gallerySyncOutcome,
+  reorderOnlySyncDecision,
   galleryImagesToDelete,
   intakePhotosShouldUpload,
   listingProductOmitsImages,
@@ -1838,4 +1839,25 @@ test("name save expands to body and tags without remangling title", () => {
   assert.equal(dimsOnly.payload.name, undefined);
   assert.equal(dimsOnly.payload.replaceBody, true);
   assert.equal(dimsOnly.payload.syncFields.includes("dims"), true);
+});
+
+test("reorder only stays pending when photos could not be paired", () => {
+  const missed = reorderOnlySyncDecision({ desired: 2, unmatched: 2, moved: 0, failedMoves: 0 });
+  assert.equal(missed.status, "pending");
+  assert.equal(missed.retry, false);
+  assert.equal(missed.reorderOk, false);
+  assert.equal(missed.orderVerified, false);
+
+  const already = reorderOnlySyncDecision({ desired: 2, unmatched: 0, moved: 0, failedMoves: 0 });
+  assert.equal(already.status, "synced");
+  assert.equal(already.retry, false);
+  assert.equal(already.orderVerified, true);
+
+  const moved = reorderOnlySyncDecision({ desired: 2, unmatched: 0, moved: 1, failedMoves: 0 });
+  assert.equal(moved.status, "synced");
+  assert.equal(moved.orderVerified, true);
+
+  const moveFailed = reorderOnlySyncDecision({ desired: 2, unmatched: 0, moved: 0, failedMoves: 1 });
+  assert.equal(moveFailed.status, "pending");
+  assert.equal(moveFailed.retry, true);
 });
