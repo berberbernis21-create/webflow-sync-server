@@ -1338,3 +1338,25 @@ test("Furniture / Home and Office Den tags are FH and O only", () => {
   assert.equal(accessories.includes("X"), true);
   assert.equal(accessories.some((tag) => /^accessories$/i.test(tag)), false);
 });
+
+test("Luxury Goods tags are LG and the category code only", () => {
+  const tags = mergeShopifyListingTags({
+    existingTags: "LG, X, H, Handbags",
+    ecommerceTags: "LG, X, H, Handbags, leather",
+    merchType: "luxury",
+    websiteCategory: "Handbags",
+  });
+  assert.deepEqual(tags.slice(0, 2), ["LG", "H"]);
+  assert.equal(tags.includes("X"), false);
+  assert.equal(tags.some((tag) => /handbag/i.test(tag)), false);
+  assert.equal(tags.includes("leather"), true);
+  const dining = mergeShopifyListingTags({
+    existingTags: "FH, X, D, Dining Room",
+    ecommerceTags: "FH, X, D, Dining Room, table",
+    merchType: "furniture",
+    websiteCategory: "Dining Room",
+  });
+  assert.deepEqual(dining.slice(0, 2), ["FH", "D"]);
+  assert.equal(dining.includes("X"), false);
+  assert.equal(dining.includes("table"), true);
+});
