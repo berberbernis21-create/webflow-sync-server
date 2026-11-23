@@ -74,6 +74,7 @@ import {
   descriptionHasStackedProductProse,
   descriptionHasStackedWear,
   finalizeListingDescription,
+  generateShopifyListingProse,
   marketingListingBase,
   listingDeltaPayload,
   handleIntakeListingUpdate,
@@ -1960,4 +1961,72 @@ test("a private note is not published and a zinc desk is kept", () => {
   assert.equal(out.includes("Call Mike"), false);
   assert.match(out, /Zinc desk/);
   assert.equal(proseHasInventedMaker("Zinc desk with a single drawer.", ""), false);
+});
+
+test("model output is one marketing paragraph after a doubled reply or a condition sentence", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = "test-key";
+  const first =
+    "Grey leather king low profile platform bed with a curved wing upholstered headboard. Tailored grey leather upholstery wraps the headboard and frame for a clean, modern look.";
+  const second =
+    "This RH curved wing grey leather king low profile bed features a sleek upholstered headboard and a distinctive wraparound wing silhouette.";
+  const reply = (description) => ({
+    status: 200,
+    data: { choices: [{ message: { content: JSON.stringify({ description, tags: "FH, B, bed" }) } }] },
+  });
+  try {
+    let prompt = "";
+    const doubled = await generateShopifyListingProse(
+      {
+        name: "RH Curved Wing Grey Leather King Low Profile Bed",
+        description: first,
+        brand: "RH",
+        category: "BED",
+        merchType: "furniture",
+      },
+      {
+        post: async (_url, data) => {
+          prompt = data.messages.map((message) => message.content).join("\n");
+          return reply(`${first} ${second}`);
+        },
+      }
+    );
+    assert.equal(doubled.ok, true);
+    assert.match(doubled.description, /^Grey leather king low profile platform bed/);
+    assert.match(doubled.description, /Tailored grey leather/);
+    assert.equal(doubled.description.includes("This RH curved wing"), false);
+    assert.equal(prompt.includes("EXISTING DESCRIPTION"), false);
+    assert.equal(prompt.includes(first), false);
+    assert.match(prompt, /one new description/i);
+    assert.match(prompt, /Do not include condition, wear, or AS IS wording/);
+
+    const worn = await generateShopifyListingProse(
+      {
+        name: "RH Curved Wing Grey Leather King Low Profile Bed",
+        description: first,
+        brand: "RH",
+        merchType: "furniture",
+      },
+      {
+        post: async () =>
+          reply(
+            `${first} It shows light wear consistent with age. The description is based on the name provided.`
+          ),
+      }
+    );
+    assert.equal(worn.ok, true);
+    assert.match(worn.description, /Grey leather king low profile platform bed/);
+    assert.match(worn.description, /Tailored grey leather/);
+    assert.equal(worn.description.includes("light wear"), false);
+    assert.equal(worn.description.includes("Age."), false);
+    assert.equal(worn.description.includes("based on the name"), false);
+    assert.equal(/straightforward piece/i.test(worn.description), false);
+    const published = finalizeListingDescription(worn.description, { name: "RH Curved Wing Grey Leather King Low Profile Bed", brand: "RH" }, "", "");
+    assert.equal(published.includes("light wear"), false);
+    assert.equal(published.includes("This RH curved wing"), false);
+    assert.match(published, /Grey leather king low profile platform bed/);
+  } finally {
+    if (previousKey == null) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousKey;
+  }
 });
