@@ -8205,17 +8205,76 @@ async function syncSingleProductCore(product, cache, options = {}) {
     detectedVertical = hardFhLgLock.vertical;
     verticalCorrected = false;
     manualEcommerceLock = hardFhLgLock;
+    const priorVertical = cacheEntry?.vertical || placedVertical?.vertical || null;
     webflowLog("info", {
       event: "vertical.locked_hard_ecommerce_tag",
       shopifyProductId,
       productTitle: product.title || "",
       vertical: hardFhLgLock.vertical,
       tag: hardFhLgLock.tag,
+      previousVertical: priorVertical,
       message:
         hardFhLgLock.tag === ECOMMERCE_VERTICAL_TAG_LUXURY
           ? "LG tag — absolute Luxury lock; classifier and LLM skipped"
           : "FH tag — absolute Furniture lock; classifier and LLM skipped",
     });
+
+    // FH/LG flip vs where the item already lives → move + always email (both directions).
+    if (priorVertical && priorVertical !== hardFhLgLock.vertical && cacheEntry?.webflowId) {
+      const from = priorVertical;
+      const to = hardFhLgLock.vertical;
+      if (from === "furniture" && to === "luxury") {
+        const furnitureConfig = getWebflowConfig("furniture");
+        if (furnitureConfig?.siteId && furnitureConfig?.token) {
+          try {
+            await deleteWebflowEcommerceProduct(furnitureConfig.siteId, cacheEntry.webflowId, furnitureConfig.token);
+            webflowLog("info", {
+              event: "vertical.hard_tag_move.removed_furniture",
+              shopifyProductId,
+              webflowId: cacheEntry.webflowId,
+              tag: hardFhLgLock.tag,
+            });
+          } catch (err) {
+            webflowLog("error", {
+              event: "vertical.hard_tag_move.remove_furniture_failed",
+              shopifyProductId,
+              webflowId: cacheEntry.webflowId,
+              message: err.message,
+            });
+          }
+        }
+      } else if (from === "luxury" && to === "furniture") {
+        const luxuryConfig = getWebflowConfig("luxury");
+        if (luxuryConfig?.collectionId && luxuryConfig?.token) {
+          try {
+            await deleteWebflowCollectionItem(luxuryConfig.collectionId, cacheEntry.webflowId, luxuryConfig.token);
+            webflowLog("info", {
+              event: "vertical.hard_tag_move.removed_luxury",
+              shopifyProductId,
+              webflowId: cacheEntry.webflowId,
+              tag: hardFhLgLock.tag,
+            });
+          } catch (err) {
+            webflowLog("error", {
+              event: "vertical.hard_tag_move.remove_luxury_failed",
+              shopifyProductId,
+              webflowId: cacheEntry.webflowId,
+              message: err.message,
+            });
+          }
+        }
+      }
+      const duplicateLog = {
+        productTitle: product.title || "",
+        shopifyProductId,
+        previousVertical: from,
+        detectedVertical: to,
+        webflowItemIdRemoved: cacheEntry.webflowId,
+      };
+      delete cache[shopifyProductId];
+      const result = await syncSingleProductCore(product, cache, { ...options, forceReclassify: true });
+      return { ...result, duplicateCorrected: true, duplicateLog };
+    }
   } else if (freezePlacedVertical) {
     vertical = placedVertical.vertical;
     detectedVertical = placedVertical.vertical;
@@ -8451,7 +8510,13 @@ async function syncSingleProductCore(product, cache, options = {}) {
   }
 
   // When we correct luxury → furniture (e.g. masquerade mask was in Luxury, classifier now says Furniture), remove from Luxury and create in Furniture.
-  if (correctedToFurniture && cacheEntry?.webflowId && vertical === "furniture" && !isLockedLuxuryProduct(product)) {
+  // FH hard-lock always wins — even if scarf/wearable heuristics still say "locked luxury".
+  if (
+    correctedToFurniture &&
+    cacheEntry?.webflowId &&
+    vertical === "furniture" &&
+    (hardFhLgLock?.vertical === "furniture" || !isLockedLuxuryProduct(product))
+  ) {
     const luxuryConfig = getWebflowConfig("luxury");
     if (luxuryConfig?.collectionId && luxuryConfig?.token) {
       try {
@@ -8726,7 +8791,13 @@ async function syncSingleProductCore(product, cache, options = {}) {
     }
   }
 
-  if (!freezePlacedVertical && vertical === "furniture" && !isLockedLuxuryProduct(product)) {
+  // FH tag (or any furniture placement) must clear Handbags — even for scarves/wearables.
+  // isLockedLuxuryProduct alone used to block this path and kill the switch email.
+  if (
+    !freezePlacedVertical &&
+    vertical === "furniture" &&
+    (hardFhLgLock?.vertical === "furniture" || !isLockedLuxuryProduct(product))
+  ) {
     const luxuryConfig = getWebflowConfig("luxury");
     if (luxuryConfig?.collectionId && luxuryConfig?.token) {
       const existingInLuxury = await findExistingWebflowItem(shopifyProductId, shopifyUrlForCleanup, slugForCleanup, luxuryConfig);
@@ -8744,7 +8815,7 @@ async function syncSingleProductCore(product, cache, options = {}) {
           await deleteWebflowCollectionItem(luxuryConfig.collectionId, existingInLuxury.id, luxuryConfig.token);
           webflowLog("info", { event: "cleanup.deleted_from_luxury", shopifyProductId, webflowId: existingInLuxury.id });
           if (cacheEntry?.vertical === "luxury") delete cache[shopifyProductId];
-          // Always email on site switch — including absolute LG/FH locks.
+          // Always email on site switch — furniture ← handbags included.
           await sendDuplicatePlacementEmail(
             {
               productTitle: product.title || "",
@@ -10094,6 +10165,18 @@ async function syncSingleProductCore(product, cache, options = {}) {
         try {
           await deleteWebflowCollectionItem(luxuryConfig.collectionId, alreadyInLuxury.id, luxuryConfig.token);
           webflowLog("info", { event: "sweep.removed_from_luxury", shopifyProductId, webflowId: alreadyInLuxury.id, productTitle: name });
+          // Always email handbags → furniture (vice versa of the LG move alert).
+          await sendDuplicatePlacementEmail(
+            {
+              productTitle: name,
+              shopifyProductId,
+              previousVertical: "luxury",
+              detectedVertical: "furniture",
+              webflowItemIdRemoved: alreadyInLuxury.id,
+              sweep: true,
+            },
+            duplicateEmailSentFor
+          );
         } catch (err) {
           webflowLog("error", { event: "sweep.remove_luxury_failed", shopifyProductId, webflowId: alreadyInLuxury.id, message: err.message });
         }
