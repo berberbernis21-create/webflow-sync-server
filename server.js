@@ -6456,45 +6456,111 @@ async function findExistingWebflowItemBySlug(config, slug, { forceLiveScan = fal
     return null;
   }
 
-  let offset = 0;
-  const limit = 100;
-  while (true) {
-    const url = `https://api.webflow.com/v2/collections/${config.collectionId}/items?limit=${limit}&offset=${offset}`;
-    let response;
-    try {
-      response = await axios.get(url, {
-        headers: { Authorization: `Bearer ${config.token}`, accept: "application/json" },
-      });
-    } catch (err) {
-      const status = err.response?.status;
-      webflowLog("error", {
-        event: "match_scan.slug_only_error",
-        slug: slugNorm,
-        offset,
-        status: status ?? null,
-        message: err.message,
-        responseData: err.response?.data,
-      });
-      if (status === 400 && offset > 0) break;
-      return null;
-    }
-    const items = response.data?.items || [];
-    for (const item of items) {
-      const fd = item.fieldData || {};
-      const wfSlug = (fd.slug ? String(fd.slug).trim() : null) || (fd["shopify-slug-2"] ? String(fd["shopify-slug-2"]).trim() : null);
-      if (wfSlug && wfSlug === slugNorm) {
-        registerCmsItemInRunIndex(config, item);
-        webflowLog("info", {
-          event: "match_scan.found_by_slug",
+  const headers = { Authorization: `Bearer ${config.token}`, accept: "application/json" };
+  // Draft list first; on forced recovery also scan /items/live (published-only rows).
+  const bases = forceLiveScan
+    ? [
+        `https://api.webflow.com/v2/collections/${config.collectionId}/items`,
+        `https://api.webflow.com/v2/collections/${config.collectionId}/items/live`,
+      ]
+    : [`https://api.webflow.com/v2/collections/${config.collectionId}/items`];
+
+  for (const base of bases) {
+    let offset = 0;
+    const limit = 100;
+    const source = base.endsWith("/live") ? "live_items_scan" : "draft_items_scan";
+    while (true) {
+      const url = `${base}?limit=${limit}&offset=${offset}`;
+      let response;
+      try {
+        response = await axios.get(url, { headers });
+      } catch (err) {
+        const status = err.response?.status;
+        webflowLog("error", {
+          event: "match_scan.slug_only_error",
           slug: slugNorm,
-          webflowItemId: item.id,
-          source: "live_scan",
+          offset,
+          source,
+          status: status ?? null,
+          message: err.message,
+          responseData: err.response?.data,
         });
-        return item;
+        if (status === 400 && offset > 0) break;
+        break;
       }
+      const items = response.data?.items || [];
+      for (const item of items) {
+        const fd = item.fieldData || {};
+        const wfSlug =
+          (fd.slug ? String(fd.slug).trim() : null) ||
+          (fd["shopify-slug-2"] ? String(fd["shopify-slug-2"]).trim() : null);
+        if (wfSlug && wfSlug === slugNorm) {
+          registerCmsItemInRunIndex(config, item);
+          webflowLog("info", {
+            event: "match_scan.found_by_slug",
+            slug: slugNorm,
+            webflowItemId: item.id,
+            source,
+          });
+          return item;
+        }
+      }
+      if (items.length < limit) break;
+      offset += limit;
     }
-    if (items.length < limit) break;
-    offset += limit;
+  }
+  return null;
+}
+
+/** Name match for duplicate-slug recovery when slug index/live scan misses a published row. */
+async function findExistingWebflowItemByName(config, productTitle, { forceLiveScan = false } = {}) {
+  if (!config?.collectionId || !config?.token) return null;
+  const want = normalizeProductTitleForLooseMatch(productTitle || "");
+  if (!want) return null;
+
+  const headers = { Authorization: `Bearer ${config.token}`, accept: "application/json" };
+  const bases = forceLiveScan
+    ? [
+        `https://api.webflow.com/v2/collections/${config.collectionId}/items`,
+        `https://api.webflow.com/v2/collections/${config.collectionId}/items/live`,
+      ]
+    : [`https://api.webflow.com/v2/collections/${config.collectionId}/items`];
+
+  for (const base of bases) {
+    let offset = 0;
+    const limit = 100;
+    const source = base.endsWith("/live") ? "live_name_scan" : "draft_name_scan";
+    while (true) {
+      let response;
+      try {
+        response = await axios.get(`${base}?limit=${limit}&offset=${offset}`, { headers });
+      } catch (err) {
+        webflowLog("error", {
+          event: "match_scan.name_only_error",
+          source,
+          offset,
+          status: err.response?.status ?? null,
+          message: err.message,
+        });
+        break;
+      }
+      const items = response.data?.items || [];
+      for (const item of items) {
+        const name = item?.fieldData?.name || item?.fieldData?.title || "";
+        if (normalizeProductTitleForLooseMatch(name) === want) {
+          registerCmsItemInRunIndex(config, item);
+          webflowLog("info", {
+            event: "match_scan.found_by_name",
+            webflowItemId: item.id,
+            source,
+            name: String(name).slice(0, 120),
+          });
+          return item;
+        }
+      }
+      if (items.length < limit) break;
+      offset += limit;
+    }
   }
   return null;
 }
@@ -10623,9 +10689,13 @@ async function createOrLinkLuxuryCmsItem({
     } catch (err) {
       lastErr = err;
       if (isWebflowDuplicateSlugError(err)) {
-        const existing =
+        let existing =
           (await findExistingWebflowItemBySlug(config, slug, { forceLiveScan: true })) ||
           (await findExistingWebflowItem(shopifyProductId, shopifyUrl, slug, config));
+        if (!existing?.id && productTitle) {
+          // Last resort: name match in draft + live lists (index can omit brand-new rows).
+          existing = await findExistingWebflowItemByName(config, productTitle, { forceLiveScan: true });
+        }
         if (existing?.id) {
           return linkExisting(existing, "duplicate_slug");
         }
@@ -10634,7 +10704,7 @@ async function createOrLinkLuxuryCmsItem({
           shopifyProductId,
           productTitle,
           slug,
-          message: "Webflow says slug exists but live slug scan found nothing",
+          message: "Webflow says slug exists but live slug/name scan found nothing",
         });
       }
       if (isWebflowRemoteAssetImportError(err) && attempt < 2) {
