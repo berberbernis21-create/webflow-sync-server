@@ -4333,12 +4333,35 @@ function hasFurnitureOrArtSignals(product) {
   return signals.some((w) => combined.includes(w));
 }
 
+const LUXURY_OUTERWEAR_CUES = [
+  "jacket", "jackets", "coat", "coats", "fur coat", "fur jacket", "fur stole", "fur wrap",
+  "outerwear", "parka", "parkas", "cape", "capes", "bolero", "shrug", "poncho", "ponchos",
+  "mink", "sable", "chinchilla", "fox fur", "shearling", "shearlings",
+];
+
+/** Fur coats / jackets / wearable outerwear — always Luxury (never Furniture from size heuristics). */
+function productIsLuxuryOuterwear(product) {
+  if (!product) return false;
+  if (productLooksLikeFurnitureTrap(product)) return false;
+  const stripHtml = (html) => (html || "").replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const title = (product.title || "").trim();
+  const typeAndTags = [product.product_type || "", getProductTagsArray(product).join(" ")].join(" ");
+  const desc = stripHtml(product.body_html || "");
+  const text = [title, typeAndTags, desc].filter(Boolean).join(" ").toLowerCase();
+  if (!text) return false;
+  // Coat rack / hat rack are furniture traps — already excluded above.
+  if (textHasAnyWordCue(text, LUXURY_OUTERWEAR_CUES)) return true;
+  if (/\bfur\b/i.test(text) && /\b(jacket|coat|stole|wrap|cape|collar|bolero)\b/i.test(text)) return true;
+  return false;
+}
+
 const LUXURY_WEARABLE_CUES = [
   "backpack", "backpacks", "belt", "belts", "wallet", "wallets", "card holder", "cardholder",
   "handbag", "handbags", "bag", "bags", "crossbody", "clutch", "purse", "tote", "wristlet",
   "shoulder bag", "satchel", "luggage", "duffle", "duffel", "briefcase", "bucket bag",
   "keychain", "key chain", "key ring", "gloves", "glove", "ipad case", "tablet case", "folio",
   "scarf", "scarves", "silk scarf", "wool scarf", "cashmere scarf", "shawl", "stole", "foulard",
+  "jacket", "jackets", "coat", "coats", "fur coat", "fur jacket", "outerwear", "parka", "cape",
   "bangle", "bangles", "bracelet", "bracelets",
   "necklace", "necklaces", "earring", "earrings", "brooch", "brooches",
   "pendant", "pendants", "coin purse", "pochette", "minaudiere", "bag charm", "bag charms",
@@ -4477,8 +4500,13 @@ function productIsGenuineFurnitureInventory(product) {
 /** Obvious home/furniture items — may win over LLM luxury noise; wearables/LG still protected in sync guards. */
 function productMustBeFurnitureVertical(product) {
   if (!product) return false;
+  // LG/FH absolute lock — dimensions/heuristics must never fight the tag.
+  const hardLock = getHardFhLgVerticalLock(product);
+  if (hardLock) return hardLock.vertical === "furniture";
   if (productTitleLooksLikeWearableJewelry(product)) return false;
   if (productIsWearableJewelryPendant(product)) return false;
+  if (productIsLuxuryOuterwear(product)) return false;
+  if (productIsLuxuryScarf(product)) return false;
   if (productIsGenuineFurnitureInventory(product)) return true;
   if (productDimensionsForceFurniture(product)) return true;
   return false;
@@ -4488,6 +4516,7 @@ function productMustBeFurnitureVertical(product) {
 function productMustStayInLuxuryVertical(product) {
   if (!product) return false;
   if (productIsLuxuryScarf(product)) return true;
+  if (productIsLuxuryOuterwear(product)) return true;
   if (productTitleLooksLikeWearableJewelry(product)) return true;
   if (productIsWearableJewelryPendant(product)) return true;
   const tags = getProductTagsArray(product);
@@ -4518,6 +4547,9 @@ function resolveVerticalFromEvidence(product, llmDetectedVertical) {
   }
   if (productIsLuxuryScarf(product)) {
     return { vertical: "luxury", reason: "luxury_scarf_always" };
+  }
+  if (productIsLuxuryOuterwear(product)) {
+    return { vertical: "luxury", reason: "luxury_outerwear_always" };
   }
   if (productTitleLooksLikeWearableJewelry(product) || productIsWearableJewelryPendant(product)) {
     return { vertical: "luxury", reason: "wearable_jewelry_pendant" };

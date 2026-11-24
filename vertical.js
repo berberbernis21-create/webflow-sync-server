@@ -290,6 +290,7 @@ const TITLE_LUXURY_WORDS = [
   "ballet flats", "flats", "heels", "pumps", "sneakers", "loafers", "boots", "sandals", "mules", "slides", "shoes",
   "jewelry", "earring", "earrings", "bracelet", "bracelets", "necklace", "necklaces", "pouch", "barrette", "barrettes",
   "watch", "watches", "wristwatch", "wristwatches", "timepiece", "timepieces",
+  "jacket", "jackets", "coat", "coats", "fur coat", "fur jacket", "outerwear", "parka", "cape", "poncho",
 ];
 
 /** Substring signals for luxury — avoid phrases that are furniture (e.g. luggage rack). */
