@@ -10498,10 +10498,12 @@ async function runWebhookSingleProductSync(shopifyProductId, triggerPath) {
     }
     // Traxia name/SKU → Shopify → Intake: stamp Intake name + traxiaSku + shopifyProductId.
     // Match via External Link / intake-uuid tag / prior shopifyProductId / exact title.
+    // probeNotes: note-only Traxia Extra Information edits still reach Intake.
     try {
       if (intakeShopifyImagesConfigured()) {
         await mirrorShopifyProductToIntake(product, {
           log: (level, data) => webflowLog(level, data),
+          probeNotes: true,
         });
       }
     } catch (mirrorErr) {

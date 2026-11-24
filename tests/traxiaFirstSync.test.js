@@ -11,13 +11,21 @@ import {
   planLiveFlawSync,
   readLiveTraxiaExtra,
   resetMirrorWebhookCoalesceForTests,
+  classifyShopifyBodyForIntake,
+  isTraxiaApiUnavailable,
+  logShopifyTraxiaFieldsSeen,
+  mergePendingTraxiaBodyNote,
+  rememberOwnListingWrite,
   resetIntakeMirrorRecentForTests,
+  resetOwnListingWriteForTests,
   resetTraxiaExtraCacheForTests,
+  readTraxiaNoteFromShopifyBody,
   shouldFetchTraxiaExtra,
   shopifyProductIsNewer,
   shopifyWritebackDecision,
   snapshotHash,
   traxiaExtraStampFields,
+  TRAXIA_API_UNAVAILABLE_TTL_MS,
   TRAXIA_EXTRA_CACHE_TTL_MS,
   TRAXIA_EXTRA_FETCH_TIMEOUT_MS,
   MIRROR_WEBHOOK_FOLLOWUP_MAX,
@@ -158,6 +166,7 @@ function makeMirrorWorld({ extraOnProduct = null, row = {}, holdMirrorMs = 0 } =
   resetTraxiaExtraCacheForTests();
   resetMirrorWebhookCoalesceForTests();
   resetIntakeMirrorRecentForTests();
+  resetOwnListingWriteForTests();
   return state;
 }
 
@@ -218,6 +227,8 @@ test("name and dims from Shopify pull are adopted exactly and ask for one rebuil
 });
 
 test("shouldFetchTraxiaExtra skips when nothing Traxia-owned changed or Extra Info is live", () => {
+  resetTraxiaExtraCacheForTests();
+  resetOwnListingWriteForTests();
   assert.equal(
     shouldFetchTraxiaExtra({
       sku: SKU,
@@ -248,6 +259,57 @@ test("shouldFetchTraxiaExtra skips when nothing Traxia-owned changed or Extra In
     }).fetch,
     true
   );
+  // Webhook note probe: unchanged Shopify fields still read Traxia once.
+  assert.equal(
+    shouldFetchTraxiaExtra({
+      sku: SKU,
+      liveExtraKnown: false,
+      writebackApply: true,
+      writebackReason: "echo",
+      nameChanged: false,
+      dimsChanged: false,
+      priceChanged: false,
+      relinked: false,
+      probeNotes: true,
+      shopifyProductId: PRODUCT_ID,
+    }).fetch,
+    true
+  );
+  assert.equal(
+    shouldFetchTraxiaExtra({
+      sku: SKU,
+      liveExtraKnown: false,
+      writebackApply: false,
+      writebackReason: "echo",
+      probeNotes: true,
+      shopifyProductId: PRODUCT_ID,
+    }).reason,
+    "note_probe"
+  );
+  rememberOwnListingWrite(PRODUCT_ID);
+  assert.equal(
+    shouldFetchTraxiaExtra({
+      sku: SKU,
+      liveExtraKnown: false,
+      writebackApply: false,
+      writebackReason: "echo",
+      probeNotes: true,
+      shopifyProductId: PRODUCT_ID,
+    }).fetch,
+    false
+  );
+  assert.equal(
+    shouldFetchTraxiaExtra({
+      sku: SKU,
+      liveExtraKnown: false,
+      writebackApply: false,
+      writebackReason: "echo",
+      probeNotes: true,
+      shopifyProductId: PRODUCT_ID,
+    }).reason,
+    "echo_own_write"
+  );
+  resetOwnListingWriteForTests();
   assert.equal(TRAXIA_EXTRA_CACHE_TTL_MS, 45_000);
   assert.equal(TRAXIA_EXTRA_FETCH_TIMEOUT_MS, 1500);
 });
@@ -513,21 +575,171 @@ test("echo of our own write is not a newer change", () => {
   assert.equal(echo.reason, "echo");
 });
 
-test("speed: Shopify webhook with nothing new makes no Traxia call and at most one stamp", async () => {
+test("94Q6KW: Traxia note in Shopify description reaches Intake and listing", async () => {
+  // Owner case: Extra Information briefly appears as the product description.
   const world = makeMirrorWorld();
-  // Seed snapshot-aligned mirror once so the second pass is quiet.
-  await mirrorShopifyProductToIntake(structuredClone(world.product), { log: () => {} });
-  const stampsAfterSeed = world.stamps.length;
-  const traxiaAfterSeed = world.traxiaExtraCalls.length;
-  const second = await mirrorShopifyProductToIntake(structuredClone(world.product), {
-    log: () => {},
+  const kind = classifyShopifyBodyForIntake(MIXED, BASE);
+  assert.equal(kind.kind, "customer_condition");
+  assert.equal(kind.applyNotes, true);
+  assert.equal(kind.restoreListing, true);
+  assert.deepEqual(readTraxiaNoteFromShopifyBody(MIXED, world.row), {
+    known: true,
+    text: MIXED,
+    reason: "traxia_note_body",
   });
-  assert.equal(second.skipped === true || second.ok === true, true);
-  assert.equal(world.traxiaExtraCalls.length, traxiaAfterSeed, "no Traxia read on quiet webhook");
+
+  world.product.body_html = MIXED;
+  world.product.updated_at = new Date(Date.now() + 60_000).toISOString();
+  const events = [];
+  const result = await mirrorShopifyProductToIntake(structuredClone(world.product), {
+    log: (level, data) => events.push({ level, data }),
+    probeNotes: true,
+  });
+  assert.equal(result.ok, true);
+  const stamp = world.stamps[world.stamps.length - 1];
+  assert.equal(stamp.notes, MIXED, "full note on Intake");
+  assert.match(String(stamp.conditionIssues || ""), /scratch/i);
+  assert.equal(/consigor/i.test(String(stamp.conditionIssues || "")), false);
+  assert.equal(stamp.resyncListing, true, "one listing rebuild after store");
+  assert.equal(world.row.notes, MIXED);
   assert.ok(
-    world.stamps.length - stampsAfterSeed <= 1,
-    `extra stamps: ${world.stamps.length - stampsAfterSeed}`
+    events.some((e) => e.data?.event === "shopify.intake_mirror.traxia_note_body"),
+    "traxia_note_body logged"
   );
+
+  const prose = finalizeListingDescription(
+    BASE,
+    listingBuildItemFromRow({
+      ...world.row,
+      notes: MIXED,
+      conditionIssues: stamp.conditionIssues,
+    }),
+    MIXED,
+    stamp.conditionIssues
+  );
+  assert.match(prose, /scratch/i);
+  assert.equal(/consigor|used to be/i.test(prose), false);
+});
+
+test("restore path stores the Traxia note before asking for a listing rebuild", async () => {
+  // customer_condition used to set restoreListing without ever stamping notes —
+  // that rewrote Shopify over the Traxia note. Store and rebuild must be one stamp.
+  const world = makeMirrorWorld();
+  world.product.body_html = MIXED;
+  world.product.updated_at = new Date(Date.now() + 60_000).toISOString();
+  const kind = classifyShopifyBodyForIntake(MIXED, BASE);
+  assert.equal(kind.kind, "customer_condition");
+  assert.equal(kind.restoreListing, true);
+  await mirrorShopifyProductToIntake(structuredClone(world.product), {
+    log: () => {},
+    probeNotes: true,
+  });
+  const stamp = world.stamps[world.stamps.length - 1];
+  assert.equal(stamp.notes, MIXED);
+  assert.equal(stamp.resyncListing, true);
+  assert.ok(
+    world.stamps.every((s) => !(s.resyncListing && !Object.prototype.hasOwnProperty.call(s, "notes"))),
+    "no rebuild asked without a notes field on the same stamp"
+  );
+});
+
+test("Traxia note in first burst payload survives a fresh read of our own description", async () => {
+  const world = makeMirrorWorld({ holdMirrorMs: 80 });
+  const first = structuredClone(world.product);
+  first.body_html = MIXED;
+  first.updated_at = new Date(Date.now() - 5_000).toISOString();
+  // After our listing write, Shopify holds the Intake build — not the note.
+  world.liveProduct.body_html = `<p>${BASE}</p>`;
+  world.liveProduct.updated_at = new Date(Date.now() + 40_000).toISOString();
+
+  const run = mirrorShopifyProductToIntakeCoalesced(first, {
+    log: () => {},
+    loadShopifyProduct: async () => structuredClone(world.liveProduct),
+    settleMs: 15,
+    probeNotes: true,
+  });
+  await sleep(20);
+  // Mid-run webhook that is only our own write (must not erase the stashed note).
+  await mirrorShopifyProductToIntakeCoalesced(structuredClone(world.liveProduct), {
+    log: () => {},
+    loadShopifyProduct: async () => structuredClone(world.liveProduct),
+    settleMs: 15,
+    probeNotes: true,
+  });
+  const done = await run;
+  assert.ok(done.followUpRounds >= 1);
+  assert.equal(world.row.notes, MIXED, "stashed Traxia note survived own-write fresh read");
+});
+
+test("emptied Shopify description clears the Intake note; own build does not", async () => {
+  const world = makeMirrorWorld({
+    row: { notes: MIXED, conditionIssues: "scratch on top left" },
+  });
+  world.product.body_html = "";
+  world.product.updated_at = new Date(Date.now() + 60_000).toISOString();
+  const events = [];
+  await mirrorShopifyProductToIntake(structuredClone(world.product), {
+    log: (level, data) => events.push({ level, data }),
+    probeNotes: true,
+  });
+  assert.equal(world.row.notes, "");
+  assert.ok(events.some((e) => e.data?.event === "shopify.intake_mirror.traxia_note_cleared"));
+
+  world.row.notes = MIXED;
+  world.row.conditionIssues = "scratch on top left";
+  world.stamps.length = 0;
+  resetIntakeMirrorRecentForTests();
+  world.product.body_html = `<p>${BASE}</p>`;
+  world.product.updated_at = new Date(Date.now() + 120_000).toISOString();
+  await mirrorShopifyProductToIntake(structuredClone(world.product), {
+    log: () => {},
+    probeNotes: true,
+  });
+  assert.equal(world.row.notes, MIXED, "own description write is not a removal");
+});
+
+test("mergePendingTraxiaBodyNote keeps a note over a later own_build", () => {
+  const note = { known: true, text: MIXED, reason: "traxia_note_body" };
+  const own = { known: false, text: "", reason: "own_build" };
+  assert.deepEqual(mergePendingTraxiaBodyNote(note, own), note);
+  assert.deepEqual(mergePendingTraxiaBodyNote(null, note), note);
+  assert.deepEqual(
+    mergePendingTraxiaBodyNote(note, { known: true, text: "", reason: "empty_clear" }),
+    note
+  );
+});
+
+test("echo of our own listing write does not Traxia-probe", async () => {
+  const world = makeMirrorWorld();
+  rememberOwnListingWrite(PRODUCT_ID);
+  world.product.body_html = `<p>${BASE} Pickup is available in Scottsdale, and we offer both local and nationwide delivery.</p>`;
+  world.traxiaExtra = { known: true, text: MIXED };
+  const result = await mirrorShopifyProductToIntake(structuredClone(world.product), {
+    log: () => {},
+    probeNotes: true,
+  });
+  assert.equal(world.traxiaExtraCalls.length, 0);
+  assert.equal(result.reason === "echo_own_write" || result.ok === true, true);
+  assert.equal(world.row.notes, "");
+});
+
+test("speed: settled webhook with nothing new costs at most one Traxia read; cache blocks the next", async () => {
+  const world = makeMirrorWorld();
+  // Simulate a future Traxia key answering known:false (not no_traxia_api).
+  world.traxiaExtra = { known: false, text: "", reason: "not_found" };
+  await mirrorShopifyProductToIntake(structuredClone(world.product), {
+    log: () => {},
+    probeNotes: true,
+  });
+  assert.ok(world.traxiaExtraCalls.length <= 1, `first settle Traxia calls: ${world.traxiaExtraCalls.length}`);
+  const afterFirst = world.traxiaExtraCalls.length;
+  // Identical webhook inside the cache window: no second Traxia read.
+  resetIntakeMirrorRecentForTests();
+  await mirrorShopifyProductToIntake(structuredClone(world.product), {
+    log: () => {},
+    probeNotes: true,
+  });
+  assert.equal(world.traxiaExtraCalls.length, afterFirst, "cache holds; second webhook costs none");
   assert.equal(
     world.calls.filter((c) => c.shopify && c.method === "PUT").length,
     0,
@@ -535,23 +747,126 @@ test("speed: Shopify webhook with nothing new makes no Traxia call and at most o
   );
 });
 
-test("speed: Shopify webhook where Traxia Extra changed reads Traxia once and stamps notes", async () => {
+test("with no Traxia API key, one PE answer silences every later webhook probe", async () => {
+  resetTraxiaExtraCacheForTests();
   const world = makeMirrorWorld();
-  world.traxiaExtra = { known: true, text: MIXED };
-  world.product.title = "Name change triggers Traxia Extra pull - AS IS";
+  // Marketing body so we do not adopt a note from the description; probe still runs once.
+  world.product.body_html = `<p>${BASE} Pickup is available in Scottsdale, and we offer both local and nationwide delivery.</p>`;
+  world.traxiaExtra = { known: false, text: "", reason: "no_traxia_api" };
+  // Adapter returns reason from world — extend makeMirrorWorld reply.
+  const inner = world.adapter;
+  axios.defaults.adapter = async (config) => {
+    const res = await inner(config);
+    const url = `${config.baseURL || ""}${config.url || ""}`;
+    if (/\/items\/traxia-extra-sync$/.test(url.replace(/^https?:\/\/[^/]+/, ""))) {
+      return {
+        ...res,
+        data: { ok: true, known: false, text: "", updated: false, reason: "no_traxia_api" },
+      };
+    }
+    return res;
+  };
+  await mirrorShopifyProductToIntake(structuredClone(world.product), {
+    log: () => {},
+    probeNotes: true,
+  });
+  assert.equal(world.traxiaExtraCalls.length, 1);
+  assert.equal(isTraxiaApiUnavailable(), true);
+  assert.ok(TRAXIA_API_UNAVAILABLE_TTL_MS >= 24 * 60 * 60 * 1000);
+  resetIntakeMirrorRecentForTests();
+  await mirrorShopifyProductToIntake(structuredClone(world.product), {
+    log: () => {},
+    probeNotes: true,
+  });
+  await mirrorShopifyProductToIntake(structuredClone(world.product), {
+    log: () => {},
+    probeNotes: true,
+  });
+  assert.equal(world.traxiaExtraCalls.length, 1, "no further PE calls after no_traxia_api");
+  assert.equal(
+    shouldFetchTraxiaExtra({
+      sku: SKU,
+      writebackApply: true,
+      probeNotes: true,
+      shopifyProductId: PRODUCT_ID,
+    }).fetch,
+    false
+  );
+  assert.equal(
+    shouldFetchTraxiaExtra({
+      sku: SKU,
+      writebackApply: true,
+      probeNotes: true,
+      shopifyProductId: PRODUCT_ID,
+    }).reason,
+    "no_traxia_api"
+  );
+});
+
+test("traxia_fields_seen logs once per product per hour and lists tags", () => {
+  resetTraxiaExtraCacheForTests();
+  const events = [];
+  const product = {
+    id: Number(PRODUCT_ID),
+    title: "Walnut Side Chair",
+    tags: "FH, D, Width: 18",
+    body_html: "<p>A chair.</p>",
+    variants: [{ id: 1, sku: SKU, price: "90.00", grams: 5443 }],
+  };
+  assert.equal(
+    logShopifyTraxiaFieldsSeen(product, {
+      log: (level, data) => events.push({ level, data }),
+    }),
+    true
+  );
+  assert.equal(events.length, 1);
+  assert.equal(events[0].data.event, "shopify.intake_mirror.traxia_fields_seen");
+  assert.deepEqual(events[0].data.tags, ["FH", "D", "Width: 18"]);
+  assert.ok(events[0].data.topLevelNonEmpty.includes("title"));
+  assert.ok(events[0].data.variantFieldNames.includes("sku"));
+  assert.equal(events[0].data.liveExtraKnown, false);
+  // Second call inside the hour is silent.
+  assert.equal(
+    logShopifyTraxiaFieldsSeen(product, {
+      log: (level, data) => events.push({ level, data }),
+    }),
+    false
+  );
+  assert.equal(events.length, 1);
+});
+
+test("speed: Shopify webhook with nothing new and probeNotes off makes no Traxia call", async () => {
+  const world = makeMirrorWorld();
+  // Non-webhook / sync-all style: probeNotes false → no Traxia on quiet product.
+  await mirrorShopifyProductToIntake(structuredClone(world.product), { log: () => {} });
+  const stampsAfterSeed = world.stamps.length;
+  const traxiaAfterSeed = world.traxiaExtraCalls.length;
+  const second = await mirrorShopifyProductToIntake(structuredClone(world.product), {
+    log: () => {},
+  });
+  assert.equal(second.skipped === true || second.ok === true, true);
+  assert.equal(world.traxiaExtraCalls.length, traxiaAfterSeed, "no Traxia read without probeNotes");
+  assert.ok(
+    world.stamps.length - stampsAfterSeed <= 1,
+    `extra stamps: ${world.stamps.length - stampsAfterSeed}`
+  );
+});
+
+test("speed: Shopify webhook where description carries Traxia Extra stamps notes with no PE call", async () => {
+  const world = makeMirrorWorld();
+  resetTraxiaExtraCacheForTests();
+  // Production path: note is in the Shopify description; no Traxia API key needed.
+  world.product.body_html = MIXED;
+  world.product.title = "Name unchanged chair";
   world.product.updated_at = new Date(Date.now() + 60_000).toISOString();
   const result = await mirrorShopifyProductToIntake(structuredClone(world.product), {
     log: () => {},
+    probeNotes: true,
   });
   assert.equal(result.ok, true);
-  assert.equal(world.traxiaExtraCalls.length, 1, "Traxia Extra once per settled change");
+  assert.equal(world.traxiaExtraCalls.length, 0, "body note needs no PE Traxia probe");
   assert.ok(world.stamps.some((s) => s.notes === MIXED));
   assert.equal(world.row.notes, MIXED);
-  // Same SKU again within TTL: cache must prevent a second Traxia network call.
-  world.product.title = "Second settle name - AS IS";
-  world.product.updated_at = new Date(Date.now() + 120_000).toISOString();
-  await mirrorShopifyProductToIntake(structuredClone(world.product), { log: () => {} });
-  assert.equal(world.traxiaExtraCalls.length, 1, "TTL cache holds; still one Traxia call");
 });
 
 test("speed: burst of three mid-run webhooks → one fresh Shopify read", async () => {
