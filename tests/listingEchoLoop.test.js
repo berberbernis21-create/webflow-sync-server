@@ -611,6 +611,42 @@ test("a note cleared in Traxia is passed on and asks for a rebuild", async () =>
   assert.equal(stamp.resyncListing, true, "the description still says the old flaw, so it is rebuilt");
 });
 
+test("a non-condition Extra Information note replaces a flaw and rebuilds once", async () => {
+  const world = use(
+    putInSync(
+      makeWorld({
+        identity: "new",
+        weightLbs: 12,
+        row: {
+          ...SIZED,
+          notes: "",
+          conditionIssues: "small scratch in top right",
+          description:
+            "A solid walnut side chair with a carved back. There is a small scratch in the top right.",
+        },
+      })
+    )
+  );
+  world.product.extraInformation = "Box in warehouse";
+  const first = await webhook(world);
+  assert.equal(first.stamp.conditionIssues, "Box in warehouse", "stored condition follows the field");
+  assert.equal(first.stamp.resyncListing, true, "the old scratch sentence must leave");
+
+  // Apply the rebuild Intake would run from the stamped condition.
+  world.row.conditionIssues = first.stamp.conditionIssues;
+  world.row.notes = "Box in warehouse";
+  const written = await handleIntakeListingUpdate(listingPayload(world), { log: () => {} });
+  assert.equal(written.status, "updated");
+  await drain();
+  assert.equal(/scratch/i.test(String(world.product.body_html || "")), false);
+  assert.equal(/warehouse|box in/i.test(String(world.product.body_html || "")), false);
+
+  world.product.updated_at = new Date(Date.now() + 60_000).toISOString();
+  const after = await webhook(world);
+  assertNoRewriteAsked(after.stamp, "silent replace settled");
+  assert.equal(after.stamp.bodyIsIntakeBuild, true);
+});
+
 test("a note changed on the Intake row asks for a rebuild when Shopify still shows the old one", async () => {
   const world = use(putInSync(makeWorld({ identity: "new", row: { ...WORN } })));
   world.row.notes = "Small scratch on the left arm.";
@@ -796,4 +832,41 @@ test("the description fingerprint ignores how Shopify hands the HTML back", () =
   assert.notEqual(shopifyBodyFingerprint(sent.replace("36", "38")), want, "a changed size is a change");
   assert.equal(shopifyBodyFingerprint(""), "");
   assert.equal(shopifyBodyFingerprint("<p> </p><br>"), "");
+});
+
+test("an internal-only Extra Information note does not ask for a rewrite after own write", async () => {
+  const world = use(
+    makeWorld({
+      identity: "new",
+      weightLbs: 12,
+      row: { ...SIZED, notes: "Additional information in Art Folder", conditionIssues: "" },
+    })
+  );
+  const written = await handleIntakeListingUpdate(listingPayload(world), { log: () => {} });
+  assert.equal(written.status, "updated");
+  await drain();
+  const { stamp } = await webhook(world);
+  assertNoRewriteAsked(stamp, "internal-only note");
+  assert.equal(/additional information|folder/i.test(world.product.body_html || ""), false);
+});
+
+test("a mixed note weaves only the condition part and the webhook stays quiet", async () => {
+  const world = use(
+    makeWorld({
+      identity: "new",
+      weightLbs: 12,
+      row: {
+        ...SIZED,
+        notes: "Small scratch on left arm. Paperwork in office.",
+        conditionIssues: "",
+      },
+    })
+  );
+  const written = await handleIntakeListingUpdate(listingPayload(world), { log: () => {} });
+  assert.equal(written.status, "updated");
+  await drain();
+  assert.match(String(world.product.body_html || ""), /scratch/i);
+  assert.equal(/paperwork|office/i.test(world.product.body_html || ""), false);
+  const { stamp } = await webhook(world);
+  assertNoRewriteAsked(stamp, "mixed note");
 });

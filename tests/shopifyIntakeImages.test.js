@@ -2276,6 +2276,40 @@ test("enforceOpeningWithoutSize is idempotent", () => {
   assert.equal(bodySentences(once).filter((part) => sentenceHasSizeOrDims(part)).length, 1);
 });
 
+test("wall art opening drops dangling format and states size as wide by high", () => {
+  const name =
+    "Howard Terpning - White Water Passage Signed Limited Edition Giclee Canvas - 25 x 35H";
+  const item = {
+    name,
+    dimWidth: 25,
+    dimHeight: 35,
+    dimLength: 1,
+    weightLbs: 3,
+    websiteCategory: "A",
+  };
+  const cases = [
+    "Howard Terpning White Water Passage signed limited edition giclee on canvas wall art in a 25 x 35 format for living rooms. Warm earth tones make it an easy upgrade for a curated wall.",
+    "Howard Terpning White Water Passage signed limited edition giclee on canvas wall art in a versatile size for living rooms. Warm earth tones make it an easy upgrade.",
+    "This limited edition giclee canvas wall art measures 25 inches by 35 inches and brings warm earth tones to a living room wall.",
+  ];
+  for (const raw of cases) {
+    const out = finalizeListingDescription(raw, item, "", "");
+    const first = firstSentence(out);
+    assert.equal(sentenceHasSizeOrDims(first), false, first);
+    assert.equal(/in a format/i.test(out), false, out);
+    assert.match(out, /It measures 25 inches wide by 35 inches high\./);
+    assert.equal(/\bdeep\b/i.test(out), false, out);
+  }
+  assert.deepEqual(
+    extractShopifyListingFacts({
+      title: name,
+      tags: "",
+      variants: [],
+    }),
+    { width: 25, depth: null, height: 35, weightLbs: null }
+  );
+});
+
 test("rug dimensions footer uses feet and inch pile", () => {
   assert.equal(itemIsRug({ websiteCategory: "R" }), true);
   const line = formatShopifyDimsLine({
