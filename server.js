@@ -90,6 +90,7 @@ import {
   intakeShopifyImagesEnabled,
   markIntakeShopifyProductUnlinked,
   mirrorShopifyProductToIntake,
+  mirrorShopifyProductToIntakeCoalesced,
   planManualShopifyLink,
   fetchShopifyProductsByExactTitle,
   shopifyStatusUnlinks,
@@ -934,13 +935,18 @@ function scheduleProductWebhookSync(req, res) {
     productTitle: req.body?.title != null ? String(req.body.title).slice(0, 200) : null,
   });
   // Intake learns the new dims, price, title, or a gone product in this pass.
-  // The Webflow sync still waits for the short debounce.
+  // Mid-run webhooks coalesce into one pending flag; when the run finishes we
+  // re-read Shopify fresh (not the starting webhook payload) and re-apply if
+  // anything we mirror changed. The Webflow sync still waits for the debounce.
   const product = req.body?.id != null ? req.body : req.body?.product;
   if (product?.id && intakeShopifyImagesConfigured()) {
     const log = (level, data) => webflowLog(level, data);
     const write = shopifyStatusUnlinks(product.status)
       ? markIntakeShopifyProductUnlinked(product, { log, reason: String(product.status || "unpublished") })
-      : mirrorShopifyProductToIntake(product, { log });
+      : mirrorShopifyProductToIntakeCoalesced(product, {
+          log,
+          loadShopifyProduct: fetchShopifyProductById,
+        });
     void Promise.resolve(write).catch((err) => {
       webflowLog("warn", {
         event: "shopify.webhook.intake_immediate_failed",

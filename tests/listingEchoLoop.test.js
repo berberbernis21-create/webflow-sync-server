@@ -14,6 +14,8 @@ import {
   planSettledCleanliness,
   resetListingGenerationMemory,
   resetListingUpdateCoalesceForTests,
+  resetMirrorWebhookCoalesceForTests,
+  resetTraxiaExtraCacheForTests,
   shopifyBodyFingerprint,
   shopifyBodyIsIntakeBuild,
 } from "../lib/shopifyIntakeImages.js";
@@ -174,6 +176,8 @@ function use(world) {
   axios.defaults.adapter = world.adapter;
   resetShopifyThrottleForTests();
   resetListingUpdateCoalesceForTests();
+  resetTraxiaExtraCacheForTests();
+  resetMirrorWebhookCoalesceForTests();
   return world;
 }
 

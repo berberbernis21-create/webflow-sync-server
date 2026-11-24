@@ -1818,8 +1818,18 @@ test("image order latest-wins both directions and echo stays noop", () => {
     intakeOrderHash: snapshotHash("p2|p1|p3"),
     shopifyImpliedIntakeHash: shopify,
   });
+  // No timestamps: gallery plan arrives from Intake side → Intake order stands.
   assert.equal(clash.action, "push_intake");
-  assert.equal(clash.reason, "clash_intake_wins");
+  assert.equal(clash.reason, "clash_arrival_intake");
+  const clashShopifyNewer = planImageOrderSync({
+    snapshotImagesHash: snap,
+    intakeOrderHash: snapshotHash("p2|p1|p3"),
+    shopifyImpliedIntakeHash: shopify,
+    intakeChangedAt: "2026-11-23T10:00:00Z",
+    shopifyChangedAt: "2026-11-23T18:00:00Z",
+  });
+  assert.equal(clashShopifyNewer.action, "adopt_shopify");
+  assert.equal(clashShopifyNewer.reason, "clash_shopify_newer");
   const echo = planImageOrderSync({
     snapshotImagesHash: shopify,
     intakeOrderHash: shopify,
@@ -1832,7 +1842,7 @@ test("image order latest-wins both directions and echo stays noop", () => {
     shopifyImpliedIntakeHash: shopify,
   });
   assert.equal(crash.action, "push_intake");
-  assert.equal(crash.reason, "no_snapshot_intake_wins");
+  assert.equal(crash.reason, "clash_arrival_intake");
   // pairs[i]=media index; positions[media]=Shopify position → sort Intake by that.
   const ordered = intakePhotoIdsFromShopifyOrder(
     ["p1", "p2", "p3"],
@@ -1842,35 +1852,67 @@ test("image order latest-wins both directions and echo stays noop", () => {
   assert.deepEqual(ordered, ["p3", "p1", "p2"]);
 });
 
-test("sync authority clash and crash prefer Intake", () => {
-  const clash = decideSyncAuthority({
+test("sync authority clash uses later timestamp; arrival breaks ties", () => {
+  const clashShopify = decideSyncAuthority({
     snapshotHash: "a",
     intakeHash: "b",
     shopifyHash: "c",
+    intakeChangedAt: "2026-11-23T10:00:00Z",
+    shopifyChangedAt: "2026-11-23T18:00:00Z",
   });
-  assert.equal(clash.authority, "intake");
-  assert.equal(clash.reason, "clash_intake_wins");
+  assert.equal(clashShopify.authority, "shopify");
+  assert.equal(clashShopify.reason, "clash_shopify_newer");
+  const clashIntake = decideSyncAuthority({
+    snapshotHash: "a",
+    intakeHash: "b",
+    shopifyHash: "c",
+    intakeChangedAt: "2026-11-23T19:00:00Z",
+    shopifyChangedAt: "2026-11-23T18:00:00Z",
+  });
+  assert.equal(clashIntake.authority, "intake");
+  assert.equal(clashIntake.reason, "clash_intake_newer");
+  const clashArrival = decideSyncAuthority({
+    snapshotHash: "a",
+    intakeHash: "b",
+    shopifyHash: "c",
+    arrival: "shopify",
+  });
+  assert.equal(clashArrival.authority, "shopify");
+  assert.equal(clashArrival.reason, "clash_arrival_shopify");
   const crash = decideSyncAuthority({
     snapshotHash: "",
     intakeHash: "b",
     shopifyHash: "c",
+    arrival: "intake",
   });
   assert.equal(crash.authority, "intake");
-  assert.equal(crash.reason, "no_snapshot_intake_wins");
+  assert.equal(crash.reason, "clash_arrival_intake");
   const shopifyOnly = decideSyncAuthority({
     snapshotHash: "a",
     intakeHash: "a",
     shopifyHash: "c",
   });
   assert.equal(shopifyOnly.authority, "shopify");
-  const writebackClash = shopifyWritebackDecision({
+  // Webhook arrives with Shopify title newer than Intake → apply Shopify.
+  const writebackShopifyNewer = shopifyWritebackDecision({
     snapshot: { title: snapshotHash("Agreed"), at: "2026-11-23T10:00:00Z" },
     updatedAt: "2026-11-23T18:00:00Z",
     title: "Shopify Other",
     intakeTitle: "Intake Latest",
+    intakeUpdatedAt: "2026-11-23T12:00:00Z",
   });
-  assert.equal(writebackClash.apply, false);
-  assert.equal(writebackClash.reason, "clash_intake_wins");
+  assert.equal(writebackShopifyNewer.apply, true);
+  assert.equal(writebackShopifyNewer.reason, "newer");
+  // Intake name is newer than the Shopify webhook → keep Intake.
+  const writebackIntakeNewer = shopifyWritebackDecision({
+    snapshot: { title: snapshotHash("Agreed"), at: "2026-11-23T10:00:00Z" },
+    updatedAt: "2026-11-23T12:00:00Z",
+    title: "Shopify Other",
+    intakeTitle: "Intake Latest",
+    intakeUpdatedAt: "2026-11-23T18:00:00Z",
+  });
+  assert.equal(writebackIntakeNewer.apply, false);
+  assert.equal(writebackIntakeNewer.reason, "clash_intake_newer");
   const writebackBootstrap = shopifyWritebackDecision({
     snapshot: {},
     updatedAt: "2026-11-23T18:00:00Z",
