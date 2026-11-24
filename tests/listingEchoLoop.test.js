@@ -12,6 +12,7 @@ import {
   listingUpdateCoalesceSnapshotForTests,
   mirrorShopifyProductToIntake,
   planSettledCleanliness,
+  resetListingGenerationMemory,
   resetListingUpdateCoalesceForTests,
   shopifyBodyFingerprint,
   shopifyBodyIsIntakeBuild,
@@ -334,9 +335,10 @@ test("corrective rebuild comes back as a webhook and asks for nothing (RH bed)",
   assert.equal(world.productPuts(), puts, "the corrective write's webhook starts nothing");
 });
 
-test("corrective rebuilds that cannot help stop at the cap, are reported, and their webhook asks for nothing", async () => {
-  // No description and no note: the body stays thin, so the clean-product
-  // check rebuilds until the cap on every tree.
+test("a thin body that a rebuild cannot help is written once, and its webhook asks for nothing", async () => {
+  // No description and no note: the body stays thin. A rebuild reads the same
+  // Intake row and cannot lengthen it, so no corrective pass is spent on it
+  // and no cleanup error is stamped. Before, this ran to the cap (3 writes).
   const world = use(makeWorld({ identity: "new", row: { description: "" } }));
   const followUps = [];
   await handleIntakeListingUpdate(listingPayload(world), {
@@ -345,13 +347,148 @@ test("corrective rebuilds that cannot help stop at the cap, are reported, and th
   });
   await drain();
   const puts = world.productPuts();
-  assert.equal(puts, 3, "the write and two corrective rebuilds, then the cap");
-  assert.equal(followUps.length, 2, "both corrective rebuilds are reported to the caller");
+  assert.equal(puts, 1, "one write and no corrective rebuild for thin copy");
+  assert.equal(followUps.length, 0, "nothing follows a thin body");
+  assert.equal(
+    world.stamps.filter((s) => /needs a cleanup/i.test(String(s.detail || ""))).length,
+    0,
+    "thin copy is not stamped as a sync error"
+  );
   const { stamp } = await webhook(world);
   assert.equal(stamp.resyncListing, false);
   assert.equal("bodyHtml" in stamp, false);
   await drain();
   assert.equal(world.productPuts(), puts, "nothing follows the corrective writes' webhook");
+});
+
+/** Put a stand-in model in front of the world. `answer` is an HTTP status or a description. */
+function withModel(world, answer) {
+  const asks = [];
+  const inner = world.adapter;
+  axios.defaults.adapter = async (config) => {
+    const url = `${config.baseURL || ""}${config.url || ""}`;
+    if (!/api\.openai\.com/.test(url)) return inner(config);
+    asks.push(typeof config.data === "string" ? JSON.parse(config.data) : config.data);
+    const base = { statusText: "", headers: {}, config, request: {} };
+    if (typeof answer === "number") return { ...base, status: answer, data: { error: "down" } };
+    return {
+      ...base,
+      status: 200,
+      data: { choices: [{ message: { content: JSON.stringify({ description: answer, tags: "FH, D" }) } }] },
+    };
+  };
+  return asks;
+}
+
+const THIN_ROW = { description: "A walnut side chair with a carved back and an upholstered seat for a dining room." };
+
+test("a thin item with the model unavailable: one model call, then it stops", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = "test-key";
+  resetListingGenerationMemory();
+  try {
+    const world = use(makeWorld({ identity: "new", row: THIN_ROW }));
+    const asks = withModel(world, 503);
+    const post = () =>
+      handleIntakeListingUpdate(
+        { ...listingPayload(world), allowOpenAi: true, forceRefresh: true },
+        { log: () => {} }
+      );
+    await post();
+    await drain();
+    assert.equal(asks.length, 1, "the model is asked once");
+    const puts = world.productPuts();
+    assert.equal(puts, 1, "the description on file is written once");
+    assert.match(world.product.body_html, /walnut side chair with a carved back/i, "the previous description is kept");
+    assert.doesNotMatch(world.product.body_html, /straightforward piece/i);
+
+    // The same item is posted again and again (saves, retries, webhooks): no further model call.
+    for (let i = 0; i < 5; i += 1) {
+      await post();
+      await drain();
+    }
+    const { stamp } = await webhook(world);
+    assertNoRewriteAsked(stamp, "thin, model down");
+    await drain();
+    assert.equal(asks.length, 1, "still one model call after five more posts and a webhook");
+    assert.ok(world.productPuts() <= puts + 5, `no write beyond one per post (got ${world.productPuts()})`);
+    assert.equal(
+      world.stamps.filter((s) => /needs a cleanup/i.test(String(s.detail || ""))).length,
+      0,
+      "thin copy is never stamped as a cleanup error"
+    );
+
+    // A real change to the item allows one more.
+    world.row.name = "Walnut Carved Side Chair";
+    await post();
+    await drain();
+    assert.equal(asks.length, 2, "a new name allows one more generation");
+    await post();
+    await drain();
+    assert.equal(asks.length, 2);
+  } finally {
+    resetListingGenerationMemory();
+    if (previousKey == null) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousKey;
+  }
+});
+
+test("a blank item with the model unavailable gets its recorded facts once, no filler", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = "test-key";
+  resetListingGenerationMemory();
+  try {
+    const world = use(makeWorld({ identity: "new", row: { description: "", brand: "Baker" } }));
+    const asks = withModel(world, 503);
+    const post = () =>
+      handleIntakeListingUpdate(
+        { ...listingPayload(world), allowOpenAi: true, forceRefresh: true },
+        { log: () => {} }
+      );
+    await post();
+    await drain();
+    assert.equal(asks.length, 1);
+    assert.equal(world.productPuts(), 1);
+    assert.match(world.product.body_html, /Walnut Side Chair by Baker\./);
+    assert.doesNotMatch(world.product.body_html, /straightforward piece|everyday use/i);
+    for (let i = 0; i < 3; i += 1) {
+      await post();
+      await drain();
+    }
+    assert.equal(asks.length, 1, "the model is not asked again for the same facts");
+    assert.ok(world.productPuts() <= 4);
+  } finally {
+    resetListingGenerationMemory();
+    if (previousKey == null) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousKey;
+  }
+});
+
+test("a model that answers thin again is not asked in a loop", async () => {
+  const previousKey = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = "test-key";
+  resetListingGenerationMemory();
+  try {
+    const world = use(makeWorld({ identity: "new", row: THIN_ROW }));
+    const asks = withModel(world, "A walnut chair.");
+    const post = () =>
+      handleIntakeListingUpdate(
+        { ...listingPayload(world), allowOpenAi: true, forceRefresh: true },
+        { log: () => {} }
+      );
+    for (let i = 0; i < 4; i += 1) {
+      await post();
+      await drain();
+    }
+    // One generation is one call, plus at most one second try inside it when the first answer is rejected.
+    assert.ok(asks.length >= 1 && asks.length <= 2, `one generation only (got ${asks.length} calls)`);
+    assert.match(world.product.body_html, /carved back and an upholstered seat/i, "the longer text on file stays");
+    assert.ok(world.productPuts() <= 4);
+  } finally {
+    resetListingGenerationMemory();
+    if (previousKey == null) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = previousKey;
+  }
 });
 
 test("the whole chain ends: post, 202 deferred, single retry, write, webhooks", async () => {
