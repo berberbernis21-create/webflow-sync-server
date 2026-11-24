@@ -15,6 +15,7 @@ import {
   resetListingGenerationMemory,
   resetListingUpdateCoalesceForTests,
   resetMirrorWebhookCoalesceForTests,
+  resetOwnListingWriteForTests,
   resetTraxiaExtraCacheForTests,
   shopifyBodyFingerprint,
   shopifyBodyIsIntakeBuild,
@@ -178,6 +179,7 @@ function use(world) {
   resetListingUpdateCoalesceForTests();
   resetTraxiaExtraCacheForTests();
   resetMirrorWebhookCoalesceForTests();
+  resetOwnListingWriteForTests();
   return world;
 }
 
