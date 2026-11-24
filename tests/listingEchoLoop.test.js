@@ -90,6 +90,15 @@ function makeWorld({ row = {}, identity = "new", weightLbs = 0, tags = "FH, D", 
   };
   const identityRow = () => {
     const r = state.row;
+    let remembered = "";
+    if (r.shopifyBodyNote != null) remembered = String(r.shopifyBodyNote);
+    else if (r.shopifySyncSnapshot) {
+      try {
+        remembered = String(JSON.parse(r.shopifySyncSnapshot).shopifyBodyNote || "");
+      } catch (_err) {
+        remembered = "";
+      }
+    }
     const base = {
       id: r.id,
       name: r.name,
@@ -100,6 +109,8 @@ function makeWorld({ row = {}, identity = "new", weightLbs = 0, tags = "FH, D", 
       description: r.description,
       shopifyLinkState: r.shopifyLinkState,
       lastShopifyProductId: null,
+      shopifySyncSnapshot: r.shopifySyncSnapshot || null,
+      shopifyBodyNote: remembered,
     };
     if (state.identity === "old") return base;
     return {
@@ -608,12 +619,26 @@ test("a name changed in Shopify or Traxia is passed on exactly and asks for a re
 });
 
 test("a note cleared in Traxia is passed on and asks for a rebuild", async () => {
+  // Empty description only clears text remembered as came-from-Shopify.
+  const note = "Small scratch on the left arm.";
   const world = use(
-    putInSync(makeWorld({ identity: "new", row: { notes: "", conditionIssues: "Small scratch on the left arm." } }))
+    putInSync(
+      makeWorld({
+        identity: "new",
+        row: {
+          notes: note,
+          conditionIssues: note,
+          shopifyBodyNote: note,
+          shopifySyncSnapshot: JSON.stringify({ shopifyBodyNote: note }),
+        },
+      })
+    )
   );
-  world.product.extraInformation = "";
+  world.product.body_html = "";
   const { stamp } = await webhook(world);
+  assert.equal(stamp.notes, "", "the cleared Shopify note reaches Intake");
   assert.equal(stamp.conditionIssues, "", "the cleared note reaches Intake");
+  assert.equal(stamp.shopifyBodyNote, "");
   assert.equal(stamp.resyncListing, true, "the description still says the old flaw, so it is rebuilt");
 });
 

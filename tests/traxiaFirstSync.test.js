@@ -15,7 +15,9 @@ import {
   isTraxiaApiUnavailable,
   logShopifyTraxiaFieldsSeen,
   mergePendingTraxiaBodyNote,
+  mergeShopifyBodyNoteIntoIntake,
   rememberOwnListingWrite,
+  rememberedShopifyBodyNote,
   resetIntakeMirrorRecentForTests,
   resetOwnListingWriteForTests,
   resetTraxiaExtraCacheForTests,
@@ -41,6 +43,7 @@ const ITEM_ID = "907e51af-4050-4af9-8d1e-d781a32f4860";
 const PRODUCT_ID = "9827087286531";
 const SKU = "94Q6KW";
 const MIXED = "scratch on top left. This used to be a consigors";
+const INTAKE_CHIP = "small chip on the left leg";
 const BASE =
   "A walnut side chair with a carved back and an upholstered seat that suits a dining room or a study.";
 
@@ -140,6 +143,8 @@ function makeMirrorWorld({ extraOnProduct = null, row = {}, holdMirrorMs = 0 } =
           weightLbs: state.row.weightLbs,
           retailPrice: state.row.retailPrice,
           shopifyLinkState: "linked",
+          shopifySyncSnapshot: state.row.shopifySyncSnapshot || null,
+          shopifyBodyNote: rememberedShopifyBodyNote(state.row),
         },
         bySku: null,
       });
@@ -153,6 +158,19 @@ function makeMirrorWorld({ extraOnProduct = null, row = {}, holdMirrorMs = 0 } =
       if (body.name) state.row.name = body.name;
       if (body.notes != null) state.row.notes = body.notes;
       if (body.conditionIssues != null) state.row.conditionIssues = body.conditionIssues;
+      if (body.shopifyBodyNote != null) {
+        state.row.shopifyBodyNote = body.shopifyBodyNote;
+        let snap = {};
+        try {
+          snap = state.row.shopifySyncSnapshot
+            ? JSON.parse(state.row.shopifySyncSnapshot)
+            : {};
+        } catch (_err) {
+          snap = {};
+        }
+        snap.shopifyBodyNote = body.shopifyBodyNote;
+        state.row.shopifySyncSnapshot = JSON.stringify(snap);
+      }
       if (body.dimWidth != null) state.row.dimWidth = body.dimWidth;
       if (body.dimDepth != null) state.row.dimDepth = body.dimDepth;
       if (body.dimHeight != null) state.row.dimHeight = body.dimHeight;
@@ -598,6 +616,7 @@ test("94Q6KW: Traxia note in Shopify description reaches Intake and listing", as
   assert.equal(result.ok, true);
   const stamp = world.stamps[world.stamps.length - 1];
   assert.equal(stamp.notes, MIXED, "full note on Intake");
+  assert.equal(stamp.shopifyBodyNote, MIXED, "remembered as came-from-Shopify");
   assert.match(String(stamp.conditionIssues || ""), /scratch/i);
   assert.equal(/consigor/i.test(String(stamp.conditionIssues || "")), false);
   assert.equal(stamp.resyncListing, true, "one listing rebuild after store");
@@ -671,9 +690,10 @@ test("Traxia note in first burst payload survives a fresh read of our own descri
   assert.equal(world.row.notes, MIXED, "stashed Traxia note survived own-write fresh read");
 });
 
-test("emptied Shopify description clears the Intake note; own build does not", async () => {
+test("Case A: empty Shopify description does not clear an Intake-typed note", async () => {
+  // 093e6c2 cleared notes on empty_clear. Intake-typed damage must stay.
   const world = makeMirrorWorld({
-    row: { notes: MIXED, conditionIssues: "scratch on top left" },
+    row: { notes: INTAKE_CHIP, conditionIssues: INTAKE_CHIP },
   });
   world.product.body_html = "";
   world.product.updated_at = new Date(Date.now() + 60_000).toISOString();
@@ -682,11 +702,63 @@ test("emptied Shopify description clears the Intake note; own build does not", a
     log: (level, data) => events.push({ level, data }),
     probeNotes: true,
   });
-  assert.equal(world.row.notes, "");
+  assert.equal(world.row.notes, INTAKE_CHIP, "Intake-typed chip stays");
+  assert.equal(
+    events.some((e) => e.data?.event === "shopify.intake_mirror.traxia_note_cleared"),
+    false
+  );
+  const stamp = world.stamps[world.stamps.length - 1];
+  assert.equal(stamp?.notes == null || stamp.notes === INTAKE_CHIP, true);
+});
+
+test("Case B: Traxia description note is added alongside Intake-typed notes", async () => {
+  const world = makeMirrorWorld({
+    row: { notes: INTAKE_CHIP, conditionIssues: INTAKE_CHIP },
+  });
+  world.product.body_html = MIXED;
+  world.product.updated_at = new Date(Date.now() + 60_000).toISOString();
+  await mirrorShopifyProductToIntake(structuredClone(world.product), {
+    log: () => {},
+    probeNotes: true,
+  });
+  assert.match(world.row.notes, /small chip on the left leg/i);
+  assert.match(world.row.notes, /scratch on top left/i);
+  assert.equal(world.stamps.at(-1).shopifyBodyNote, MIXED);
+  assert.deepEqual(
+    mergeShopifyBodyNoteIntoIntake({
+      storedNotes: INTAKE_CHIP,
+      rememberedShopifyNote: "",
+      incomingShopifyNote: MIXED,
+    }),
+    {
+      notes: `${INTAKE_CHIP}. ${MIXED}`,
+      shopifyBodyNote: MIXED,
+      changed: true,
+    }
+  );
+});
+
+test("emptied description removes only the remembered Shopify note part", async () => {
+  const world = makeMirrorWorld({
+    row: {
+      notes: `${INTAKE_CHIP}. ${MIXED}`,
+      conditionIssues: "small chip on the left leg\nscratch on top left",
+      shopifyBodyNote: MIXED,
+      shopifySyncSnapshot: JSON.stringify({ shopifyBodyNote: MIXED }),
+    },
+  });
+  world.product.body_html = "";
+  world.product.updated_at = new Date(Date.now() + 60_000).toISOString();
+  const events = [];
+  await mirrorShopifyProductToIntake(structuredClone(world.product), {
+    log: (level, data) => events.push({ level, data }),
+    probeNotes: true,
+  });
+  assert.equal(world.row.notes, INTAKE_CHIP);
+  assert.equal(world.stamps.at(-1).shopifyBodyNote, "");
   assert.ok(events.some((e) => e.data?.event === "shopify.intake_mirror.traxia_note_cleared"));
 
-  world.row.notes = MIXED;
-  world.row.conditionIssues = "scratch on top left";
+  world.row.notes = INTAKE_CHIP;
   world.stamps.length = 0;
   resetIntakeMirrorRecentForTests();
   world.product.body_html = `<p>${BASE}</p>`;
@@ -695,7 +767,29 @@ test("emptied Shopify description clears the Intake note; own build does not", a
     log: () => {},
     probeNotes: true,
   });
-  assert.equal(world.row.notes, MIXED, "own description write is not a removal");
+  assert.equal(world.row.notes, INTAKE_CHIP, "own description write is not a removal");
+});
+
+test("same Shopify note seen again after person deleted it from Intake is not re-applied", async () => {
+  const world = makeMirrorWorld({
+    row: {
+      notes: INTAKE_CHIP,
+      conditionIssues: INTAKE_CHIP,
+      shopifyBodyNote: MIXED,
+      shopifySyncSnapshot: JSON.stringify({ shopifyBodyNote: MIXED }),
+    },
+  });
+  world.product.body_html = MIXED;
+  world.product.updated_at = new Date(Date.now() + 60_000).toISOString();
+  await mirrorShopifyProductToIntake(structuredClone(world.product), {
+    log: () => {},
+    probeNotes: true,
+  });
+  assert.equal(world.row.notes, INTAKE_CHIP);
+  assert.equal(
+    world.stamps.some((s) => s.notes != null && s.notes !== INTAKE_CHIP),
+    false
+  );
 });
 
 test("mergePendingTraxiaBodyNote keeps a note over a later own_build", () => {
