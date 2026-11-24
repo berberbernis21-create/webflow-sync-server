@@ -13,6 +13,232 @@ const ECOMMERCE_CATEGORY_CODES = new Set([
   "NK", "RG", "BR", "ER", "OJ",
 ]);
 
+/**
+ * The owner's two documents ("Furniture Tags.docx", "Handbag Tags.docx").
+ * A category letter is read inside its vertical: O is Office Den under FH and
+ * Other under LG. Pricing Engine holds the same tables (ecommerce_codes.py).
+ */
+export const ECOMMERCE_VERTICALS = {
+  FH: { merchType: "furniture", label: "Furniture & Home" },
+  LG: { merchType: "luxury", label: "Luxury Goods" },
+};
+export const ECOMMERCE_CATEGORY_LETTERS = {
+  FH: {
+    A: "Art / Mirrors",
+    B: "Bedroom",
+    D: "Dining Room",
+    L: "Living Room",
+    O: "Office Den",
+    R: "Rugs",
+    X: "Accessories",
+    P: "Outdoor / Patio",
+    G: "Lighting",
+  },
+  LG: {
+    A: "Accessories",
+    B: "Backpacks",
+    C: "Crossbody",
+    H: "Handbags",
+    L: "Luggage",
+    O: "Other",
+    S: "Small Bags",
+    T: "Totes",
+    W: "Wallets",
+    R: "Scarves",
+    E: "Belts",
+    NK: "Necklaces",
+    RG: "Rings",
+    BR: "Bracelets",
+    ER: "Earrings",
+    OJ: "Other Jewelry",
+  },
+};
+/** "Legacy / General Jewelry: J → Other Jewelry" (Handbag Tags.docx). */
+export const ECOMMERCE_LEGACY_LETTERS = { LG: { J: "OJ" } };
+/** "Watches → Accessories" (Handbag Tags.docx). A category name, not a tag code. */
+export const ECOMMERCE_LABEL_ALIASES = { LG: { watches: "A" } };
+
+const LUXURY_VERTICAL_WORDS = new Set([
+  "luxury", "lg", "luxury goods", "luxurygoods", "handbag", "handbags", "jewelry", "accessories",
+]);
+const FURNITURE_VERTICAL_WORDS = new Set([
+  "furniture", "fh", "furniture & home", "furniture / home", "furniture/home", "furniture home",
+]);
+const CODE_PREFIX = "(?:E[\\s_-]?COMMERCE[\\s:_-]*)?";
+const VERTICAL_ONLY_TAG_RE = new RegExp(`^${CODE_PREFIX}(FH|LG)$`);
+const COMBINED_CODE_TAG_RE = new RegExp(`^${CODE_PREFIX}(FH|LG)[\\s,./:_-]+([A-Z]{1,2})$`);
+const LETTER_TAG_RE = new RegExp(`^${CODE_PREFIX}([A-Z]{1,2})$`);
+
+export function splitEcommerceTags(tags) {
+  const parts = Array.isArray(tags) ? tags : String(tags ?? "").split(/[,;\n]+/);
+  return parts.map((part) => String(part ?? "").trim()).filter(Boolean);
+}
+
+/** FH or LG from a merch type, a label or a code. "" when it names neither. */
+export function ecommerceVerticalCode(value) {
+  const text = String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+  if (LUXURY_VERTICAL_WORDS.has(text)) return "LG";
+  if (FURNITURE_VERTICAL_WORDS.has(text)) return "FH";
+  return "";
+}
+
+/** The letter for a code or a category name, inside one vertical. "" when unknown. */
+export function ecommerceCategoryLetter(vertical, value) {
+  const table = ECOMMERCE_CATEGORY_LETTERS[String(vertical || "").toUpperCase()];
+  const raw = String(value ?? "").trim().replace(/\s+/g, " ");
+  if (!table || !raw) return "";
+  const upper = raw.toUpperCase();
+  if (Object.prototype.hasOwnProperty.call(table, upper)) return upper;
+  const legacy = ECOMMERCE_LEGACY_LETTERS[vertical]?.[upper];
+  if (legacy) return legacy;
+  const low = raw.toLowerCase();
+  const squeezed = low.replace(/ /g, "");
+  for (const [code, label] of Object.entries(table)) {
+    const name = label.toLowerCase();
+    if (low === name || squeezed === name.replace(/ /g, "")) return code;
+  }
+  return ECOMMERCE_LABEL_ALIASES[vertical]?.[low] || "";
+}
+
+export function ecommerceCodesKey(vertical, letter) {
+  return `${String(vertical || "").toUpperCase()}|${String(letter || "").toUpperCase()}`;
+}
+
+/** { vertical, letter } when a tag has the shape of a code. Either part may be "". */
+export function parseEcommerceCodeTag(tag) {
+  const text = String(tag ?? "").trim().toUpperCase().replace(/\s+/g, " ");
+  if (!text) return null;
+  let match = VERTICAL_ONLY_TAG_RE.exec(text);
+  if (match) return { vertical: match[1], letter: "" };
+  match = COMBINED_CODE_TAG_RE.exec(text);
+  if (match) return { vertical: match[1], letter: match[2] };
+  match = LETTER_TAG_RE.exec(text);
+  if (match) return { vertical: "", letter: match[1] };
+  return null;
+}
+
+/** A vertical code, or a category letter of either vertical. */
+export function isEcommerceStructuralTag(tag) {
+  const parsed = parseEcommerceCodeTag(tag);
+  if (!parsed) return false;
+  if (parsed.vertical) return true;
+  return Object.keys(ECOMMERCE_CATEGORY_LETTERS).some((code) =>
+    Boolean(ecommerceCategoryLetter(code, parsed.letter))
+  );
+}
+
+/**
+ * Read the codes on a tag list. The letter is resolved inside the list's own
+ * vertical; with no vertical code, fallbackVertical (the vertical the item
+ * already has) is used. scope forces the vertical the letters are read in.
+ */
+export function resolveEcommerceCodes(tags, { fallbackVertical = "", scope = "" } = {}) {
+  const parts = splitEcommerceTags(tags);
+  const parsed = parts.map((raw) => ({ raw, code: parseEcommerceCodeTag(raw) }));
+  const verticals = [];
+  const verticalTags = {};
+  for (const { raw, code } of parsed) {
+    if (!code?.vertical) continue;
+    if (!verticals.includes(code.vertical)) verticals.push(code.vertical);
+    (verticalTags[code.vertical] ||= []).push(raw);
+  }
+  const vertical = verticals.length === 1 ? verticals[0] : "";
+  const forced = String(scope || "").trim().toUpperCase();
+  const fallback = String(fallbackVertical || "").trim().toUpperCase();
+  let use = "";
+  if (ECOMMERCE_CATEGORY_LETTERS[forced]) use = forced;
+  else if (vertical) use = vertical;
+  else if (!verticals.length && ECOMMERCE_CATEGORY_LETTERS[fallback]) use = fallback;
+  const letters = [];
+  const letterTags = {};
+  if (use) {
+    for (const { raw, code } of parsed) {
+      if (!code?.letter) continue;
+      if (code.vertical && code.vertical !== use) continue;
+      const letter = ecommerceCategoryLetter(use, code.letter);
+      if (!letter) continue;
+      if (!letters.includes(letter)) letters.push(letter);
+      (letterTags[letter] ||= []).push(raw);
+    }
+  }
+  const conflicts = [];
+  if (verticals.length > 1) conflicts.push("multiple_vertical_tags");
+  if (letters.length > 1) conflicts.push("multiple_category_tags");
+  return {
+    tags: parts,
+    verticals,
+    vertical,
+    verticalTags,
+    scope: use,
+    letters,
+    letter: letters.length === 1 ? letters[0] : "",
+    letterTags,
+    conflicts,
+  };
+}
+
+/**
+ * What an Intake listing write does to the codes on a Shopify product.
+ *
+ * replace:  a person changed the dropdowns in the Intake app (authority
+ *           "intake"), or Shopify still holds exactly the codes Intake itself
+ *           put there last (base). Intake's codes take their place.
+ * protect:  anything else. The codes on Shopify stay as they are. A missing
+ *           vertical code or a missing letter is filled in; a second letter is
+ *           never added.
+ * conflict: Shopify holds two verticals or two letters and nothing says which
+ *           is the latest. Every code tag is left untouched.
+ */
+export function planListingCodeTags({
+  existingTags,
+  intakeVertical,
+  intakeLetter,
+  authority = "",
+  base = "",
+} = {}) {
+  const iv = ecommerceVerticalCode(intakeVertical);
+  const ic = iv ? ecommerceCategoryLetter(iv, intakeLetter) : "";
+  const shop = resolveEcommerceCodes(existingTags, { fallbackVertical: iv });
+  const shopifyKey = ecommerceCodesKey(shop.vertical, shop.letter);
+  const conflicts = shop.conflicts;
+  const sameAsBase = Boolean(base) && !conflicts.length && shopifyKey === String(base);
+  const person = String(authority || "").toLowerCase() === "intake";
+  if (iv && (person || sameAsBase)) {
+    const remove = [];
+    for (const list of Object.values(shop.verticalTags)) remove.push(...list);
+    const scopes = new Set([shop.scope, iv, ...shop.verticals].filter(Boolean));
+    // A letter is taken off only when a letter replaces it, or a person chose none.
+    if (ic || person) {
+      for (const use of scopes) {
+        const found = resolveEcommerceCodes(existingTags, { scope: use });
+        for (const list of Object.values(found.letterTags)) remove.push(...list);
+      }
+    }
+    const letter = ic || (person ? "" : shop.vertical === iv || !shop.vertical ? shop.letter : "");
+    return {
+      mode: "replace",
+      vertical: iv,
+      letter,
+      remove: [...new Set(remove)],
+      add: [iv, ic].filter(Boolean),
+      conflicts: [],
+      shopifyKey,
+    };
+  }
+  if (conflicts.length) {
+    return { mode: "conflict", vertical: iv, letter: ic, remove: [], add: [], conflicts, shopifyKey };
+  }
+  const vertical = shop.vertical || iv;
+  let letter = shop.letter;
+  const add = [];
+  if (!shop.vertical && iv) add.push(iv);
+  if (!letter && ic && vertical === iv) {
+    letter = ic;
+    add.push(ic);
+  }
+  return { mode: "protect", vertical, letter, remove: [], add, conflicts: [], shopifyKey };
+}
+
 /** Expand comma-joined Traxia tag strings into individual tags. */
 export function expandProductTags(product) {
   const t = product?.tags;
