@@ -145,6 +145,65 @@ test("condition note body matches Intake build after weave", () => {
   assert.equal(shopifyBodyIsIntakeBuild(body, row), true);
 });
 
+test("adding onto a condition note keeps or extends published flaws", () => {
+  const scratch = "small scratch in top right";
+  const withWarehouse = "small scratch in top right. Box in warehouse";
+  const withChip = "small scratch in top right, chip on the leg";
+  const mixed = "Small scratch on left arm. Paperwork in office.";
+  const mixedMore = "Small scratch on left arm. Paperwork in office. Hold for Sarah.";
+  const before = finalizeListingDescription(BASE, ITEM, scratch, "");
+
+  // 1) Internal text added onto a flaw: same published sentence, no rewrite needed.
+  assert.deepEqual(buyerFacingClauses(withWarehouse, ""), buyerFacingClauses(scratch, ""));
+  assert.equal(finalizeListingDescription(BASE, ITEM, withWarehouse, ""), before);
+  assert.equal(/warehouse/i.test(before), false);
+  const polluted = `${BASE} There is a small scratch in the top right.`;
+  const addInternal = planLiveFlawSync({
+    shopifyBody: polluted,
+    liveNote: withWarehouse,
+    liveKnown: true,
+    storedCondition: scratch,
+    item: ITEM,
+  });
+  assert.equal(addInternal.flawMissing, false);
+
+  // 2) A second condition added onto the flaw: both shown, one rebuild, then settled.
+  const both = finalizeListingDescription(BASE, ITEM, withChip, "");
+  assert.match(both, /scratch/i);
+  assert.match(both, /chip/i);
+  const addFlaw = planLiveFlawSync({
+    shopifyBody: polluted,
+    liveNote: withChip,
+    liveKnown: true,
+    storedCondition: scratch,
+    item: ITEM,
+  });
+  assert.equal(addFlaw.flawMissing, true);
+  assert.equal(
+    planSettledCleanliness({
+      title: "Walnut Side Chair",
+      body: both,
+      note: withChip,
+      tags: "FH",
+      dims: {},
+    }).action,
+    "none"
+  );
+
+  // 3) More internal text on an already-mixed note: no listing change.
+  const mixedBefore = finalizeListingDescription(BASE, ITEM, mixed, "");
+  assert.equal(finalizeListingDescription(BASE, ITEM, mixedMore, ""), mixedBefore);
+  assert.deepEqual(buyerFacingClauses(mixedMore, ""), buyerFacingClauses(mixed, ""));
+  const moreInternal = planLiveFlawSync({
+    shopifyBody: mixedBefore,
+    liveNote: mixedMore,
+    liveKnown: true,
+    storedCondition: mixed,
+    item: ITEM,
+  });
+  assert.equal(moreInternal.flawMissing, false);
+});
+
 test("Extra Information field is the current condition source in every direction", () => {
   const empty = finalizeListingDescription(BASE, ITEM, "", "");
   const scratch = "small scratch in top right";

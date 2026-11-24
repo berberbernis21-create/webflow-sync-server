@@ -9,6 +9,7 @@ import {
   inferFreightClass,
   shouldMarkNonStackable,
   parseSetCountFromTitle,
+  parseDimsFromTitle,
   describeStackConfirmNeed,
 } from "../lib/freightPalletize.js";
 import { validateFreightQuoteRequest } from "../lib/freightQuoteValidation.js";
@@ -24,6 +25,28 @@ import {
   estimateNationwideRange,
   NATIONWIDE_FLOOR_USD,
 } from "../lib/freightNationwideRate.js";
+
+test("title dims: two-number HxW painting states width and height only", () => {
+  assert.deepEqual(parseDimsFromTitle("Howard Terpning - White Water Passage - 25 x 35H"), {
+    width: 25,
+    height: 35,
+  });
+  assert.deepEqual(parseDimsFromTitle("Dessin Fournir Round Dining Table- 60X30H (No Leaf)"), {
+    width: 60,
+    depth: 60,
+    height: 30,
+  });
+  assert.deepEqual(parseDimsFromTitle("Chair - 42X23X75H"), {
+    width: 42,
+    depth: 23,
+    height: 75,
+  });
+  // Freight may guess depth internally; Intake storage must not see that guess.
+  const freight = palletizeItem({ title: "Painting - 25 x 35H", weight: 3 });
+  assert.equal(freight.product.width, 25);
+  assert.equal(freight.product.height, 35);
+  assert.equal(freight.product.depth, 25);
+});
 
 test("local pricing: 15 min = $95", () => {
   assert.equal(calculateLocalRouteEstimate(15).estimated_price, 95);
