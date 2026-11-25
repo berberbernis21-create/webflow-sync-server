@@ -77,7 +77,7 @@ const LUXURY_CASES = [
 const FURNITURE_CASES = [
   [
     { name: "Brass Floor Globe", merchType: "furniture", ecommerceTags: "FH, X", dimWidth: 22, dimHeight: 33 },
-    "It measures 22 inches wide and 33 inches tall, so it works in everyday rooms without feeling oversized.",
+    "It measures 22 inches wide and 33 inches tall, tall enough to stand on the floor beside a console, fireplace or doorway.",
   ],
   [
     {
