@@ -650,8 +650,12 @@ test("a non-condition Extra Information note replaces a flaw and rebuilds once",
         weightLbs: 12,
         row: {
           ...SIZED,
-          notes: "",
+          // The flaw came from the note: a line a person typed in "What is
+          // wrong" would stay, whatever arrives from Shopify.
+          notes: "small scratch in top right",
           conditionIssues: "small scratch in top right",
+          shopifyBodyNote: "small scratch in top right",
+          shopifySyncSnapshot: JSON.stringify({ shopifyBodyNote: "small scratch in top right" }),
           description:
             "A solid walnut side chair with a carved back. There is a small scratch in the top right.",
         },
