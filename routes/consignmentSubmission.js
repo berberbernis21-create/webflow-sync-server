@@ -545,18 +545,20 @@ router.get("/consignment-photo/:token", async (req, res) => {
  * GET /api/consignment-lens/:token
  * Short, clean launch URL for email/PDF → Google Lens.
  *
- * This is the SafeLinks-proof path. The email links ONLY this short token URL
- * (no query string), so Outlook mobile's "Checking the link…" SafeLinks hop has
- * nothing long to mangle. The fragile ~2 KB `lens.google.com/uploadbyurl?url=…`
- * string lives only in THIS server's 302 Location header, generated fresh and
- * fully URL-encoded per request — it never travels inside the email, so it can't
- * be stripped/truncated. (Previously the email linked the raw uploadbyurl URL,
- * so SafeLinks dropped the `url=` param and Lens opened on a bare google.com
- * search with no image.)
+ * The email links ONLY this short token URL (no query string), so Outlook mobile's
+ * "Checking the link…" SafeLinks hop has nothing long to mangle.
  *
- * All clients (desktop + Outlook mobile) get the same 302 into Lens.
- * `?bridge=1` opts into a fallback page offering Bing visual search (works inside
- * the Outlook in-app browser) and "Open Lens in Safari".
+ * Branching by client:
+ *  - Desktop browser  → 302 straight into Google Lens (uploadbyurl works in Chrome
+ *    etc.). The fragile ~2 KB `lens.google.com/uploadbyurl?url=…` lives only in this
+ *    server's Location header, never in the email.
+ *  - Mobile / Outlook (incl. the Outlook in-app webview) → the bridge page, which
+ *    leads with Bing visual search. Lens uploadbyurl renders as an EMPTY google.com
+ *    search inside that webview (confirmed by the user's screenshots), so we do not
+ *    auto-redirect there; Bing visual search is the path that actually works there.
+ *
+ * Overrides: `?bridge=1` forces the bridge page; `?lens=1` forces the direct Lens
+ * redirect (handy for testing / desktop-style clients that spoof a mobile UA).
  */
 router.get("/consignment-lens/:token", async (req, res) => {
   const token = String(req.params.token || "").trim();
@@ -586,11 +588,17 @@ router.get("/consignment-lens/:token", async (req, res) => {
   }
 
   const ua = String(req.get("user-agent") || "");
-  const isOutlook = /Outlook|MSAppHost|Word|Office/i.test(ua);
-  // Only the explicit ?bridge=1 opt-in shows the Bing/Safari fallback page.
-  // Everything else (incl. Outlook mobile) 302s straight into Lens so the long
-  // uploadbyurl param stays server-side, out of reach of SafeLinks rewriting.
-  const wantBridge = String(req.query.bridge || "") === "1";
+  const isMobile = /iPhone|iPad|iPod|Android|Mobile|Silk|Kindle/i.test(ua);
+  const isOutlook = /Outlook|MSAppHost|WXP|Word|Office|OutlookMobile/i.test(ua);
+  // Mobile and Outlook (incl. the Outlook in-app webview) DEFAULT to the bridge
+  // page, which leads with Bing visual search — the path the user confirmed works
+  // inside the Outlook app. Google Lens uploadbyurl renders as a bare, empty
+  // google.com search in that webview, so we never auto-redirect there on mobile.
+  // Desktop goes straight into Lens. ?lens=1 forces the direct Lens redirect;
+  // ?bridge=1 forces the bridge page.
+  const forceBridge = String(req.query.bridge || "") === "1";
+  const forceLens = String(req.query.lens || "") === "1";
+  const wantBridge = forceBridge || (!forceLens && (isMobile || isOutlook));
 
   if (!wantBridge) {
     res.setHeader("Cache-Control", "no-store");

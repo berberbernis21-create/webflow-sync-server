@@ -13398,6 +13398,21 @@ app.get("/", (req, res) => {
   );
 });
 
+// Lightweight build/deploy probe. Render injects RENDER_GIT_COMMIT/RENDER_GIT_BRANCH
+// at build time, so hitting /api/version tells you exactly which commit is RUNNING
+// (confirms an auto-deploy landed, independent of the Render dashboard build list).
+const SERVER_STARTED_AT = new Date().toISOString();
+app.get("/api/version", (req, res) => {
+  res.setHeader("Cache-Control", "no-store");
+  res.json({
+    commit: process.env.RENDER_GIT_COMMIT || null,
+    branch: process.env.RENDER_GIT_BRANCH || null,
+    service: process.env.RENDER_SERVICE_NAME || null,
+    startedAt: SERVER_STARTED_AT,
+    now: new Date().toISOString(),
+  });
+});
+
 app.get("/test-resend", async (req, res) => {
   try {
     await sendInternalNotification({

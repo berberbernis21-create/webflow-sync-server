@@ -74,7 +74,7 @@ test("GET /api/consignment-lens/:token returns 302 to lens.google.com", async ()
   }
 });
 
-test("GET /api/consignment-lens/:token 302s to full Lens URL for Outlook iPhone (survives SafeLinks — long url param lives server-side, not in email)", async () => {
+test("GET /api/consignment-lens/:token on Outlook iPhone serves the Bing bridge page, NOT a direct Lens redirect (uploadbyurl renders empty in that webview)", async () => {
   const file = {
     buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
     mimetype: "image/jpeg",
@@ -98,21 +98,45 @@ test("GET /api/consignment-lens/:token 302s to full Lens URL for Outlook iPhone 
           "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Outlook-iOS/2.0",
       },
     });
-    // Must be a server-side 302, NOT a bridge/HTML page: the browser follows the
-    // Location to Lens, so the long url param never rode in the SafeLinks-wrapped
-    // email link.
+    // Must NOT 302 straight to Lens — that reproduces the empty google.com search.
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type") || "", /text\/html/);
+    const body = await res.text();
+    assert.match(body, /bing\.com\/images\/search/, "bridge must lead with Bing visual search");
+    assert.match(body, /Open Google Lens in Safari/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("GET /api/consignment-lens/:token?lens=1 forces the direct Lens redirect even on a mobile UA", async () => {
+  const file = {
+    buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
+    mimetype: "image/jpeg",
+    originalname: "nightstand.jpg",
+  };
+  hostConsignmentPhotosForLens(new Map([[1, [file]]]));
+  const token = file.googleLensUrl.split("/").pop();
+
+  const app = express();
+  app.use("/api", consignmentRouter);
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address();
+
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/consignment-lens/${token}?lens=1`, {
+      redirect: "manual",
+      headers: {
+        "user-agent":
+          "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) Mobile/15E148 Outlook-iOS/2.0",
+      },
+    });
     assert.equal(res.status, 302);
-    const location = res.headers.get("location");
-    assert.ok(location, "Location header required");
-    assert.ok(
-      location.startsWith("https://lens.google.com/uploadbyurl?url="),
-      `expected full Lens Location, got: ${location}`
-    );
     const expectedImage = `${getPublicBaseUrl()}/api/consignment-photo/${token}`;
     assert.equal(
-      location,
-      `https://lens.google.com/uploadbyurl?url=${encodeURIComponent(expectedImage)}`,
-      "Location must be the complete, correctly-encoded Lens URL"
+      res.headers.get("location"),
+      `https://lens.google.com/uploadbyurl?url=${encodeURIComponent(expectedImage)}`
     );
   } finally {
     await new Promise((resolve) => server.close(resolve));
