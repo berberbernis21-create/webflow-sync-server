@@ -74,6 +74,78 @@ test("GET /api/consignment-lens/:token returns 302 to lens.google.com", async ()
   }
 });
 
+test("GET /api/consignment-lens/:token 302s to full Lens URL for Outlook iPhone (survives SafeLinks — long url param lives server-side, not in email)", async () => {
+  const file = {
+    buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
+    mimetype: "image/jpeg",
+    originalname: "mattress.jpg",
+  };
+  hostConsignmentPhotosForLens(new Map([[1, [file]]]));
+  const token = file.googleLensUrl.split("/").pop();
+
+  const app = express();
+  app.use("/api", consignmentRouter);
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address();
+
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/consignment-lens/${token}`, {
+      redirect: "manual",
+      headers: {
+        // Outlook iOS in-app browser user agent.
+        "user-agent":
+          "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 Outlook-iOS/2.0",
+      },
+    });
+    // Must be a server-side 302, NOT a bridge/HTML page: the browser follows the
+    // Location to Lens, so the long url param never rode in the SafeLinks-wrapped
+    // email link.
+    assert.equal(res.status, 302);
+    const location = res.headers.get("location");
+    assert.ok(location, "Location header required");
+    assert.ok(
+      location.startsWith("https://lens.google.com/uploadbyurl?url="),
+      `expected full Lens Location, got: ${location}`
+    );
+    const expectedImage = `${getPublicBaseUrl()}/api/consignment-photo/${token}`;
+    assert.equal(
+      location,
+      `https://lens.google.com/uploadbyurl?url=${encodeURIComponent(expectedImage)}`,
+      "Location must be the complete, correctly-encoded Lens URL"
+    );
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("GET /api/consignment-lens/:token?bridge=1 serves the Bing/Safari fallback page", async () => {
+  const file = {
+    buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
+    mimetype: "image/jpeg",
+    originalname: "chair.jpg",
+  };
+  hostConsignmentPhotosForLens(new Map([[1, [file]]]));
+  const token = file.googleLensUrl.split("/").pop();
+
+  const app = express();
+  app.use("/api", consignmentRouter);
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address();
+
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/consignment-lens/${token}?bridge=1`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get("content-type") || "", /text\/html/);
+    const body = await res.text();
+    assert.match(body, /bing\.com\/images\/search/);
+    assert.match(body, /Open Google Lens in Safari/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test("GET /api/consignment-photo/:token serves 200 image bytes (publicly fetchable by Lens)", async () => {
   const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0xff, 0xd9]);
   const file = { buffer: jpeg, mimetype: "image/jpeg", originalname: "sofa.jpg" };
@@ -101,7 +173,7 @@ test("GET /api/consignment-photo/:token serves 200 image bytes (publicly fetchab
   }
 });
 
-test("consignment email 'Google Lens' button uses the short /api/consignment-lens link (Outlook-mobile bridge), not raw lens.google.com", () => {
+test("consignment email 'Google Lens' button links the short /api/consignment-lens token URL (no long query param for SafeLinks to strip), not raw lens.google.com", () => {
   const file = {
     buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
     mimetype: "image/jpeg",

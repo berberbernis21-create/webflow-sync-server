@@ -543,9 +543,20 @@ router.get("/consignment-photo/:token", async (req, res) => {
 
 /**
  * GET /api/consignment-lens/:token
- * Short launch URL for email/PDF → visual search.
- * Desktop: immediate 302 to Google Lens (uploadbyurl).
- * Mobile: bridge page with Bing + Safari Lens options.
+ * Short, clean launch URL for email/PDF → Google Lens.
+ *
+ * This is the SafeLinks-proof path. The email links ONLY this short token URL
+ * (no query string), so Outlook mobile's "Checking the link…" SafeLinks hop has
+ * nothing long to mangle. The fragile ~2 KB `lens.google.com/uploadbyurl?url=…`
+ * string lives only in THIS server's 302 Location header, generated fresh and
+ * fully URL-encoded per request — it never travels inside the email, so it can't
+ * be stripped/truncated. (Previously the email linked the raw uploadbyurl URL,
+ * so SafeLinks dropped the `url=` param and Lens opened on a bare google.com
+ * search with no image.)
+ *
+ * All clients (desktop + Outlook mobile) get the same 302 into Lens.
+ * `?bridge=1` opts into a fallback page offering Bing visual search (works inside
+ * the Outlook in-app browser) and "Open Lens in Safari".
  */
 router.get("/consignment-lens/:token", async (req, res) => {
   const token = String(req.params.token || "").trim();
@@ -575,11 +586,12 @@ router.get("/consignment-lens/:token", async (req, res) => {
   }
 
   const ua = String(req.get("user-agent") || "");
-  const isMobile = /iPhone|iPad|iPod|Android|Mobile/i.test(ua);
   const isOutlook = /Outlook|MSAppHost|Word|Office/i.test(ua);
-  const wantBridge = String(req.query.bridge || "") === "1" || isMobile;
+  // Only the explicit ?bridge=1 opt-in shows the Bing/Safari fallback page.
+  // Everything else (incl. Outlook mobile) 302s straight into Lens so the long
+  // uploadbyurl param stays server-side, out of reach of SafeLinks rewriting.
+  const wantBridge = String(req.query.bridge || "") === "1";
 
-  // Default / desktop: 302 straight into Lens.
   if (!wantBridge) {
     res.setHeader("Cache-Control", "no-store");
     return res.redirect(302, lensUrl);
@@ -592,8 +604,8 @@ router.get("/consignment-lens/:token", async (req, res) => {
   const safeSafariLens = escapeHtmlAttr(safariLensUrl || lensUrl);
 
   const outlookNote = isOutlook
-    ? `<p style="background:#fff4ed;border-left:3px solid #e04f16;padding:10px 12px;text-align:left;font-size:14px;"><strong>Outlook on iPhone:</strong> Google Lens usually shows the photo but returns blank results in this browser. Use Bing below (works here), or open Lens in Safari.</p>`
-    : `<p>Google Lens often returns blank results inside email apps. Use Bing below, or open Lens in Safari.</p>`;
+    ? `<p style="background:#fff4ed;border-left:3px solid #e04f16;padding:10px 12px;text-align:left;font-size:14px;"><strong>Outlook on iPhone:</strong> if Google Lens opened empty, use Bing below (works in this browser) or open Lens in Safari.</p>`
+    : `<p>If Google Lens opened empty inside this email app, use Bing below, or open Lens in Safari.</p>`;
 
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -629,7 +641,7 @@ router.get("/consignment-lens/:token", async (req, res) => {
     <a class="btn secondary" href="${safeSafariLens}" rel="noopener noreferrer">Open Google Lens in Safari</a>
     <a class="btn tertiary" href="${safeLens}" rel="noopener noreferrer">Try Google Lens here</a>
     <a class="btn tertiary" href="${safeImage}" rel="noopener noreferrer">Open photo only</a>
-    <p class="tip"><strong>Why:</strong> Desktop Chrome can finish Google Lens. Outlook’s built-in browser usually cannot — you’ll see the furniture photo with no matches. Bing visual search works in Outlook; Safari works for Google Lens.</p>
+    <p class="tip"><strong>Why:</strong> Outlook’s link protection can strip the long Google Lens address, so Lens opens with no image. Bing visual search works inside Outlook; Safari opens Google Lens cleanly.</p>
   </div>
 </body>
 </html>`);
