@@ -18,7 +18,14 @@ import {
 } from "../lib/consignmentLimits.js";
 import { preparePhotoGroupsForConsignment } from "../lib/consignmentImageNormalize.js";
 import { expandConfidentMultiPieceItems } from "../lib/consignmentMultiPiece.js";
-import { hostConsignmentPhotosForLens, readHostedConsignmentPhoto, buildGoogleLensUrlForImage, buildBingVisualSearchUrlForImage, buildSafariHttpsUrl, getPublicBaseUrl } from "../lib/consignmentPhotoHost.js";
+import {
+  hostConsignmentPhotosForLensAsync,
+  readHostedConsignmentPhotoAsync,
+  buildGoogleLensUrlForImage,
+  buildBingVisualSearchUrlForImage,
+  buildSafariHttpsUrl,
+  getPublicBaseUrl,
+} from "../lib/consignmentPhotoHost.js";
 import {
   archiveConsignmentIfNeeded,
   archiveConsignmentSubmission,
@@ -277,7 +284,7 @@ async function processConsignmentSubmission({ body, items, photoGroups, submitte
 
   // Host photos publicly so Google Lens buttons can reverse-search the actual image.
   try {
-    const lensHost = hostConsignmentPhotosForLens(analysisPhotoGroups);
+    const lensHost = await hostConsignmentPhotosForLensAsync(analysisPhotoGroups);
     console.log("[consignment] hosted photos for Google Lens", lensHost);
     if (lensHost.hosted === 0 && lensHost.failed > 0) {
       processingWarnings.push("Google Lens photo links could not be created for this submission.");
@@ -520,10 +527,12 @@ router.options("/consignment-submission", (req, res) => {
  * GET /api/consignment-photo/:token
  * Public image host for Google Lens reverse-image search (unguessable token).
  */
-router.get("/consignment-photo/:token", (req, res) => {
-  const photo = readHostedConsignmentPhoto(req.params.token);
+router.get("/consignment-photo/:token", async (req, res) => {
+  const photo = await readHostedConsignmentPhotoAsync(req.params.token);
   if (!photo?.buffer?.length) {
-    return res.status(404).type("text").send("Photo not found or expired.");
+    return res.status(404).type("html").send(
+      `<!doctype html><title>Photo missing</title><p>Photo not found or expired.</p>`
+    );
   }
   res.setHeader("Content-Type", photo.mimetype || "image/jpeg");
   res.setHeader("Cache-Control", "public, max-age=86400");
@@ -535,17 +544,29 @@ router.get("/consignment-photo/:token", (req, res) => {
 /**
  * GET /api/consignment-lens/:token
  * Short launch URL for email/PDF → visual search.
- * Desktop: immediate 302 to Google Lens (working path).
- * Mobile: bridge page — Outlook in-app browser cannot finish Google Lens, so we offer
- * Bing visual search (works there) + Open Lens in Safari.
+ * Desktop: immediate 302 to Google Lens (uploadbyurl).
+ * Mobile: bridge page with Bing + Safari Lens options.
  */
-router.get("/consignment-lens/:token", (req, res) => {
+router.get("/consignment-lens/:token", async (req, res) => {
   const token = String(req.params.token || "").trim();
-  const photo = readHostedConsignmentPhoto(token);
-  if (!photo?.buffer?.length) {
-    return res.status(404).type("text").send("Photo not found or expired.");
+  const photo = await readHostedConsignmentPhotoAsync(token);
+  const proxyImageUrl = `${getPublicBaseUrl()}/api/consignment-photo/${token}`;
+  const imageUrl =
+    (photo?.lensImageUrl && String(photo.lensImageUrl).startsWith("http")
+      ? String(photo.lensImageUrl)
+      : null) ||
+    (photo?.buffer?.length ? proxyImageUrl : null);
+
+  if (!imageUrl) {
+    res.setHeader("Cache-Control", "no-store");
+    return res.status(404).type("html").send(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"/><title>Lens link expired</title></head>
+<body style="font-family:system-ui,sans-serif;padding:24px;max-width:480px">
+  <h1>Photo link expired</h1>
+  <p>This Google Lens shortcut no longer has the hosted photo. Open the image from the email and use Google Lens / reverse image search from there.</p>
+</body></html>`);
   }
-  const imageUrl = `${getPublicBaseUrl()}/api/consignment-photo/${token}`;
+
   const lensUrl = buildGoogleLensUrlForImage(imageUrl);
   const bingUrl = buildBingVisualSearchUrlForImage(imageUrl);
   const safariLensUrl = buildSafariHttpsUrl(lensUrl);
@@ -558,13 +579,14 @@ router.get("/consignment-lens/:token", (req, res) => {
   const isOutlook = /Outlook|MSAppHost|Word|Office/i.test(ua);
   const wantBridge = String(req.query.bridge || "") === "1" || isMobile;
 
-  // Default / desktop: go straight to Lens (matches the path that works in Chrome).
+  // Default / desktop: 302 straight into Lens.
   if (!wantBridge) {
     res.setHeader("Cache-Control", "no-store");
     return res.redirect(302, lensUrl);
   }
 
-  const safeImage = escapeHtmlAttr(imageUrl);
+  const previewSrc = photo?.buffer?.length ? proxyImageUrl : imageUrl;
+  const safeImage = escapeHtmlAttr(previewSrc);
   const safeLens = escapeHtmlAttr(lensUrl);
   const safeBing = escapeHtmlAttr(bingUrl || "");
   const safeSafariLens = escapeHtmlAttr(safariLensUrl || lensUrl);
