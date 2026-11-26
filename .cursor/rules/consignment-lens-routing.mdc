@@ -1,0 +1,73 @@
+---
+description: LOCKED behavior — Google Lens email-button routing (Outlook/mobile => Bing bridge, desktop => direct Lens). Do not regress.
+globs:
+  - "routes/consignmentSubmission.js"
+  - "lib/consignmentEmail.js"
+  - "lib/consignmentPhotoHost.js"
+  - "tests/consignmentLens.test.js"
+alwaysApply: false
+---
+
+# Consignment "Google Lens" email-button routing — LOCKED
+
+This behavior is **required and permanent**. It was shipped in commit `a55f202`
+("Default Outlook/mobile Google Lens button to the Bing bridge (fix empty search)")
+and must NOT be regressed by any future change. The user explicitly asked that this
+never be "switched up" again. If a change would alter any of the guarantees below,
+STOP and confirm with the user first — do not "fix" it back to a simpler/direct flow.
+
+## Required behavior (do not change)
+
+1. **Email button links the SHORT token URL only.**
+   The consignment email "Google Lens this item" button must point at
+   `/api/consignment-lens/:token` (a short, query-string-free URL on this server).
+   It must **never** embed the raw `https://lens.google.com/uploadbyurl?url=...`
+   (~2 KB) link in the email. Outlook mobile SafeLinks ("Checking the link…")
+   mangles long query strings, which produces an empty Google search.
+
+2. **Outlook / mobile clients => 200 BRIDGE page (Bing first).**
+   `GET /api/consignment-lens/:token` from a mobile UA or any Outlook client
+   (including the Outlook-iOS in-app webview) must return a **200 HTML bridge page**
+   that leads with **Bing visual search** (`bing.com/images/search`) plus an
+   "Open Google Lens in Safari" option. It must **NOT** issue a `302` redirect
+   straight to `lens.google.com/uploadbyurl`.
+
+3. **Desktop browsers => 302 direct to Google Lens.**
+   A desktop UA must get a `302` redirect whose `Location` starts with
+   `https://lens.google.com/uploadbyurl?url=`. The fragile long Lens URL lives only
+   in this server's `Location` header, never in the email.
+
+4. **Overrides must keep working.**
+   - `?lens=1` forces the direct Lens `302` even on a mobile/Outlook UA.
+   - `?bridge=1` forces the Bing/Safari bridge page even on desktop.
+
+## Why (so nobody "fixes" it back)
+
+Google Lens `uploadbyurl` does **not** render inside Outlook's in-app webview — it
+opens as a bare, EMPTY `google.com` search (confirmed by the user's screenshots).
+The Bing visual search bridge is the **known-working** path inside the Outlook app
+and on mobile. Sending Outlook/mobile straight to `lens.google.com/uploadbyurl` is
+the exact bug that was fixed. Desktop Chrome/etc. handle `uploadbyurl` fine, so
+desktop stays on the direct redirect.
+
+## Hard rules for future agents
+
+- **Do NOT** send Outlook or mobile clients straight to `lens.google.com/uploadbyurl`.
+- **Always** keep the Bing bridge as the default for mobile/Outlook.
+- **Keep** desktop on the direct Lens redirect.
+- **Do NOT** put the long `uploadbyurl` link back into the email HTML — email links
+  the short `/api/consignment-lens/:token` URL only.
+- **Do NOT** weaken, rename-away, or delete the UA detection
+  (`isMobile`/`isOutlook`) or the `?lens` / `?bridge` overrides.
+- The regression tests in `tests/consignmentLens.test.js` lock this. If you change
+  routing, the tests must still pass unchanged (don't relax them to make a
+  regression go green). Run: `node --test tests/consignmentLens.test.js`.
+
+## Where this lives
+
+- Routing + UA branching: `routes/consignmentSubmission.js`
+  (`GET /api/consignment-lens/:token`, `isMobile` / `isOutlook` / `wantBridge`).
+- URL builders: `lib/consignmentPhotoHost.js`
+  (`buildGoogleLensUrlForImage`, `buildBingVisualSearchUrlForImage`, `buildSafariHttpsUrl`).
+- Email button wiring: `lib/consignmentEmail.js` (links the short token URL).
+- Regression tests: `tests/consignmentLens.test.js`.

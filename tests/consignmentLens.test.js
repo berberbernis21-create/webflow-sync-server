@@ -39,7 +39,7 @@ test("hostConsignmentPhotosForLens sets direct Lens URL and short launch URL", (
   assert.ok(file.googleLensDirectUrl.startsWith("https://lens.google.com/uploadbyurl?url="));
 });
 
-test("GET /api/consignment-lens/:token returns 302 to lens.google.com", async () => {
+test("LOCKED: GET /api/consignment-lens/:token on a DESKTOP UA returns 302 direct to lens.google.com/uploadbyurl (do not regress)", async () => {
   const file = {
     buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
     mimetype: "image/jpeg",
@@ -60,7 +60,7 @@ test("GET /api/consignment-lens/:token returns 302 to lens.google.com", async ()
       redirect: "manual",
       headers: { "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0" },
     });
-    assert.equal(res.status, 302);
+    assert.equal(res.status, 302, "desktop UA must redirect directly to Google Lens");
     const location = res.headers.get("location");
     assert.ok(location, "Location header required");
     assert.ok(
@@ -74,7 +74,7 @@ test("GET /api/consignment-lens/:token returns 302 to lens.google.com", async ()
   }
 });
 
-test("GET /api/consignment-lens/:token on Outlook iPhone serves the Bing bridge page, NOT a direct Lens redirect (uploadbyurl renders empty in that webview)", async () => {
+test("LOCKED: GET /api/consignment-lens/:token on Outlook iPhone serves the Bing bridge page, NOT a direct Lens redirect (uploadbyurl renders empty in that webview — do not regress)", async () => {
   const file = {
     buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
     mimetype: "image/jpeg",
@@ -99,17 +99,65 @@ test("GET /api/consignment-lens/:token on Outlook iPhone serves the Bing bridge 
       },
     });
     // Must NOT 302 straight to Lens — that reproduces the empty google.com search.
-    assert.equal(res.status, 200);
+    assert.equal(res.status, 200, "Outlook/mobile must get the 200 bridge page, never a 302 to Lens");
+    assert.notEqual(res.status, 302, "Outlook/mobile must never redirect straight to Google Lens");
+    assert.equal(
+      res.headers.get("location"),
+      null,
+      "bridge page must not carry a redirect Location header"
+    );
     assert.match(res.headers.get("content-type") || "", /text\/html/);
     const body = await res.text();
     assert.match(body, /bing\.com\/images\/search/, "bridge must lead with Bing visual search");
     assert.match(body, /Open Google Lens in Safari/);
+    // Lock: no auto-redirect smuggled into the page via meta-refresh or JS.
+    assert.ok(
+      !/http-equiv=["']?refresh/i.test(body),
+      "bridge must not auto meta-refresh to Lens"
+    );
+    assert.ok(
+      !/location\.(href|replace)\s*=/.test(body) &&
+        !/location\.replace\(/.test(body),
+      "bridge must not JS-redirect to Lens"
+    );
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
 });
 
-test("GET /api/consignment-lens/:token?lens=1 forces the direct Lens redirect even on a mobile UA", async () => {
+test("LOCKED: GET /api/consignment-lens/:token on a generic Android mobile UA also serves the Bing bridge, not a Lens 302", async () => {
+  const file = {
+    buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
+    mimetype: "image/jpeg",
+    originalname: "dresser.jpg",
+  };
+  hostConsignmentPhotosForLens(new Map([[1, [file]]]));
+  const token = file.googleLensUrl.split("/").pop();
+
+  const app = express();
+  app.use("/api", consignmentRouter);
+  const server = http.createServer(app);
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address();
+
+  try {
+    const res = await fetch(`http://127.0.0.1:${port}/api/consignment-lens/${token}`, {
+      redirect: "manual",
+      headers: {
+        "user-agent":
+          "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+      },
+    });
+    assert.equal(res.status, 200, "mobile UA must get the bridge page, not a Lens 302");
+    assert.equal(res.headers.get("location"), null);
+    const body = await res.text();
+    assert.match(body, /bing\.com\/images\/search/);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("LOCKED: GET /api/consignment-lens/:token?lens=1 forces the direct Lens redirect even on a mobile UA (override must keep working)", async () => {
   const file = {
     buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
     mimetype: "image/jpeg",
@@ -143,7 +191,7 @@ test("GET /api/consignment-lens/:token?lens=1 forces the direct Lens redirect ev
   }
 });
 
-test("GET /api/consignment-lens/:token?bridge=1 serves the Bing/Safari fallback page", async () => {
+test("LOCKED: GET /api/consignment-lens/:token?bridge=1 serves the Bing/Safari bridge page even on a DESKTOP UA (override must keep working)", async () => {
   const file = {
     buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
     mimetype: "image/jpeg",
@@ -159,8 +207,16 @@ test("GET /api/consignment-lens/:token?bridge=1 serves the Bing/Safari fallback 
   const { port } = server.address();
 
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/api/consignment-lens/${token}?bridge=1`);
+    const res = await fetch(`http://127.0.0.1:${port}/api/consignment-lens/${token}?bridge=1`, {
+      redirect: "manual",
+      headers: {
+        // Desktop UA — ?bridge=1 must still force the bridge, not a 302.
+        "user-agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      },
+    });
     assert.equal(res.status, 200);
+    assert.equal(res.headers.get("location"), null);
     assert.match(res.headers.get("content-type") || "", /text\/html/);
     const body = await res.text();
     assert.match(body, /bing\.com\/images\/search/);
