@@ -3363,9 +3363,11 @@ function getEcommerceClassification(product) {
 }
 
 /**
- * LG / FH — absolute vertical lock from Traxia.
- * Never overridden by LLM, classifier, dimensions, or Category: ACCESSORIES.
- * If both FH and LG appear, the first tag in list order still locks (never unlock for heuristics).
+ * LG / FH — absolute vertical lock from Traxia. The SINGLE SOURCE OF TRUTH.
+ * Never overridden by LLM, classifier, dimensions, title, or Category: ACCESSORIES.
+ * If both FH and LG appear (a tagging mistake), LG (Luxury) wins by documented,
+ * order-independent precedence and `conflict` is set so the caller logs it.
+ * See `.cursor/rules/vertical-classification.mdc`.
  */
 function getHardFhLgVerticalLock(product) {
   const tags = getProductTagsArray(product);
@@ -3374,6 +3376,7 @@ function getHardFhLgVerticalLock(product) {
   return {
     vertical: verticalTag.vertical,
     tag: verticalTag.tag,
+    conflict: Boolean(verticalTag.conflict),
     source: "hard_ecommerce_vertical_tag",
   };
 }
@@ -8257,6 +8260,17 @@ async function syncSingleProductCore(product, cache, options = {}) {
           : "FH tag — absolute Furniture lock; classifier and LLM skipped",
     });
 
+    if (hardFhLgLock.conflict) {
+      webflowLog("warn", {
+        event: "vertical.conflicting_ecommerce_tags",
+        shopifyProductId,
+        productTitle: product.title || "",
+        vertical: hardFhLgLock.vertical,
+        message:
+          "Both FH and LG tags present — LG (Luxury) wins by documented precedence. Fix the duplicate vertical tag in Traxia/Shopify.",
+      });
+    }
+
     // FH/LG flip vs where the item already lives → move + always email (both directions).
     if (priorVertical && priorVertical !== hardFhLgLock.vertical && cacheEntry?.webflowId) {
       const from = priorVertical;
@@ -8346,6 +8360,15 @@ async function syncSingleProductCore(product, cache, options = {}) {
       message: "Manual ecommerce tag(s) lock vertical — skipping classifier corrections",
     });
   } else if (!recoveredFromWebflow) {
+    // No FH/LG vertical tag present — heuristics (classifier, LLM, dimensions,
+    // title/keyword cues) are the LAST-RESORT fallback only when the product is
+    // untagged. A tagged product never reaches this branch.
+    webflowLog("info", {
+      event: "vertical.no_ecommerce_tag_fallback",
+      shopifyProductId,
+      productTitle: product.title || "",
+      message: "No FH/LG tag — falling back to classifier/LLM/dimension heuristics",
+    });
     const llmLogPayload = {};
     const llmResult = await classifyWithLLM(product, llmLogPayload, webflowLog);
     const llmDetectedVertical = llmResult.category === "LUXURY" ? "luxury" : "furniture";

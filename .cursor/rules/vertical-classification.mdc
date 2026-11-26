@@ -1,0 +1,76 @@
+---
+description: LOCKED behavior — LG/FH Shopify tags are the single source of truth for product vertical. Never let dimensions/titles/keywords override them. Do not regress.
+globs:
+  - "server.js"
+  - "ecommerceTags.js"
+  - "vertical.js"
+  - "llmVerticalClassifier.js"
+  - "ecommerceTags.test.js"
+  - "tests/verticalTagAuthority.test.js"
+alwaysApply: false
+---
+
+# Product vertical classification — LG/FH tags are the SINGLE SOURCE OF TRUTH
+
+This behavior is **required and permanent** per the owner: *"we don't use anything
+but LG and FH ... we always read those tags as truth."* Do **NOT** regress it. If a
+change would weaken any guarantee below, STOP and confirm with the user first — do
+not "fix" it back to dimension/title/keyword heuristics.
+
+Context: commit `f5632e8` ("Keep fur jackets/outerwear on Luxury; never let
+dimensions override LG") patched one symptom. The tags are now **fully**
+authoritative for every case, not just fur jackets.
+
+## Required behavior (do not change)
+
+1. **`LG` tag ⇒ vertical = `luxury` (L+F HANDBAGS site). Always.**
+   No dimension, title, keyword, product_type, brand, LLM, or `Category: ACCESSORIES`
+   signal may override an `LG` tag.
+
+2. **`FH` tag ⇒ vertical = `furniture` (RESALE furniture site). Always.**
+   Same absolute rule in the other direction.
+
+3. **The tag is the only authority whenever present.** `getHardFhLgVerticalLock`
+   (server.js) / `getHardFhLgVerticalLockFromTags` (ecommerceTags.js) short-circuit
+   the classifier and LLM, and `enforceAbsoluteFhLgVertical` is the final rail run
+   before any Webflow/Shopify write. Heuristics (`detectVertical`,
+   `productDimensionsForceFurniture`, title/keyword cues, brand detection) are a
+   **last-resort fallback ONLY when NEITHER tag exists**. That fallback is logged as
+   `vertical.no_ecommerce_tag_fallback`.
+
+4. **Both tags present (`LG` and `FH`) ⇒ LG (Luxury) wins.**
+   This is a fixed, **documented, order-independent** precedence — it must NOT depend
+   on which tag Shopify happens to list first. `getEcommerceVerticalOverrideFromTags`
+   returns `{ vertical: "luxury", tag: "LG", conflict: true }`, and the sync logs
+   `vertical.conflicting_ecommerce_tags` (warn) so staff can fix the duplicate tag in
+   Traxia/Shopify.
+
+5. **Neither tag present ⇒ heuristic fallback.** Only here may dimensions, title,
+   keywords, brand, and the LLM classifier decide the vertical.
+
+6. **Tag matching is exact + case-insensitive + trimmed.** `LG`/`FH` are matched as
+   whole tag codes (optionally with a combined category separator, e.g. `FH-B`,
+   `LG: NK`, `Ecommerce LG`), **never** as a substring of another word — `FLAG`,
+   `LUGGAGE`, `LGBT`, `FHA`, etc. must never be read as a vertical tag.
+
+## Hard rules for future agents
+
+- **Do NOT** add any code path that lets dimensions, weight, title words, keywords,
+  `Category: ACCESSORIES`, brand, or the LLM override a present `LG`/`FH` tag.
+- **Do NOT** change the both-tags precedence away from "LG wins", and do NOT make it
+  order-dependent.
+- **Do NOT** relax or delete the regression tests to make a change go green.
+- Any new heuristic must early-return when `getHardFhLgVerticalLock(product)` is set,
+  exactly like `productIsGenuineFurnitureInventory`, `productMustBeFurnitureVertical`,
+  and `resolveVerticalFromEvidence` already do.
+
+## Where this lives
+
+- Tag parsing + precedence: `ecommerceTags.js`
+  (`getEcommerceVerticalOverrideFromTags`, `getHardFhLgVerticalLockFromTags`,
+  `getHardFhLgVerticalLockFromProduct`).
+- Sync enforcement: `server.js` (`getHardFhLgVerticalLock`,
+  `enforceAbsoluteFhLgVertical`, the hard-lock block in `syncSingleProductCore`).
+- LLM gating: `llmVerticalClassifier.js` (`getHardFhLgVerticalLockFromProduct`).
+- Regression tests: `tests/verticalTagAuthority.test.js` and `ecommerceTags.test.js`.
+  Run: `node --test tests/verticalTagAuthority.test.js ecommerceTags.test.js`.

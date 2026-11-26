@@ -340,56 +340,77 @@ export function ecommerceTagsAuthorizeVerticalChange(classification, existingVer
   return true;
 }
 
-/** FH → Furniture & Home, LG → Luxury Goods. Category letters are separate. */
-export function getEcommerceVerticalOverrideFromTags(tags) {
-  if (!Array.isArray(tags) || !tags.length) return null;
+/**
+ * The vertical a SINGLE tag names (LG → luxury, FH → furniture), or null.
+ * Matching is exact / prefixed only and case-insensitive after trim — "LG"/"FH"
+ * are matched as whole tag codes, never as a substring of another word
+ * (so "FLAG", "LUGGAGE", "LGBT", "FHA", etc. never match).
+ */
+function verticalTagFromSingleTag(rawTag) {
+  const tag = String(rawTag || "").trim();
+  if (!tag) return null;
+  const normalized = tag.toUpperCase();
 
-  for (const rawTag of tags) {
-    const tag = String(rawTag || "").trim();
-    if (!tag) continue;
-    const normalized = tag.toUpperCase();
-
-    const direct = normalized.match(/^([A-Z]{2})$/);
-    if (direct) {
-      if (direct[1] === ECOMMERCE_VERTICAL_TAG_FURNITURE) {
-        return { vertical: "furniture", tag: direct[1] };
-      }
-      if (direct[1] === ECOMMERCE_VERTICAL_TAG_LUXURY) {
-        return { vertical: "luxury", tag: direct[1] };
-      }
-      continue;
-    }
-
-    if (/^FH(?:[\s,./:-]|$)/.test(normalized)) {
-      return { vertical: "furniture", tag: ECOMMERCE_VERTICAL_TAG_FURNITURE };
-    }
-    if (/^LG(?:[\s,./:-]|$)/.test(normalized)) {
-      return { vertical: "luxury", tag: ECOMMERCE_VERTICAL_TAG_LUXURY };
-    }
-
-    const prefixed = normalized.match(
-      /\b(?:E[\s_-]?COMMERCE|ECOMMERCE)\b[^A-Z0-9]*([A-Z]{2})\b/
-    );
-    if (prefixed) {
-      if (prefixed[1] === ECOMMERCE_VERTICAL_TAG_FURNITURE) {
-        return { vertical: "furniture", tag: prefixed[1] };
-      }
-      if (prefixed[1] === ECOMMERCE_VERTICAL_TAG_LUXURY) {
-        return { vertical: "luxury", tag: prefixed[1] };
-      }
-    }
+  const direct = normalized.match(/^([A-Z]{2})$/);
+  if (direct) {
+    if (direct[1] === ECOMMERCE_VERTICAL_TAG_FURNITURE) return ECOMMERCE_VERTICAL_TAG_FURNITURE;
+    if (direct[1] === ECOMMERCE_VERTICAL_TAG_LUXURY) return ECOMMERCE_VERTICAL_TAG_LUXURY;
+    return null;
   }
 
+  if (/^FH(?:[\s,./:-]|$)/.test(normalized)) return ECOMMERCE_VERTICAL_TAG_FURNITURE;
+  if (/^LG(?:[\s,./:-]|$)/.test(normalized)) return ECOMMERCE_VERTICAL_TAG_LUXURY;
+
+  const prefixed = normalized.match(
+    /\b(?:E[\s_-]?COMMERCE|ECOMMERCE)\b[^A-Z0-9]*([A-Z]{2})\b/
+  );
+  if (prefixed) {
+    if (prefixed[1] === ECOMMERCE_VERTICAL_TAG_FURNITURE) return ECOMMERCE_VERTICAL_TAG_FURNITURE;
+    if (prefixed[1] === ECOMMERCE_VERTICAL_TAG_LUXURY) return ECOMMERCE_VERTICAL_TAG_LUXURY;
+  }
   return null;
 }
 
-/** Absolute vertical from LG/FH — never overridden by classifier, LLM, or Category: ACCESSORIES. */
+/**
+ * FH → Furniture & Home, LG → Luxury Goods. Category letters are separate.
+ *
+ * LG/FH are the SINGLE SOURCE OF TRUTH for the product vertical — never
+ * overridden by dimensions, titles, keywords, or any other heuristic.
+ *
+ * Both tags present (a Traxia/Shopify tagging mistake): LG (Luxury) wins by a
+ * fixed, DOCUMENTED precedence and `conflict: true` is returned so the caller
+ * can log it. The result is deterministic — it never depends on Shopify tag
+ * order. See `.cursor/rules/vertical-classification.mdc`.
+ */
+export function getEcommerceVerticalOverrideFromTags(tags) {
+  if (!Array.isArray(tags) || !tags.length) return null;
+
+  let hasLuxury = false;
+  let hasFurniture = false;
+  for (const rawTag of tags) {
+    const v = verticalTagFromSingleTag(rawTag);
+    if (v === ECOMMERCE_VERTICAL_TAG_LUXURY) hasLuxury = true;
+    else if (v === ECOMMERCE_VERTICAL_TAG_FURNITURE) hasFurniture = true;
+  }
+
+  if (!hasLuxury && !hasFurniture) return null;
+  const conflict = hasLuxury && hasFurniture;
+
+  // LG wins on conflict — documented precedence, never order-dependent.
+  if (hasLuxury) {
+    return { vertical: "luxury", tag: ECOMMERCE_VERTICAL_TAG_LUXURY, conflict };
+  }
+  return { vertical: "furniture", tag: ECOMMERCE_VERTICAL_TAG_FURNITURE, conflict };
+}
+
+/** Absolute vertical from LG/FH — never overridden by dimensions, classifier, LLM, or Category: ACCESSORIES. LG wins when both tags are present (`conflict: true`). */
 export function getHardFhLgVerticalLockFromTags(tags) {
   const verticalTag = getEcommerceVerticalOverrideFromTags(tags);
   if (!verticalTag) return null;
   return {
     vertical: verticalTag.vertical,
     tag: verticalTag.tag,
+    conflict: Boolean(verticalTag.conflict),
     source: "hard_ecommerce_vertical_tag",
   };
 }

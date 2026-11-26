@@ -66,11 +66,27 @@ test("untagged inventory delegates to best-guess classification", () => {
   assert.equal(ecommerceTagsAuthorizeVerticalChange(state, "furniture"), null);
 });
 
-test("hard FH/LG lock still locks when both tags are present (first wins)", () => {
-  const lock = getHardFhLgVerticalLockFromTags(["LG", "R", "FH", "X"]);
-  assert.equal(lock?.vertical, "luxury");
-  assert.equal(lock?.tag, "LG");
-  assert.equal(getEcommerceVerticalOverrideFromTags(["FH", "B", "LG"])?.vertical, "furniture");
+test("hard FH/LG lock: LG wins over FH by documented precedence, regardless of tag order", () => {
+  // LG listed first, FH second.
+  const lgFirst = getHardFhLgVerticalLockFromTags(["LG", "R", "FH", "X"]);
+  assert.equal(lgFirst?.vertical, "luxury");
+  assert.equal(lgFirst?.tag, "LG");
+  assert.equal(lgFirst?.conflict, true);
+
+  // FH listed first, LG second — LG STILL wins (precedence is order-independent).
+  const fhFirst = getHardFhLgVerticalLockFromTags(["FH", "B", "LG"]);
+  assert.equal(fhFirst?.vertical, "luxury");
+  assert.equal(fhFirst?.tag, "LG");
+  assert.equal(fhFirst?.conflict, true);
+
+  assert.equal(getEcommerceVerticalOverrideFromTags(["FH", "B", "LG"])?.vertical, "luxury");
+  assert.equal(getEcommerceVerticalOverrideFromTags(["FH", "B", "LG"])?.conflict, true);
+});
+
+test("single vertical tag carries conflict:false", () => {
+  assert.equal(getEcommerceVerticalOverrideFromTags(["LG"])?.conflict, false);
+  assert.equal(getEcommerceVerticalOverrideFromTags(["FH"])?.conflict, false);
+  assert.equal(getHardFhLgVerticalLockFromTags(["LG"])?.conflict, false);
 });
 
 test("Burberry scarf style tags lock luxury even with Category ACCESSORIES noise", () => {
