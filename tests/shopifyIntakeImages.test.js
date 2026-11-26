@@ -1188,7 +1188,7 @@ test("dual product paragraphs and AS IS paste collapse to one Intake paragraph",
 
   // Restore / rebuild from Intake only — never concatenate the old dual Shopify body.
   const out = appendIntakeNotesToDescription(intake, "Sold AS IS with visible wear", "", item);
-  assert.ok(out.startsWith("Curved wing grey leather king low profile platform bed"));
+  assert.ok(out.startsWith("Restoration Hardware curved wing grey leather king low profile platform bed"));
   assert.equal(out.includes("This RH curved wing"), false);
   assert.equal(out.includes("AS IS: this item is sold AS IS"), false);
   assert.equal(out.includes("AS IS:"), false);
@@ -1197,7 +1197,7 @@ test("dual product paragraphs and AS IS paste collapse to one Intake paragraph",
 
   // Polluted Intake (mirrored dual body) also collapses on the next finalize.
   const cleaned = appendIntakeNotesToDescription(previousShopify, "Sold AS IS with visible wear", "", item);
-  assert.ok(cleaned.startsWith("Curved wing grey leather king low profile platform bed"));
+  assert.ok(cleaned.startsWith("Restoration Hardware curved wing grey leather king low profile platform bed"));
   assert.equal(cleaned.includes("This RH curved wing"), false);
   assert.equal(cleaned.includes("AS IS: this item is sold AS IS"), false);
   assert.equal(cleaned.split(allowed).length - 1, 1);
@@ -1570,7 +1570,7 @@ test("from-scratch rewrite weaves Extra Info noticeable wear and drops dual para
   assert.equal(/This RH curved wing/i.test(marketingListingBase(dual)), false);
 
   const out = finalizeListingDescription(dual, item, "noticeable wear", "");
-  assert.match(out, /^Grey leather king low profile platform bed/);
+  assert.match(out, /^Restoration Hardware grey leather king low profile platform bed/);
   assert.equal(/This RH curved wing/i.test(out), false);
   assert.equal(/Designed to anchor your primary bedroom/i.test(out), false);
   assert.equal(/Ideal for contemporary/i.test(out), false);
@@ -2130,7 +2130,7 @@ test("model output is one marketing paragraph after a doubled reply or a conditi
     const published = finalizeListingDescription(worn.description, { name: "RH Curved Wing Grey Leather King Low Profile Bed", brand: "RH" }, "", "");
     assert.equal(published.includes("light wear"), false);
     assert.equal(published.includes("This RH curved wing"), false);
-    assert.match(published, /Grey leather king low profile platform bed/);
+    assert.match(published, /Restoration Hardware grey leather king low profile platform bed/);
   } finally {
     if (previousKey == null) delete process.env.OPENAI_API_KEY;
     else process.env.OPENAI_API_KEY = previousKey;
