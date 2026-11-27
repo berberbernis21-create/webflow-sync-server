@@ -89,8 +89,10 @@ import {
   intakeShopifyImagesConfigured,
   intakeShopifyImagesEnabled,
   markIntakeShopifyProductUnlinked,
+  mergeQueuedSyncOptions,
   mirrorShopifyProductToIntake,
   mirrorShopifyProductToIntakeCoalesced,
+  ownWriteSyncSkipsGalleryCheck,
   planManualShopifyLink,
   fetchShopifyProductsByExactTitle,
   shopifyStatusUnlinks,
@@ -822,7 +824,7 @@ const WEBHOOK_PRODUCT_DEBOUNCE_MS = (() => {
 const productWebhookDebounceTimers = new Map();
 /** One in-flight webhook sync per product; newer events collapse into a single follow-up. */
 const productWebhookInflight = new Map(); // id -> Promise
-const productWebhookPending = new Map(); // id -> pathLabel
+const productWebhookPending = new Map(); // id -> { path, options }
 /** Skip full webhook sync briefly after /set-categories (metafield write would otherwise re-trigger heavy sync). */
 const categoryOnlyWebhookSuppress = new Map();
 const CATEGORY_ONLY_WEBHOOK_SUPPRESS_MS = Math.max(
@@ -879,11 +881,15 @@ function scheduleDebouncedProductWebhookSync(shopifyProductId, triggerPath) {
   productWebhookDebounceTimers.set(id, { timer, paths });
 }
 
-async function runWebhookSingleProductSyncCoalesced(shopifyProductId, triggerPath) {
+async function runWebhookSingleProductSyncCoalesced(shopifyProductId, triggerPath, options = {}) {
   const id = String(shopifyProductId ?? "").trim();
   if (!id) return;
   if (productWebhookInflight.has(id)) {
-    productWebhookPending.set(id, triggerPath);
+    const queued = productWebhookPending.get(id);
+    productWebhookPending.set(id, {
+      path: triggerPath,
+      options: mergeQueuedSyncOptions(queued?.options, options),
+    });
     webflowLog("info", {
       event: "shopify.webhook.product_coalesced",
       shopifyProductId: id,
@@ -894,15 +900,15 @@ async function runWebhookSingleProductSyncCoalesced(shopifyProductId, triggerPat
   }
   const run = (async () => {
     try {
-      await runWebhookSingleProductSync(id, triggerPath);
+      await runWebhookSingleProductSync(id, triggerPath, options);
     } finally {
       productWebhookInflight.delete(id);
-      const pendingPath = productWebhookPending.get(id);
-      if (pendingPath != null) {
+      const pending = productWebhookPending.get(id);
+      if (pending != null) {
         productWebhookPending.delete(id);
         // Short settle then one follow-up sync with latest product state.
         setTimeout(() => {
-          void runWebhookSingleProductSyncCoalesced(id, pendingPath);
+          void runWebhookSingleProductSyncCoalesced(id, pending.path, pending.options);
         }, Math.min(WEBHOOK_PRODUCT_DEBOUNCE_MS || 1500, 1500));
       }
     }
@@ -7796,30 +7802,31 @@ async function syncSingleProductCore(product, cache, options = {}) {
   // Image-before-downstream gate: GraphQL backfill first, then Intake → Shopify
   // when the product still has no display images. Block Webflow/Google only when
   // this looks like an Intake item waiting on photos / upload.
-  if (options.skipIntakeImageGate !== true) {
-    await enrichShopifyProductImagesFromGraphql(product);
-    const imageGate = await ensureShopifyProductHasIntakeImages(product, {
-      log: (level, payload) => webflowLog(level, payload),
+  // skipIntakeImageGate (sync right after our own listing / gallery write) skips
+  // only the photo compare; metafields and the missing-images upload still run.
+  await enrichShopifyProductImagesFromGraphql(product);
+  const imageGate = await ensureShopifyProductHasIntakeImages(product, {
+    log: (level, payload) => webflowLog(level, payload),
+    skipGalleryCheck: options.skipIntakeImageGate === true,
+  });
+  if (Array.isArray(imageGate?.product?.images) && imageGate.product.images.length) {
+    product.images = imageGate.product.images;
+  }
+  if (imageGate?.blocked) {
+    webflowLog("info", {
+      event: "sync_product.skip_waiting_intake_images",
+      shopifyProductId,
+      productTitle: product.title || "",
+      intakeItemId: imageGate.intakeItemId || null,
+      status: imageGate.status,
+      reason: imageGate.reason,
+      message: "Deferring Webflow/Google until Intake images are on Shopify",
     });
-    if (Array.isArray(imageGate?.product?.images) && imageGate.product.images.length) {
-      product.images = imageGate.product.images;
-    }
-    if (imageGate?.blocked) {
-      webflowLog("info", {
-        event: "sync_product.skip_waiting_intake_images",
-        shopifyProductId,
-        productTitle: product.title || "",
-        intakeItemId: imageGate.intakeItemId || null,
-        status: imageGate.status,
-        reason: imageGate.reason,
-        message: "Deferring Webflow/Google until Intake images are on Shopify",
-      });
-      return {
-        operation: "skip_waiting_intake_images",
-        id: getCacheEntry(cache, shopifyProductId)?.webflowId ?? null,
-        intakeItemId: imageGate.intakeItemId || null,
-      };
-    }
+    return {
+      operation: "skip_waiting_intake_images",
+      id: getCacheEntry(cache, shopifyProductId)?.webflowId ?? null,
+      intakeItemId: imageGate.intakeItemId || null,
+    };
   }
 
   const cacheEntry = getCacheEntry(cache, shopifyProductId);
@@ -10481,7 +10488,7 @@ async function syncSingleProduct(product, cache, options = {}) {
  * One-product sync with the same indexes + cache as sync-all (webhooks: create/update).
  * ACK HTTP before calling; this can take tens of seconds (LLM, Webflow).
  */
-async function runWebhookSingleProductSync(shopifyProductId, triggerPath) {
+async function runWebhookSingleProductSync(shopifyProductId, triggerPath, { skipIntakeImageGate = false } = {}) {
   const id = String(shopifyProductId ?? "").trim();
   if (!id) return;
   // Suppress only Shopify webhook echoes — intentional /intake-images/* syncAfter still runs.
@@ -10545,6 +10552,7 @@ async function runWebhookSingleProductSync(shopifyProductId, triggerPath) {
       skipMissingFieldsAlert: true,
       syncTrigger: "webhook",
       fromWebhook: true,
+      skipIntakeImageGate: skipIntakeImageGate === true,
     });
     saveCache(cache);
     if (result?.duplicateCorrected && result?.duplicateLog) {
@@ -15620,7 +15628,9 @@ app.post("/intake-images/reorder", async (req, res) => {
     // name, and the listing path can call OpenAI.
     if (result?.ok && result?.shopifyProductId && req.body?.syncAfter !== false && !reorderOnly) {
       result.syncTriggered = true;
-      void runWebhookSingleProductSyncCoalesced(result.shopifyProductId, "/intake-images/reorder").catch(
+      void runWebhookSingleProductSyncCoalesced(result.shopifyProductId, "/intake-images/reorder", {
+        skipIntakeImageGate: ownWriteSyncSkipsGalleryCheck("gallery_reorder", result),
+      }).catch(
         (err) => {
           webflowLog("warn", {
             event: "intake_images.reorder.sync_trigger_failed",
@@ -15685,7 +15695,8 @@ app.post("/intake-images/listing-update", async (req, res) => {
     suppressWebhookSyncForProduct(written.shopifyProductId, INTAKE_WRITE_WEBHOOK_SUPPRESS_MS);
     void runWebhookSingleProductSyncCoalesced(
       written.shopifyProductId,
-      "/intake-images/listing-update"
+      "/intake-images/listing-update",
+      { skipIntakeImageGate: ownWriteSyncSkipsGalleryCheck("listing_update", written) }
     ).catch((err) => {
       webflowLog("warn", {
         event: "intake_images.listing_update.sync_trigger_failed",
